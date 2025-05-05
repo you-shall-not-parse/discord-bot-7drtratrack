@@ -6,7 +6,7 @@ import asyncio
 from datetime import datetime, timedelta
 
 # ---------------- CONFIGURATION ----------------
-LOAD_DOTENV() # Load variables from .env
+LOAD_DOTENV(/home/ubuntu/discord-bot-7drtratrack/.env) # Load variables from .env
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 GUILD_ID = 1097913605082579024
 INFANTRY_ROLE_ID = 1099596178141757542
