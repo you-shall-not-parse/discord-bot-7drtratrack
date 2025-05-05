@@ -1,3 +1,4 @@
+# How to update git in umbuntu environment - in the project folder, type 'git pull', then use a personal access token (from developer settings in github) as password, username is you-shall-not-parse 
 import os
 from dotenv import load_dotenv
 import discord
