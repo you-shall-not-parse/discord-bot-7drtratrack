@@ -113,6 +113,9 @@ async def on_message(message):
                     trainee_data[trainee]["signups"][channel_name] += 1
                     await update_trainee_embed(trainee, track_channel)
 
+
+
+
 @bot.event
 async def on_member_update(before, after):
     nickname = after.display_name
@@ -146,8 +149,7 @@ async def on_member_update(before, after):
     await update_trainee_embed(nickname, track_channel)
 
     # Update the summary message
-    await update_summary_message(track_channel)
-
+    await update_existing_summary_message(track_channel)
 
 @bot.event
 async def on_member_remove(member):
