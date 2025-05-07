@@ -117,18 +117,37 @@ async def on_message(message):
 async def on_member_update(before, after):
     nickname = after.display_name
     track_channel = bot.get_channel(TRACKING_CHANNEL_ID)
-    if nickname in trainee_data:
-        was_trainee = any(role.id == INFANTRY_ROLE_ID for role in before.roles)
-        is_trainee = any(role.id == INFANTRY_ROLE_ID for role in after.roles)
-        if was_trainee and not is_trainee:
-            trainee_data[nickname]["graduated"] = True
-            trainee_data[nickname]["graduation_date"] = datetime.utcnow()
-        elif not was_trainee and is_trainee:
-            trainee_data[nickname]["graduated"] = False
-            trainee_data[nickname]["graduation_date"] = None
-        trainee_data[nickname]["has_support"] = any(role.id == SUPPORT_ROLE_ID for role in after.roles)
-        trainee_data[nickname]["has_engineer"] = any(role.id == ENGINEER_ROLE_ID for role in after.roles)
-        await update_trainee_embed(nickname, track_channel)
+    if nickname not in trainee_data:
+        return
+
+    was_trainee = any(role.id == INFANTRY_ROLE_ID for role in before.roles)
+    is_trainee = any(role.id == INFANTRY_ROLE_ID for role in after.roles)
+
+    if not was_trainee and is_trainee:
+        # New Infantry Trainee - Add data and create a new embed
+        trainee_data[nickname]["graduated"] = False
+        trainee_data[nickname]["graduation_date"] = None
+        
+        # Generate and send new embed
+        embed = generate_report_embed(nickname)
+        msg = await track_channel.send(embed=embed)
+        trainee_messages[nickname] = msg.id
+
+    elif was_trainee and not is_trainee:
+        # Graduation detected
+        trainee_data[nickname]["graduated"] = True
+        trainee_data[nickname]["graduation_date"] = datetime.utcnow()
+
+    # Update other role statuses
+    trainee_data[nickname]["has_support"] = any(role.id == SUPPORT_ROLE_ID for role in after.roles)
+    trainee_data[nickname]["has_engineer"] = any(role.id == ENGINEER_ROLE_ID for role in after.roles)
+
+    # Update the trainee's embed
+    await update_trainee_embed(nickname, track_channel)
+
+    # Update the summary message
+    await update_summary_message(track_channel)
+
 
 @bot.event
 async def on_member_remove(member):
