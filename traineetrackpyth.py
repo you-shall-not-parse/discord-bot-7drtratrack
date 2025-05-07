@@ -240,18 +240,15 @@ def generate_summary_and_legend_embed(trainees_sorted):
 
     return embed
 
-async def update_summary_message(track_channel):
+async def update_existing_summary_message(track_channel):
     sorted_trainees = sorted(trainee_data.items(), key=lambda x: x[1]['join_date'])
     summary = generate_summary_and_legend_embed(sorted_trainees)
 
-    # Find the summary message (assuming it's the last message or has a specific identifier)
+    # Locate the existing summary message
     async for message in track_channel.history(limit=50):  # Adjust limit as needed
         if message.author == bot.user and "Trainee Tracker: Legend & Summary" in message.embeds[0].title:
             await message.edit(embed=summary)
             return
-
-    # If no summary message was found, send a new one
-    await track_channel.send(embed=summary)
 
 # ---------------- RUN BOT ----------------
 if __name__ == "__main__":
