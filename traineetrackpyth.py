@@ -242,7 +242,7 @@ def generate_summary_and_legend_embed(trainees_sorted):
         "🟦 **Blue** — Has one of Support or Engineer, good \n"
         "⬛ **Grey** — No roles but under 4 weeks, not bad\n"
         "🟧 **Orange** — No roles and in server over 4 weeks, bad\n"
-        "🟥 **Graduate** — Graduated"
+        "🎓 **Graduate** — Graduated"
     ), inline=False)
 
     # Spacing line
