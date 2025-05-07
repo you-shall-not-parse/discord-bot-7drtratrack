@@ -6,7 +6,7 @@ import asyncio
 from datetime import datetime, timedelta
 
 # ---------------- CONFIGURATION ----------------
-LOAD_DOTENV('/home/ubuntu/discord-bot-7drtratrack/.env') # Load variables from .env
+load_dotenv() # Load variables from .env
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 GUILD_ID = 1097913605082579024
 INFANTRY_ROLE_ID = 1099596178141757542
@@ -198,6 +198,7 @@ async def update_trainee_embed(nickname, track_channel):
         except discord.NotFound:
             pass
 
+
 def generate_summary_and_legend_embed(trainees_sorted):
     summary = {
         "Behind": [],
@@ -238,6 +239,19 @@ def generate_summary_and_legend_embed(trainees_sorted):
             embed.add_field(name=category, value="\n".join(names), inline=False)
 
     return embed
+
+async def update_summary_message(track_channel):
+    sorted_trainees = sorted(trainee_data.items(), key=lambda x: x[1]['join_date'])
+    summary = generate_summary_and_legend_embed(sorted_trainees)
+
+    # Find the summary message (assuming it's the last message or has a specific identifier)
+    async for message in track_channel.history(limit=50):  # Adjust limit as needed
+        if message.author == bot.user and "Trainee Tracker: Legend & Summary" in message.embeds[0].title:
+            await message.edit(embed=summary)
+            return
+
+    # If no summary message was found, send a new one
+    await track_channel.send(embed=summary)
 
 # ---------------- RUN BOT ----------------
 if __name__ == "__main__":
