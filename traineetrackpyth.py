@@ -114,42 +114,55 @@ async def on_message(message):
                     await update_trainee_embed(trainee, track_channel)
 
 
-
-
 @bot.event
 async def on_member_update(before, after):
     nickname = after.display_name
     track_channel = bot.get_channel(TRACKING_CHANNEL_ID)
-    if nickname not in trainee_data:
-        return
 
-    was_trainee = any(role.id == INFANTRY_ROLE_ID for role in before.roles)
-    is_trainee = any(role.id == INFANTRY_ROLE_ID for role in after.roles)
+    # Handle newly added Infantry Trainee
+    gained_infantry_role = INFANTRY_ROLE_ID not in [r.id for r in before.roles] and \
+                           INFANTRY_ROLE_ID in [r.id for r in after.roles]
+    if nickname not in trainee_data and gained_infantry_role:
+        join_date = after.joined_at or datetime.utcnow()
+        trainee_data[nickname] = {
+            "profile_name": after.name,
+            "join_date": join_date,
+            "joined_plus_4_weeks": join_date + timedelta(days=28),
+            "has_support": any(role.id == SUPPORT_ROLE_ID for role in after.roles),
+            "has_engineer": any(role.id == ENGINEER_ROLE_ID for role in after.roles),
+            "recruitform_posted": False,
+            "left_server": False,
+            "graduated": False,
+            "graduation_date": None,
+            "signups": {ch: 0 for ch in CHANNEL_IDS}
+        }
 
-    if not was_trainee and is_trainee:
-        # New Infantry Trainee - Add data and create a new embed
-        trainee_data[nickname]["graduated"] = False
-        trainee_data[nickname]["graduation_date"] = None
-        
-        # Generate and send new embed
+        # Send new embed
         embed = generate_report_embed(nickname)
         msg = await track_channel.send(embed=embed)
         trainee_messages[nickname] = msg.id
+        return
 
-    elif was_trainee and not is_trainee:
-        # Graduation detected
+    # Skip update if not a trainee
+    if nickname not in trainee_data:
+        return
+
+    was_trainee = INFANTRY_ROLE_ID in [r.id for r in before.roles]
+    is_trainee = INFANTRY_ROLE_ID in [r.id for r in after.roles]
+
+    if was_trainee and not is_trainee:
+        # Graduation
         trainee_data[nickname]["graduated"] = True
         trainee_data[nickname]["graduation_date"] = datetime.utcnow()
 
-    # Update other role statuses
+    # Update role statuses
     trainee_data[nickname]["has_support"] = any(role.id == SUPPORT_ROLE_ID for role in after.roles)
     trainee_data[nickname]["has_engineer"] = any(role.id == ENGINEER_ROLE_ID for role in after.roles)
 
-    # Update the trainee's embed
+    # Update embed
     await update_trainee_embed(nickname, track_channel)
-
-    # Update the summary message
     await update_existing_summary_message(track_channel)
+
 
 @bot.event
 async def on_member_remove(member):
