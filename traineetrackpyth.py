@@ -50,7 +50,7 @@ async def on_ready():
             trainee_data[nickname] = {
                 "profile_name": profile_name,
                 "join_date": join_date,
-                "joined_plus_4_weeks": joined_plus_4_weeks,
+                "joined_plus_2_weeks": joined_plus_2_weeks,
                 "has_support": has_support,
                 "has_engineer": has_engineer,
                 "recruitform_posted": False,
@@ -127,7 +127,7 @@ async def on_member_update(before, after):
         trainee_data[nickname] = {
             "profile_name": after.name,
             "join_date": join_date,
-            "joined_plus_4_weeks": join_date + timedelta(days=28),
+            "joined_plus_2_weeks": join_date + timedelta(days=14),
             "has_support": any(role.id == SUPPORT_ROLE_ID for role in after.roles),
             "has_engineer": any(role.id == ENGINEER_ROLE_ID for role in after.roles),
             "recruitform_posted": False,
@@ -179,7 +179,7 @@ def generate_report_embed(nickname):
     embed = discord.Embed(title=nickname)
     if data['graduated']:
         embed.color = discord.Color.greyple()
-    elif data['has_support'] and data['has_engineer'] and joined_days_ago >= 28:
+    elif data['has_support'] and data['has_engineer'] and joined_days_ago >= 14:
         embed.color = discord.Color.purple()
         embed.title = f"**{nickname}**"
     elif data['has_support'] and data['has_engineer']:
@@ -193,7 +193,7 @@ def generate_report_embed(nickname):
     total_signups = sum(data["signups"].values())
     embed.add_field(name="Profile", value=data["profile_name"], inline=True)
     embed.add_field(name="Joined", value=data["join_date"].strftime("%d-%m-%Y"), inline=True)
-    embed.add_field(name="4 Week Mark", value=data["joined_plus_4_weeks"].strftime("%d-%m-%Y"), inline=True)
+    embed.add_field(name="2 Week Mark", value=data["joined_plus_2_weeks"].strftime("%d-%m-%Y"), inline=True)
     embed.add_field(name="Support Role", value="✅" if data["has_support"] else "❌", inline=True)
     embed.add_field(name="Engineer Role", value="✅" if data["has_engineer"] else "❌", inline=True)
     embed.add_field(name="Recruitform Posted", value="✅" if data["recruitform_posted"] else "❌", inline=True)
@@ -228,7 +228,7 @@ def generate_summary_and_legend_embed(trainees_sorted):
             summary["Graduated"].append(nickname)
         elif data["has_support"] and data["has_engineer"] and joined_days_ago >= 28:
             summary["Ready to Graduate"].append(nickname)
-        elif data["has_support"] or data["has_engineer"] or joined_days_ago <= 28:
+        elif data["has_support"] or data["has_engineer"] or joined_days_ago <= 14:
             summary["On-Track"].append(nickname)
         else:
             summary["Behind"].append(nickname)
@@ -240,7 +240,7 @@ def generate_summary_and_legend_embed(trainees_sorted):
         "🟪 **Purple** — Ready to Graduate! Has both roles AND 2+ weeks, amazing! \n"
         "🟩 **Green** — Has both Support and Engineer but not done 2 weeks yet, great\n"
         "🟦 **Blue** — Has one of Support or Engineer, good \n"
-        "⬛ **Grey** — No roles but under 4 weeks, not bad\n"
+        "⬛ **Grey** — No roles but under 2 weeks, not bad\n"
         "🟧 **Orange** — No roles and in server over 4 weeks, bad\n"
         "🎓 **Graduate** — Graduated"
     ), inline=False)
