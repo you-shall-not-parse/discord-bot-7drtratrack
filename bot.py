@@ -11,7 +11,7 @@ async def on_ready():
     print(f"Bot is ready: {bot.user}")
 
 async def main():
-    await bot.load_extension("trainee_tracker")  # This loads the cog
+    await bot.load_extension("traineetrackpyth")  # This loads the cog
     await bot.start("DISCORD_BOT_TOKEN")
 
 asyncio.run(main())
