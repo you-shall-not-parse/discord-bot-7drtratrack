@@ -167,9 +167,33 @@ class TraineeTracker(commands.Cog):
             track_channel = self.bot.get_channel(self.TRACKING_CHANNEL_ID)
             await self.update_trainee_embed(nickname, track_channel)
 
-    def generate_report_embed(self, nickname):
-        # unchanged from your current code — just moved here
-        pass
+def generate_report_embed(self, nickname):
+    data = self.trainee_data[nickname]
+    embed = discord.Embed(
+        title=f"Trainee Tracker: {nickname}",
+        color=discord.Color.blue()
+    )
+    embed.add_field(name="Profile", value=data["profile_name"], inline=True)
+    embed.add_field(name="Join Date", value=data["join_date"].strftime('%Y-%m-%d'), inline=True)
+    embed.add_field(name="+14 Days", value=data["joined_plus_2_weeks"].strftime('%Y-%m-%d'), inline=True)
+
+    embed.add_field(name="Support Role", value="✅" if data["has_support"] else "❌", inline=True)
+    embed.add_field(name="Engineer Role", value="✅" if data["has_engineer"] else "❌", inline=True)
+    embed.add_field(name="Recruit Form Posted", value="✅" if data["recruitform_posted"] else "❌", inline=True)
+
+    embed.add_field(name="Training Signups", value=str(data["signups"]["Training Sign-ups"]), inline=True)
+    embed.add_field(name="Comp Match Signups", value=str(data["signups"]["Comp Match Sign-ups"]), inline=True)
+    embed.add_field(name="Friday Event Signups", value=str(data["signups"]["Friday Event Sign-ups"]), inline=True)
+
+    embed.add_field(name="Graduated", value="✅" if data["graduated"] else "❌", inline=True)
+    if data["graduated"] and data["graduation_date"]:
+        embed.add_field(name="Graduation Date", value=data["graduation_date"].strftime('%Y-%m-%d'), inline=True)
+
+    embed.add_field(name="Left Server", value="✅" if data["left_server"] else "❌", inline=True)
+
+    embed.set_footer(text="Auto-generated trainee report")
+    return embed
+
 
     def generate_summary_and_legend_embed(self, trainees_sorted):
         # unchanged from your current code — just moved here
