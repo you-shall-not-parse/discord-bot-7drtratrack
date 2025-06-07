@@ -44,7 +44,7 @@ async def on_ready():
             nickname = member.display_name
             profile_name = member.name
             join_date = member.joined_at or datetime.utcnow()
-            joined_plus_4_weeks = join_date + timedelta(days=28)
+            joined_plus_2_weeks = join_date + timedelta(days=14)
             has_support = any(role.id == SUPPORT_ROLE_ID for role in member.roles)
             has_engineer = any(role.id == ENGINEER_ROLE_ID for role in member.roles)
             trainee_data[nickname] = {
