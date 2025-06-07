@@ -145,9 +145,9 @@ async def on_member_update(before, after):
 
         # Delete old summary
         async for m in track_channel.history(limit=50):
-        if m.author == bot.user and m.embeds and "Trainee Tracker: Legend & Summary" in m.embeds[0].title:
-        await m.delete()
-        break
+            if m.author == bot.user and m.embeds and "Trainee Tracker: Legend & Summary" in m.embeds[0].title:
+            await m.delete()
+            break
 
         # Repost summary at bottom
         sorted_trainees = sorted(trainee_data.items(), key=lambda x: x[1]['join_date'])
