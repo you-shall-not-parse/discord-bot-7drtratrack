@@ -137,23 +137,24 @@ async def on_member_update(before, after):
             "signups": {ch: 0 for ch in CHANNEL_IDS}
         }
 
+# new section
         # Send new embed
         embed = generate_report_embed(nickname)
         msg = await track_channel.send(embed=embed)
         trainee_messages[nickname] = msg.id
 
-        # Delete existing summary message
+        # Delete old summary
         async for m in track_channel.history(limit=50):
         if m.author == bot.user and m.embeds and "Trainee Tracker: Legend & Summary" in m.embeds[0].title:
         await m.delete()
         break
 
-        # Send updated summary at the bottom
+        # Repost summary at bottom
         sorted_trainees = sorted(trainee_data.items(), key=lambda x: x[1]['join_date'])
         summary = generate_summary_and_legend_embed(sorted_trainees)
         await track_channel.send(embed=summary)
-        return
 
+    #new section
 
     # Skip update if not a trainee
     if nickname not in trainee_data:
