@@ -87,7 +87,6 @@ class BulkRole(commands.Cog):
                     "Now, reply with **two lines**:\n"
                     "**First line:** roles to add (comma-separated or 'none')\n"
                     "**Second line:** roles to remove (comma-separated, 'none', or '*')\n")
-                )
                 return
 
             if step == "add_and_remove_roles":
