@@ -47,7 +47,7 @@ async def main():
     async with bot:
         # Load your cogs
         await bot.load_extension("cogs.bulkrole")
-        # Add more cogs here as needed
+        await bot.load_extension("cogs.trainee_tracker")
         await bot.start(TOKEN)
 
 if __name__ == "__main__":
