@@ -6,7 +6,6 @@ from discord.ext import commands
 from discord import app_commands, Embed
 from discord.utils import get
 from typing import List
-import asyncio
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -312,46 +311,20 @@ class BulkRole(commands.Cog):
             f"**Preset:** `{preset}`\n"
             f"**Will add:** {add_names}\n"
             f"**Will remove:** {remove_names}\n\n"
-            "Type `yes` to confirm, or `no` to cancel."
+            "Applying now..."
         )
-        embed = Embed(title="Confirm Bulk Role Action", description=description, color=discord.Color.orange())
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        embed = Embed(title="Bulk Role Action", description=description, color=discord.Color.orange())
 
-        def check(m):
-            return (
-                m.author == interaction.user
-                and m.channel == interaction.channel
-                and m.content.lower() in ["yes", "no"]
-            )
         try:
-            msg = await self.bot.wait_for("message", check=check, timeout=60)
-        except asyncio.TimeoutError:
-            await interaction.followup.send("❌ Confirmation timed out.", ephemeral=True)
-            return
+            await member.remove_roles(*remove_roles, reason=f"Bulk role preset '{preset}' (by {interaction.user})")
+            await member.add_roles(*add_roles, reason=f"Bulk role preset '{preset}' (by {interaction.user})")
+            embed.color = discord.Color.green()
+            embed.add_field(name="Result", value=f"✅ Applied preset `{preset}` to {member.mention}.")
+        except Exception as e:
+            embed.color = discord.Color.red()
+            embed.add_field(name="Error", value=f"❌ Error updating roles: {e}")
 
-        if msg.content.lower() == "yes":
-            try:
-                await member.remove_roles(*remove_roles, reason=f"Bulk role preset '{preset}' (by {interaction.user})")
-                await member.add_roles(*add_roles, reason=f"Bulk role preset '{preset}' (by {interaction.user})")
-                await interaction.followup.send(
-                    embed=Embed(
-                        title="Success",
-                        description=f"✅ Applied preset `{preset}` to {member.mention}.",
-                        color=discord.Color.green(),
-                    ),
-                    ephemeral=True,
-                )
-            except Exception as e:
-                await interaction.followup.send(
-                    embed=Embed(
-                        title="Error",
-                        description=f"❌ Error updating roles: {e}",
-                        color=discord.Color.red(),
-                    ),
-                    ephemeral=True,
-                )
-        else:
-            await interaction.followup.send("❌ Action cancelled.", ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(BulkRole(bot))
