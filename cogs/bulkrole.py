@@ -7,7 +7,7 @@ from discord.utils import get
 from typing import List
 
 PRESET_FILE = "role_presets.json"
-REQUIRED_ROLE_NAME = "Assistant"  # <-- set this to your required role name
+REQUIRED_ROLE_NAME = "Assistant"  # Set to your server's assistant/admin role
 
 if not os.path.exists(PRESET_FILE):
     with open(PRESET_FILE, "w") as f:
@@ -25,89 +25,194 @@ class BulkRole(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.GUILD_ID = 1097913605082579024  # Set your guild/server ID here
+        self.dm_wizards = {}  # user_id -> state dict
 
-    # --- DM commands ---
+    # --- DM step-by-step preset creation ---
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot:
             return
 
-        if isinstance(message.channel, discord.DMChannel):
-            guild = self.bot.get_guild(self.GUILD_ID)
-            member = guild.get_member(message.author.id)
-            if not member:
-                await message.channel.send("❌ You must be a member of the server to use this command.")
+        # Only care about DMs
+        if not isinstance(message.channel, discord.DMChannel):
+            return
+
+        guild = self.bot.get_guild(self.GUILD_ID)
+        if not guild:
+            await message.channel.send("❌ Bot couldn't access the configured server!")
+            return
+
+        member = guild.get_member(message.author.id)
+        if not member:
+            await message.channel.send("❌ You must be a member of the server to use this command.")
+            return
+
+        # Check role
+        role = get(member.roles, name=REQUIRED_ROLE_NAME)
+        if not role:
+            await message.channel.send(f"❌ You need the `{REQUIRED_ROLE_NAME}` role to use this feature.")
+            return
+
+        # --- Step-by-step wizard state ---
+        if message.author.id in self.dm_wizards:
+            state = self.dm_wizards[message.author.id]
+            step = state["step"]
+
+            if step == "preset_name":
+                pname = message.content.strip()
+                if not pname:
+                    await message.channel.send("Preset name can't be empty. Please enter a name:")
+                    return
+                state["preset_name"] = pname
+                state["step"] = "add_roles"
+                await message.channel.send(
+                    "List **roles to add** (comma-separated), or type `none` for no roles.\n"
+                    "Example: `Moderator, Subscriber` or `none`\n"
+                    "Available roles:\n" +
+                    ", ".join([r.name for r in guild.roles if not r.managed and r != guild.default_role])
+                )
                 return
 
-            # Check Assistant role
-            role = get(member.roles, name=REQUIRED_ROLE_NAME)
-            if not role:
-                await message.channel.send(f"❌ You need the `{REQUIRED_ROLE_NAME}` role to use this feature.")
-                return
-
-            parts = message.content.strip().split(" ", 3)
-            if len(parts) >= 4 and parts[0] == "!addpreset":
-                preset_name = parts[1]
-                add_roles, remove_roles = [], []
-                not_found = []
-
-                # Case-insensitive role lookup
-                for rname in parts[2].split(","):
-                    role = discord.utils.find(lambda r: r.name.lower() == rname.strip().lower(), guild.roles)
-                    if role:
-                        add_roles.append(role.id)
-                    else:
-                        not_found.append(rname.strip())
-
-                if parts[3].strip() == "*":
-                    remove_roles = ["*"]
+            if step == "add_roles":
+                add_field = message.content.strip().lower()
+                add_roles, not_found = [], []
+                if add_field in ("none", ""):
+                    add_roles = []
                 else:
-                    for rname in parts[3].split(","):
-                        role = discord.utils.find(lambda r: r.name.lower() == rname.strip().lower(), guild.roles)
+                    for rname in message.content.split(","):
+                        rname = rname.strip()
+                        if rname.lower() in ("none", ""):
+                            continue
+                        role = discord.utils.find(lambda r: r.name.lower() == rname.lower(), guild.roles)
+                        if role:
+                            add_roles.append(role.id)
+                        else:
+                            not_found.append(rname)
+                if not_found:
+                    await message.channel.send(f"❌ Roles not found: {', '.join(not_found)}\nTry again, or type `none`.")
+                    return
+                state["add_roles"] = add_roles
+                state["step"] = "remove_roles"
+                await message.channel.send(
+                    "List **roles to remove** (comma-separated), `none` for no roles, or `*` to remove ALL roles.\n"
+                    "Example: `Staff, Muted` or `none` or `*`\n"
+                    "Available roles:\n" +
+                    ", ".join([r.name for r in guild.roles if not r.managed and r != guild.default_role])
+                )
+                return
+
+            if step == "remove_roles":
+                remove_field = message.content.strip().lower()
+                remove_roles, not_found = [], []
+                if remove_field == "*":
+                    remove_roles = ["*"]
+                elif remove_field in ("none", ""):
+                    remove_roles = []
+                else:
+                    for rname in message.content.split(","):
+                        rname = rname.strip()
+                        if rname.lower() in ("none", ""):
+                            continue
+                        role = discord.utils.find(lambda r: r.name.lower() == rname.lower(), guild.roles)
                         if role:
                             remove_roles.append(role.id)
                         else:
-                            not_found.append(rname.strip())
-
+                            not_found.append(rname)
                 if not_found:
-                    await message.channel.send(f"❌ These roles were not found: {', '.join(not_found)}")
+                    await message.channel.send(f"❌ Roles not found: {', '.join(not_found)}\nTry again, or type `none`.")
                     return
+                state["remove_roles"] = remove_roles
 
-                presets = load_presets()
-                presets[preset_name] = {"add": add_roles, "remove": remove_roles}
-                save_presets(presets)
-                await message.channel.send(f"✅ Preset `{preset_name}` saved.")
-
-            elif message.content.strip() == "!listpresets":
-                presets = load_presets()
-                if not presets:
-                    await message.channel.send("📭 No presets saved.")
-                    return
-
-                def resolve_names(role_ids):
-                    if role_ids == ["*"]:
-                        return ["ALL ROLES"]
-                    return [
-                        discord.utils.get(guild.roles, id=int(rid)).name
-                        for rid in role_ids if discord.utils.get(guild.roles, id=int(rid))
-                    ]
-
-                msg = "📋 **Presets:**\n"
-                for pname, pdata in presets.items():
-                    msg += f"🔹 `{pname}` — Add: {resolve_names(pdata['add'])} | Remove: {resolve_names(pdata['remove'])}\n"
-                await message.channel.send(msg)
-
-            elif message.content.strip().startswith("!delpreset "):
-                preset_name = message.content.strip().split(" ", 1)[1]
-                presets = load_presets()
-                if preset_name in presets:
-                    del presets[preset_name]
-                    save_presets(presets)
-                    await message.channel.send(f"🗑️ Preset `{preset_name}` deleted.")
+                # Show summary and ask for confirmation
+                add_names = (
+                    "None" if not state["add_roles"] else
+                    ", ".join([discord.utils.get(guild.roles, id=rid).name for rid in state["add_roles"]])
+                )
+                if state["remove_roles"] == ["*"]:
+                    remove_names = "ALL ROLES"
+                elif not state["remove_roles"]:
+                    remove_names = "None"
                 else:
-                    await message.channel.send(f"❌ Preset `{preset_name}` not found.")
+                    remove_names = ", ".join([discord.utils.get(guild.roles, id=rid).name for rid in state["remove_roles"]])
+                state["step"] = "confirm"
+                await message.channel.send(
+                    f"**Preset name:** `{state['preset_name']}`\n"
+                    f"**Will add:** {add_names}\n"
+                    f"**Will remove:** {remove_names}\n"
+                    "Type `confirm` to save, or `cancel` to abort."
+                )
+                return
 
-    # --- Sync and autocomplete ---
+            if step == "confirm":
+                answer = message.content.strip().lower()
+                if answer == "confirm":
+                    presets = load_presets()
+                    presets[state["preset_name"]] = {
+                        "add": state["add_roles"],
+                        "remove": state["remove_roles"]
+                    }
+                    save_presets(presets)
+                    await message.channel.send(f"✅ Preset `{state['preset_name']}` saved.")
+                    del self.dm_wizards[message.author.id]
+                    return
+                elif answer == "cancel":
+                    await message.channel.send("❌ Preset creation cancelled.")
+                    del self.dm_wizards[message.author.id]
+                    return
+                else:
+                    await message.channel.send("Please type `confirm` to save, or `cancel` to abort.")
+                    return
+
+        # --- Command triggers (non-wizard) ---
+        if message.content.strip().startswith("!addpreset"):
+            self.dm_wizards[message.author.id] = {"step": "preset_name"}
+            await message.channel.send(
+                "Let's create a new preset!\nWhat should the preset name be?"
+            )
+            return
+
+        elif message.content.strip() == "!listpresets":
+            presets = load_presets()
+            if not presets:
+                await message.channel.send("📭 No presets saved.")
+                return
+
+            def resolve_names(role_ids):
+                if role_ids == ["*"]:
+                    return ["ALL ROLES"]
+                return [
+                    discord.utils.get(guild.roles, id=int(rid)).name
+                    for rid in role_ids if discord.utils.get(guild.roles, id=int(rid))
+                ]
+
+            msg = "📋 **Presets:**\n"
+            for pname, pdata in presets.items():
+                msg += f"🔹 `{pname}` — Add: {resolve_names(pdata['add'])} | Remove: {resolve_names(pdata['remove'])}\n"
+            await message.channel.send(msg)
+            return
+
+        elif message.content.strip().startswith("!delpreset "):
+            preset_name = message.content.strip().split(" ", 1)[1]
+            presets = load_presets()
+            if preset_name in presets:
+                del presets[preset_name]
+                save_presets(presets)
+                await message.channel.send(f"🗑️ Preset `{preset_name}` deleted.")
+            else:
+                await message.channel.send(f"❌ Preset `{preset_name}` not found.")
+            return
+
+        # Usage/help prompt
+        elif message.content.strip().startswith("!"):
+            await message.channel.send(
+                "Commands:\n"
+                "`!addpreset` — interactive preset creation\n"
+                "`!listpresets` — list all presets\n"
+                "`!delpreset <preset_name>` — delete a preset\n"
+                "In the wizard, type `none` for no roles or `*` to remove all roles."
+            )
+
+    # --- Slash command sync ---
     @commands.Cog.listener()
     async def on_ready(self):
         await self.bot.wait_until_ready()
@@ -117,12 +222,12 @@ class BulkRole(commands.Cog):
         except Exception as e:
             print(f"Failed to sync commands: {e}")
 
+    # --- Autocomplete for preset names ---
     async def preset_autocomplete(
         self,
         interaction: discord.Interaction,
         current: str,
     ) -> List[app_commands.Choice[str]]:
-        """Autocomplete for preset names."""
         presets = load_presets()
         return [
             app_commands.Choice(name=name, value=name)
