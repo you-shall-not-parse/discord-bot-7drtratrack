@@ -64,76 +64,84 @@ class BulkRole(commands.Cog):
                     await message.channel.send("Preset name can't be empty. Please enter a name:")
                     return
                 state["preset_name"] = pname
-                state["step"] = "add_roles"
+                state["step"] = "add_and_remove_roles"
                 await message.channel.send(
-                    "List **roles to add** (comma-separated), or type `none` for no roles.\n"
-                    "Example: `Moderator, Subscriber` or `none`\n"
+                    "Now, reply with **two lines**:\n"
+                    "**First line:** roles to add (comma-separated or 'none')\n"
+                    "**Second line:** roles to remove (comma-separated, 'none', or '*')\n"
+                    "Example:\n"
+                    "Moderator, Subscriber\n"
+                    "Muted, Banned\n\n"
+                    "Or:\n"
+                    "none\n"
+                    "Staff\n"
                     "Available roles:\n" +
                     ", ".join([r.name for r in guild.roles if not r.managed and r != guild.default_role])
                 )
                 return
 
-            if step == "add_roles":
-                add_field = message.content.strip().lower()
-                add_roles, not_found = [], []
+            if step == "add_and_remove_roles":
+                lines = message.content.strip().split("\n")
+                if len(lines) < 2:
+                    await message.channel.send("Please provide two lines: first for roles to add, second for roles to remove.")
+                    return
+
+                add_field = lines[0].strip().lower()
+                remove_field = lines[1].strip().lower()
+
+                add_roles, add_not_found = [], []
                 if add_field in ("none", ""):
                     add_roles = []
                 else:
-                    for rname in message.content.split(","):
+                    for rname in add_field.split(","):
                         rname = rname.strip()
-                        if rname.lower() in ("none", ""):
+                        if rname in ("none", ""):
                             continue
                         role = discord.utils.find(lambda r: r.name.lower() == rname.lower(), guild.roles)
                         if role:
                             add_roles.append(role.id)
                         else:
-                            not_found.append(rname)
-                if not_found:
-                    await message.channel.send(f"❌ Roles not found: {', '.join(not_found)}\nTry again, or type `none`.")
-                    return
-                state["add_roles"] = add_roles
-                state["step"] = "remove_roles"
-                await message.channel.send(
-                    "List **roles to remove** (comma-separated), `none` for no roles, or `*` to remove ALL roles.\n"
-                    "Example: `Staff, Muted` or `none` or `*`\n"
-                    "Available roles:\n" +
-                    ", ".join([r.name for r in guild.roles if not r.managed and r != guild.default_role])
-                )
-                return
+                            add_not_found.append(rname)
 
-            if step == "remove_roles":
-                remove_field = message.content.strip().lower()
-                remove_roles, not_found = [], []
+                remove_roles, remove_not_found = [], []
                 if remove_field == "*":
                     remove_roles = ["*"]
                 elif remove_field in ("none", ""):
                     remove_roles = []
                 else:
-                    for rname in message.content.split(","):
+                    for rname in remove_field.split(","):
                         rname = rname.strip()
-                        if rname.lower() in ("none", ""):
+                        if rname in ("none", ""):
                             continue
                         role = discord.utils.find(lambda r: r.name.lower() == rname.lower(), guild.roles)
                         if role:
                             remove_roles.append(role.id)
                         else:
-                            not_found.append(rname)
-                if not_found:
-                    await message.channel.send(f"❌ Roles not found: {', '.join(not_found)}\nTry again, or type `none`.")
+                            remove_not_found.append(rname)
+
+                not_found_msgs = []
+                if add_not_found:
+                    not_found_msgs.append(f"Add roles not found: {', '.join(add_not_found)}")
+                if remove_not_found:
+                    not_found_msgs.append(f"Remove roles not found: {', '.join(remove_not_found)}")
+                if not_found_msgs:
+                    await message.channel.send("❌ " + " | ".join(not_found_msgs) + "\nPlease try again, or type `none`.")
                     return
+
+                state["add_roles"] = add_roles
                 state["remove_roles"] = remove_roles
 
                 # Show summary and ask for confirmation
                 add_names = (
-                    "None" if not state["add_roles"] else
-                    ", ".join([discord.utils.get(guild.roles, id=rid).name for rid in state["add_roles"]])
+                    "None" if not add_roles else
+                    ", ".join([discord.utils.get(guild.roles, id=rid).name for rid in add_roles])
                 )
-                if state["remove_roles"] == ["*"]:
+                if remove_roles == ["*"]:
                     remove_names = "ALL ROLES"
-                elif not state["remove_roles"]:
+                elif not remove_roles:
                     remove_names = "None"
                 else:
-                    remove_names = ", ".join([discord.utils.get(guild.roles, id=rid).name for rid in state["remove_roles"]])
+                    remove_names = ", ".join([discord.utils.get(guild.roles, id=rid).name for rid in remove_roles])
                 state["step"] = "confirm"
                 await message.channel.send(
                     f"**Preset name:** `{state['preset_name']}`\n"
