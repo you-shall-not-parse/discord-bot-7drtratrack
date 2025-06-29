@@ -1,4 +1,3 @@
-# trainee_tracker.py
 import discord
 from discord.ext import commands
 from datetime import datetime, timedelta
@@ -46,8 +45,7 @@ class TraineeTracker(commands.Cog):
                     "recruitform_posted": False,
                     "left_server": False,
                     "graduated": False,
-                    "graduation_date": None,
-                    "signups": {ch: 0 for ch in self.CHANNEL_IDS}
+                    "graduation_date": None
                 }
 
         recruitform_channel = self.bot.get_channel(self.RECRUITFORM_CHANNEL_ID)
@@ -56,23 +54,7 @@ class TraineeTracker(commands.Cog):
                 if not message.author.bot and message.author.display_name in self.trainee_data:
                     self.trainee_data[message.author.display_name]["recruitform_posted"] = True
 
-        for channel_name, channel_id in self.CHANNEL_IDS.items():
-            channel = self.bot.get_channel(channel_id)
-            if channel:
-                async for message in channel.history(limit=500):
-                    if message.author.bot:
-                        continue
-                    if message.embeds:
-                        for embed in message.embeds:
-                            if not embed.description:
-                                continue
-                            for trainee in self.trainee_data:
-                                if trainee in embed.description:
-                                    self.trainee_data[trainee]["signups"][channel_name] += 1
-                    else:
-                        for trainee in self.trainee_data:
-                            if trainee in message.content:
-                                self.trainee_data[trainee]["signups"][channel_name] += 1
+        # Removed: parsing signups from message history
 
         await track_channel.purge(limit=100, check=lambda m: m.author == self.bot.user)
 
@@ -95,13 +77,7 @@ class TraineeTracker(commands.Cog):
             if nickname in self.trainee_messages:
                 self.trainee_data[nickname]["recruitform_posted"] = True
                 await self.update_trainee_embed(nickname, track_channel)
-        elif message.channel.id in self.CHANNEL_IDS.values():
-            for trainee in self.trainee_messages:
-                if trainee in message.content:
-                    channel_name = next((name for name, cid in self.CHANNEL_IDS.items() if cid == message.channel.id), None)
-                    if channel_name:
-                        self.trainee_data[trainee]["signups"][channel_name] += 1
-                        await self.update_trainee_embed(trainee, track_channel)
+        # Removed: sign-up tracking in signup channels
 
     @commands.Cog.listener()
     async def on_member_update(self, before, after):
@@ -124,8 +100,7 @@ class TraineeTracker(commands.Cog):
                 "recruitform_posted": False,
                 "left_server": False,
                 "graduated": False,
-                "graduation_date": None,
-                "signups": {ch: 0 for ch in self.CHANNEL_IDS}
+                "graduation_date": None
             }
 
             embed = self.generate_report_embed(nickname)
@@ -178,49 +153,11 @@ class TraineeTracker(commands.Cog):
         embed.add_field(name="Support Role", value="✅" if data["has_support"] else "❌", inline=True)
         embed.add_field(name="Engineer Role", value="✅" if data["has_engineer"] else "❌", inline=True)
         embed.add_field(name="Recruit Form Posted", value="✅" if data["recruitform_posted"] else "❌", inline=True)
-        embed.add_field(name="Training Signups", value=str(data["signups"]["Training Sign-ups"]), inline=True)
-        embed.add_field(name="Comp Match Signups", value=str(data["signups"]["Comp Match Sign-ups"]), inline=True)
-        embed.add_field(name="Friday Event Signups", value=str(data["signups"]["Friday Event Sign-ups"]), inline=True)
         embed.add_field(name="Graduated", value="✅" if data["graduated"] else "❌", inline=True)
         if data["graduated"] and data["graduation_date"]:
             embed.add_field(name="Graduation Date", value=data["graduation_date"].strftime('%Y-%m-%d'), inline=True)
         embed.add_field(name="Left Server", value="✅" if data["left_server"] else "❌", inline=True)
         embed.set_footer(text="Auto-generated trainee report")
-        return embed
-
-    def generate_summary_and_legend_embed(self, trainees_sorted):
-        summary = {
-            "Behind": [],
-            "On-Track": [],
-            "Ready to Graduate": [],
-            "Graduated": []
-        }
-        for nickname, data in trainees_sorted:
-            joined_days_ago = (datetime.utcnow().replace(tzinfo=None) - data['join_date'].replace(tzinfo=None)).days
-            if data["graduated"]:
-                summary["Graduated"].append(nickname)
-            elif data["has_support"] and data["has_engineer"] and joined_days_ago >= 28:
-                summary["Ready to Graduate"].append(nickname)
-            elif data["has_support"] or data["has_engineer"] or joined_days_ago <= 14:
-                summary["On-Track"].append(nickname)
-            else:
-                summary["Behind"].append(nickname)
-        embed = discord.Embed(title="**Trainee Tracker: Legend & Summary**", color=discord.Color.blurple())
-        # Legend section
-        embed.add_field(name="Legend", value=(
-            "🟪 **Purple** — Ready to Graduate! Has both roles AND 2+ weeks, amazing! \n"
-            "🟩 **Green** — Has both Support and Engineer but not done 2 weeks yet, great\n"
-            "🟦 **Blue** — Has one of Support or Engineer, good \n"
-            "⬛ **Grey** — No roles but under 2 weeks, not bad\n"
-            "🟧 **Orange** — No roles and in server over 4 weeks, bad\n"
-            "🎓 **Graduate** — Graduated"
-        ), inline=False)
-        # Spacing line
-        embed.add_field(name="\u200b", value="—" * 30, inline=False)
-        # Summary section
-        for category, names in summary.items():
-            if names:
-                embed.add_field(name=category, value="\n".join(names), inline=False)
         return embed
 
     async def update_trainee_embed(self, nickname, track_channel):
@@ -231,6 +168,44 @@ class TraineeTracker(commands.Cog):
                 await msg.edit(embed=embed)
             except discord.NotFound:
                 pass
+
+    def generate_summary_and_legend_embed(self, trainees_sorted):
+        summary = {
+            "Behind": [],
+            "On-Track": [],
+            "Ready to Graduate": [],
+            "Graduated": []
+        }
+
+        for nickname, data in trainees_sorted:
+            joined_days_ago = (datetime.utcnow().replace(tzinfo=None) - data['join_date'].replace(tzinfo=None)).days
+            if data["graduated"]:
+                summary["Graduated"].append(nickname)
+            elif data["has_support"] and data["has_engineer"] and joined_days_ago >= 28:
+                summary["Ready to Graduate"].append(nickname)
+            elif data["has_support"] or data["has_engineer"] or joined_days_ago <= 14:
+                summary["On-Track"].append(nickname)
+            else:
+                summary["Behind"].append(nickname)
+
+        embed = discord.Embed(title="Trainee Tracker: Legend & Summary", color=discord.Color.blurple())
+
+        embed.add_field(name="Legend", value=(
+            "🟪 **Purple** — Ready to Graduate! Has both roles AND 2+ weeks, amazing!\n"
+            "🟩 **Green** — Has both Support and Engineer but not done 2 weeks yet, great\n"
+            "🟦 **Blue** — Has one of Support or Engineer, good\n"
+            "⬛ **Grey** — No roles but under 2 weeks, not bad\n"
+            "🟧 **Orange** — No roles and in server over 4 weeks, bad\n"
+            "🎓 **Graduate** — Graduated"
+        ), inline=False)
+
+        embed.add_field(name="\u200b", value="—" * 30, inline=False)
+
+        for category, names in summary.items():
+            if names:
+                embed.add_field(name=category, value="\n".join(names), inline=False)
+
+        return embed
 
     async def update_existing_summary_message(self, track_channel):
         sorted_trainees = sorted(self.trainee_data.items(), key=lambda x: x[1]['join_date'])
