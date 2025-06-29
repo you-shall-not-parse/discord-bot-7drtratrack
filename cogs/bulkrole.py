@@ -225,18 +225,18 @@ class BulkRole(commands.Cog):
         await interaction.response.defer(ephemeral=True, thinking=True)
         guild = interaction.guild
         if not guild:
-            await interaction.followup.send(embed=Embed(title="Error", description="This command must be used in a server.", color=discord.Color.red()), ephemeral=True)
+            await interaction.followup.send("This command must be used in a server.", ephemeral=True)
             return
         if not guild.me.guild_permissions.manage_roles:
-            await interaction.followup.send(embed=Embed(title="Permission Error", description="❌ I lack the `Manage Roles` permission.", color=discord.Color.red()), ephemeral=True)
+            await interaction.followup.send("❌ I lack the `Manage Roles` permission.", ephemeral=True)
             return
         user_member = guild.get_member(interaction.user.id)
         if not user_member or not get(user_member.roles, name=REQUIRED_ROLE_NAME):
-            await interaction.followup.send(embed=Embed(title="Permission Denied", description=f"❌ You need the `{REQUIRED_ROLE_NAME}` role to use this command.", color=discord.Color.red()), ephemeral=True)
+            await interaction.followup.send(f"❌ You need the `{REQUIRED_ROLE_NAME}` role to use this command.", ephemeral=True)
             return
         presets = load_presets()
         if preset not in presets:
-            await interaction.followup.send(embed=Embed(title="Not Found", description=f"❌ Preset `{preset}` not found.", color=discord.Color.red()), ephemeral=True)
+            await interaction.followup.send(f"❌ Preset `{preset}` not found.", ephemeral=True)
             return
 
         add_roles = [get(guild.roles, id=int(rid)) for rid in presets[preset]["add"]]
@@ -255,23 +255,18 @@ class BulkRole(commands.Cog):
         else:
             remove_names = ", ".join([r.name for r in remove_roles])
 
-        description = (
-            f"**Target:** {member.mention}\n"
-            f"**Preset:** `{preset}`\n"
-            f"**Will add:** {add_names}\n"
-            f"**Will remove:** {remove_names}\n\n"
-            "Applying now..."
-        )
-        embed = Embed(title="Bulk Role Action", description=description, color=discord.Color.orange())
         try:
             await member.remove_roles(*remove_roles, reason=f"Bulk role preset '{preset}' (by {interaction.user})")
             await member.add_roles(*add_roles, reason=f"Bulk role preset '{preset}' (by {interaction.user})")
-            embed.color = discord.Color.green()
-            embed.add_field(name="Result", value=f"✅ Applied preset `{preset}` to {member.mention}.")
+
+            await interaction.channel.send(
+                f"✅ {member.mention} had roles updated via bulk preset `{preset}` by {interaction.user.mention}.\n"
+                f"**Added:** {add_names}\n"
+                f"**Removed:** {remove_names}"
+            )
+            await interaction.followup.send("Bulk role change applied and posted publicly.", ephemeral=True)
         except Exception as e:
-            embed.color = discord.Color.red()
-            embed.add_field(name="Error", value=f"❌ Error updating roles: {e}")
-        await interaction.followup.send(embed=embed, ephemeral=True)
+            await interaction.followup.send(f"❌ Error updating roles: {e}", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(BulkRole(bot))
