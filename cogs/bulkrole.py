@@ -63,6 +63,7 @@ class ConfirmView(ui.View):
         self.remove_roles = remove_roles
         self.callback = callback
         self.value = None
+        self.message = None  # Store the message for timeout handling
 
     @ui.button(label="Confirm", style=discord.ButtonStyle.green)
     async def confirm(self, interaction: Interaction, button: ui.Button):
@@ -73,6 +74,16 @@ class ConfirmView(ui.View):
     async def cancel(self, interaction: Interaction, button: ui.Button):
         await self.callback(interaction, False)
         self.stop()
+
+    async def on_timeout(self):
+        # Disable all buttons when the view times out
+        for item in self.children:
+            item.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except Exception:
+                pass  # Message may have been deleted or already edited
 
 class BulkRole(commands.Cog):
     def __init__(self, bot):
@@ -159,7 +170,7 @@ class BulkRole(commands.Cog):
                     remove_roles = ["*"]
                 elif remove_field not in ("none", ""):
                     remove_roles, remove_not_found = parse_roles(guild, remove_field.split(","))
-
+                
                 not_found_msgs = []
                 if add_not_found:
                     not_found_msgs.append(f"Add roles not found: {', '.join(add_not_found)}")
@@ -356,17 +367,34 @@ class BulkRole(commands.Cog):
                 await inter.response.send_message("You can't respond to this confirmation.", ephemeral=True)
                 return
             if not confirmed:
-                await inter.response.edit_message(embed=Embed(title="Cancelled", description="❌ Action cancelled.", color=discord.Color.red()), view=None)
+                try:
+                    await inter.response.edit_message(
+                        embed=Embed(title="Cancelled", description="❌ Action cancelled.", color=discord.Color.red()), view=None)
+                except discord.NotFound:
+                    await inter.followup.send("This action is no longer valid (confirmation expired).", ephemeral=True)
                 return
             try:
                 await member.remove_roles(*remove_roles, reason=f"Bulk role preset '{preset}' (by {interaction.user})")
                 await member.add_roles(*add_roles, reason=f"Bulk role preset '{preset}' (by {interaction.user})")
-                await inter.response.edit_message(embed=Embed(title="Success", description=f"✅ Applied preset `{preset}` to {member.mention}.", color=discord.Color.green()), view=None)
+                try:
+                    await inter.response.edit_message(
+                        embed=Embed(title="Success", description=f"✅ Applied preset `{preset}` to {member.mention}.", color=discord.Color.green()),
+                        view=None
+                    )
+                except discord.NotFound:
+                    await inter.followup.send(
+                        f"✅ Applied preset `{preset}` to {member.mention}, but the confirmation message expired.", ephemeral=True)
             except discord.DiscordException as e:
-                await inter.response.edit_message(embed=Embed(title="Error", description=f"❌ Error updating roles: {e}", color=discord.Color.red()), view=None)
+                try:
+                    await inter.response.edit_message(
+                        embed=Embed(title="Error", description=f"❌ Error updating roles: {e}", color=discord.Color.red()), view=None)
+                except discord.NotFound:
+                    await inter.followup.send(
+                        f"❌ Error updating roles: {e} (confirmation expired)", ephemeral=True)
 
         view = ConfirmView(member, add_roles, remove_roles, confirmed_callback)
-        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        msg = await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        view.message = msg
 
 async def setup(bot):
     await bot.add_cog(BulkRole(bot))
