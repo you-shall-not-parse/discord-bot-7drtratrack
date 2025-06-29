@@ -139,7 +139,7 @@ class TraineeTracker(commands.Cog):
     def generate_report_embed(self, nickname):
         data = self.trainee_data[nickname]
         embed = discord.Embed(
-            title=f"Trainee Tracker: {nickname}"
+            title=f"{nickname}"
         )
         joined_days_ago = (datetime.utcnow().replace(tzinfo=None) - data['join_date'].replace(tzinfo=None)).days
 
@@ -163,11 +163,12 @@ class TraineeTracker(commands.Cog):
         embed.add_field(name="Support Role", value="✅" if data["has_support"] else "❌", inline=True)
         embed.add_field(name="Engineer Role", value="✅" if data["has_engineer"] else "❌", inline=True)
         embed.add_field(name="Recruit Form Posted", value="✅" if data["recruitform_posted"] else "❌", inline=True)
-        embed.add_field(name="Graduated", value="✅" if data["graduated"] else "❌", inline=True)
         if data["graduated"] and data["graduation_date"]:
             embed.add_field(name="Graduation Date", value=data["graduation_date"].strftime('%Y-%m-%d'), inline=True)
-        embed.add_field(name="Left Server", value="✅" if data["left_server"] else "❌", inline=True)
-        embed.set_footer(text="Auto-generated trainee report")
+        if data["left_server"]:
+            embed.set_footer(text="⚠️ This member has left the server")
+        elif data["graduated"]:
+            embed.set_footer(text=f"🎓 Graduated on {data['graduation_date'].strftime('%d-%m-%Y')}")
         return embed
 
 
