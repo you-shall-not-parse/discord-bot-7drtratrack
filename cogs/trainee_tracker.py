@@ -11,11 +11,6 @@ class TraineeTracker(commands.Cog):
         self.ENGINEER_ROLE_ID = 1100005700106719312
         self.RECRUITFORM_CHANNEL_ID = 1098331019364552845
         self.TRACKING_CHANNEL_ID = 1368543744193990676
-        self.CHANNEL_IDS = {
-            "Training Sign-ups": 1097984129854869515,
-            "Comp Match Sign-ups": 1101226715763720272,
-            "Friday Event Sign-ups": 1317153335354327060
-        }
         self.trainee_data = {}
         self.trainee_messages = {}
 
@@ -53,8 +48,6 @@ class TraineeTracker(commands.Cog):
             async for message in recruitform_channel.history(limit=1000):
                 if not message.author.bot and message.author.display_name in self.trainee_data:
                     self.trainee_data[message.author.display_name]["recruitform_posted"] = True
-
-        # Removed: parsing signups from message history
 
         await track_channel.purge(limit=100, check=lambda m: m.author == self.bot.user)
 
@@ -141,15 +134,29 @@ class TraineeTracker(commands.Cog):
             track_channel = self.bot.get_channel(self.TRACKING_CHANNEL_ID)
             await self.update_trainee_embed(nickname, track_channel)
 
+#new section
+    
     def generate_report_embed(self, nickname):
-        data = self.trainee_data[nickname]
-        embed = discord.Embed(
-            title=f"Trainee Tracker: {nickname}",
-            color=discord.Color.blue()
+         embed = discord.Embed(
+            title=f"{nickname}"
         )
+         joined_days_ago = (datetime.utcnow().replace(tzinfo=None) - data['join_date'].replace(tzinfo=None)).days
+        if data['graduated']:
+           embed.color = discord.Color.greyple()
+        elif data['has_support'] and data['has_engineer'] and joined_days_ago >= 14:
+            embed.color = discord.Color.purple()
+           embed.title = f"**{nickname}**"
+        elif data['has_support'] and data['has_engineer']:
+             embed.color = discord.Color.green()
+        elif data['has_support'] or data['has_engineer']:
+             embed.color = discord.Color.blue()
+        elif joined_days_ago > 28:
+        else:
+             embed.color = discord.Color.dark_grey()
+
         embed.add_field(name="Profile", value=data["profile_name"], inline=True)
-        embed.add_field(name="Join Date", value=data["join_date"].strftime('%Y-%m-%d'), inline=True)
-        embed.add_field(name="+14 Days", value=data["joined_plus_2_weeks"].strftime('%Y-%m-%d'), inline=True)
+        embed.add_field(name="Join Date", value=data["join_date"].strftime('%d-%m-%Y'), inline=True)
+        embed.add_field(name="+14 Days", value=data["joined_plus_2_weeks"].strftime('%d-%m-%Y'), inline=True)
         embed.add_field(name="Support Role", value="✅" if data["has_support"] else "❌", inline=True)
         embed.add_field(name="Engineer Role", value="✅" if data["has_engineer"] else "❌", inline=True)
         embed.add_field(name="Recruit Form Posted", value="✅" if data["recruitform_posted"] else "❌", inline=True)
@@ -159,6 +166,11 @@ class TraineeTracker(commands.Cog):
         embed.add_field(name="Left Server", value="✅" if data["left_server"] else "❌", inline=True)
         embed.set_footer(text="Auto-generated trainee report")
         return embed
+
+
+#new section
+
+
 
     async def update_trainee_embed(self, nickname, track_channel):
         if nickname in self.trainee_messages:
