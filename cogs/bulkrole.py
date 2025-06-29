@@ -4,7 +4,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from discord.utils import get
-from typing import List
+from typing import List 
 
 PRESET_FILE = "role_presets.json"
 REQUIRED_ROLE_NAME = "Assistant"  # Set to your server's assistant/admin role
