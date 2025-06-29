@@ -4,6 +4,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from discord.utils import get
+from typing import List
 
 PRESET_FILE = "role_presets.json"
 REQUIRED_ROLE_NAME = "Assistant"  # <-- set this to your required role name
@@ -25,6 +26,7 @@ class BulkRole(commands.Cog):
         self.bot = bot
         self.GUILD_ID = 1097913605082579024  # Set your guild/server ID here
 
+    # --- DM commands ---
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot:
@@ -37,7 +39,7 @@ class BulkRole(commands.Cog):
                 await message.channel.send("❌ You must be a member of the server to use this command.")
                 return
 
-            # Check if member has the required role
+            # Check Assistant role
             role = get(member.roles, name=REQUIRED_ROLE_NAME)
             if not role:
                 await message.channel.send(f"❌ You need the `{REQUIRED_ROLE_NAME}` role to use this feature.")
@@ -85,7 +87,10 @@ class BulkRole(commands.Cog):
                 def resolve_names(role_ids):
                     if role_ids == ["*"]:
                         return ["ALL ROLES"]
-                    return [discord.utils.get(guild.roles, id=int(rid)).name for rid in role_ids if discord.utils.get(guild.roles, id=int(rid))]
+                    return [
+                        discord.utils.get(guild.roles, id=int(rid)).name
+                        for rid in role_ids if discord.utils.get(guild.roles, id=int(rid))
+                    ]
 
                 msg = "📋 **Presets:**\n"
                 for pname, pdata in presets.items():
@@ -102,6 +107,7 @@ class BulkRole(commands.Cog):
                 else:
                     await message.channel.send(f"❌ Preset `{preset_name}` not found.")
 
+    # --- Sync and autocomplete ---
     @commands.Cog.listener()
     async def on_ready(self):
         await self.bot.wait_until_ready()
@@ -111,8 +117,23 @@ class BulkRole(commands.Cog):
         except Exception as e:
             print(f"Failed to sync commands: {e}")
 
+    async def preset_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str,
+    ) -> List[app_commands.Choice[str]]:
+        """Autocomplete for preset names."""
+        presets = load_presets()
+        return [
+            app_commands.Choice(name=name, value=name)
+            for name in presets
+            if current.lower() in name.lower()
+        ][:25]
+
+    # --- Slash command ---
     @app_commands.command(name="bulk-role", description="Apply a bulk role preset to a user")
     @app_commands.describe(member="The user to apply the preset to", preset="The preset name")
+    @app_commands.autocomplete(preset=preset_autocomplete)
     async def bulk_role(self, interaction: discord.Interaction, member: discord.Member, preset: str):
         presets = load_presets()
         if preset not in presets:
