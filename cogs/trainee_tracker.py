@@ -137,22 +137,25 @@ class TraineeTracker(commands.Cog):
 #new section
     
     def generate_report_embed(self, nickname):
-         embed = discord.Embed(
-            title=f"{nickname}"
+        data = self.trainee_data[nickname]
+        embed = discord.Embed(
+            title=f"Trainee Tracker: {nickname}"
         )
         joined_days_ago = (datetime.utcnow().replace(tzinfo=None) - data['join_date'].replace(tzinfo=None)).days
+
         if data['graduated']:
-           embed.color = discord.Color.greyple()
+            embed.color = discord.Color.greyple()
         elif data['has_support'] and data['has_engineer'] and joined_days_ago >= 14:
             embed.color = discord.Color.purple()
-           embed.title = f"**{nickname}**"
+            embed.title = f"**{nickname}**"
         elif data['has_support'] and data['has_engineer']:
-             embed.color = discord.Color.green()
+            embed.color = discord.Color.green()
         elif data['has_support'] or data['has_engineer']:
-             embed.color = discord.Color.blue()
+            embed.color = discord.Color.blue()
         elif joined_days_ago > 28:
+            embed.color = discord.Color.orange()
         else:
-             embed.color = discord.Color.dark_grey()
+            embed.color = discord.Color.dark_grey()
 
         embed.add_field(name="Profile", value=data["profile_name"], inline=True)
         embed.add_field(name="Join Date", value=data["join_date"].strftime('%d-%m-%Y'), inline=True)
@@ -166,9 +169,6 @@ class TraineeTracker(commands.Cog):
         embed.add_field(name="Left Server", value="✅" if data["left_server"] else "❌", inline=True)
         embed.set_footer(text="Auto-generated trainee report")
         return embed
-
-
-#new section
 
 
 
