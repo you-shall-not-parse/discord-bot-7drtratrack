@@ -16,7 +16,7 @@ async def on_ready():
 
 async def main():
     await bot.load_extension("cogs.trainee_tracker")
-#    await bot.load_extension("cogs.bulkrole")
+    await bot.load_extension("cogs.bulkrole")
     await bot.start(TOKEN)
 
 if __name__ == "__main__":
