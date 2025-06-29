@@ -86,15 +86,7 @@ class BulkRole(commands.Cog):
                 await message.channel.send(
                     "Now, reply with **two lines**:\n"
                     "**First line:** roles to add (comma-separated or 'none')\n"
-                    "**Second line:** roles to remove (comma-separated, 'none', or '*')\n"
-                    "Example:\n"
-                    "Moderator, Subscriber\n"
-                    "Muted, Banned\n\n"
-                    "Or:\n"
-                    "none\n"
-                    "Staff\n"
-                    "Available roles:\n" +
-                    ", ".join([r.name for r in guild.roles if not r.managed and r != guild.default_role])
+                    "**Second line:** roles to remove (comma-separated, 'none', or '*')\n")
                 )
                 return
 
