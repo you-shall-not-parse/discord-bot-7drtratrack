@@ -42,16 +42,15 @@ async def on_command_error(ctx, error):
     raise error
 
 async def main():
+    if not TOKEN:
+        raise RuntimeError("DISCORD_BOT_TOKEN is not set in your environment or .env file!")
     async with bot:
         # Load your cogs
         await bot.load_extension("cogs.bulkrole")
         # Add more cogs here as needed
-        # Start the bot
-        await bot.start(os.environ["DISCORD_BOT_TOKEN"])
+        await bot.start(TOKEN)
 
 if __name__ == "__main__":
-    # You can set your token as an environment variable for security
-    # export DISCORD_BOT_TOKEN='your_token_here'
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
