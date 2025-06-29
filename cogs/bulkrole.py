@@ -112,3 +112,6 @@ class BulkRole(commands.Cog):
         add_roles = [discord.utils.get(guild.roles, id=int(rid)) for rid in presets[preset]["add"]]
 
         if presets[preset]["remove"] == ["*"]:
+            remove_roles = [role for role in member.roles if not role.managed and role != guild.default_role]
+        else:
+            remove_roles = [discord.utils.get(guild.roles, id=int(rid)) for rid in presets[preset]["remove"] if discord.utils.get(guild.roles, id=int(rid))]
