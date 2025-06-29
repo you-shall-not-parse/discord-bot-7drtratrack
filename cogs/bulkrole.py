@@ -49,8 +49,9 @@ class BulkRole(commands.Cog):
                 add_roles, remove_roles = [], []
                 not_found = []
 
+                # Case-insensitive role lookup
                 for rname in parts[2].split(","):
-                    role = discord.utils.get(guild.roles, name=rname.strip())
+                    role = discord.utils.find(lambda r: r.name.lower() == rname.strip().lower(), guild.roles)
                     if role:
                         add_roles.append(role.id)
                     else:
@@ -60,7 +61,7 @@ class BulkRole(commands.Cog):
                     remove_roles = ["*"]
                 else:
                     for rname in parts[3].split(","):
-                        role = discord.utils.get(guild.roles, name=rname.strip())
+                        role = discord.utils.find(lambda r: r.name.lower() == rname.strip().lower(), guild.roles)
                         if role:
                             remove_roles.append(role.id)
                         else:
@@ -90,6 +91,16 @@ class BulkRole(commands.Cog):
                 for pname, pdata in presets.items():
                     msg += f"🔹 `{pname}` — Add: {resolve_names(pdata['add'])} | Remove: {resolve_names(pdata['remove'])}\n"
                 await message.channel.send(msg)
+
+            elif message.content.strip().startswith("!delpreset "):
+                preset_name = message.content.strip().split(" ", 1)[1]
+                presets = load_presets()
+                if preset_name in presets:
+                    del presets[preset_name]
+                    save_presets(presets)
+                    await message.channel.send(f"🗑️ Preset `{preset_name}` deleted.")
+                else:
+                    await message.channel.send(f"❌ Preset `{preset_name}` not found.")
 
     @commands.Cog.listener()
     async def on_ready(self):
