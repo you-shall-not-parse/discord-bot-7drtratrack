@@ -6,7 +6,7 @@ from discord import app_commands
 from discord.utils import get
 
 PRESET_FILE = "role_presets.json"
-REQUIRED_ROLE_NAME = "BulkRoleAdmin"  # <-- set this to your required role name
+REQUIRED_ROLE_NAME = "Assistant"  # <-- set this to your required role name
 
 if not os.path.exists(PRESET_FILE):
     with open(PRESET_FILE, "w") as f:
