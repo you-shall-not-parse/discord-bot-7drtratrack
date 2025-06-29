@@ -140,7 +140,7 @@ class TraineeTracker(commands.Cog):
          embed = discord.Embed(
             title=f"{nickname}"
         )
-         joined_days_ago = (datetime.utcnow().replace(tzinfo=None) - data['join_date'].replace(tzinfo=None)).days
+        joined_days_ago = (datetime.utcnow().replace(tzinfo=None) - data['join_date'].replace(tzinfo=None)).days
         if data['graduated']:
            embed.color = discord.Color.greyple()
         elif data['has_support'] and data['has_engineer'] and joined_days_ago >= 14:
