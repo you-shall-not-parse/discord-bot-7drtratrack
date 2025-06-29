@@ -3,9 +3,10 @@ import json
 import logging
 import discord
 from discord.ext import commands
-from discord import app_commands, Embed, Interaction, ui
+from discord import app_commands, Embed
 from discord.utils import get
 from typing import List
+import asyncio
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -18,7 +19,6 @@ if not os.path.exists(PRESET_FILE):
         json.dump({}, f)
 
 def load_presets():
-    """Load role presets from the file, or return empty dict if error."""
     try:
         with open(PRESET_FILE, "r") as f:
             return json.load(f)
@@ -27,7 +27,6 @@ def load_presets():
         return {}
 
 def save_presets(presets):
-    """Save role presets to the file."""
     try:
         with open(PRESET_FILE, "w") as f:
             json.dump(presets, f, indent=2)
@@ -35,11 +34,9 @@ def save_presets(presets):
         logging.error(f"Error saving presets: {e}")
 
 def role_dict(guild):
-    """Return a dict mapping lowercased role names to Role objects."""
     return {role.name.lower(): role for role in guild.roles}
 
 def parse_roles(guild, names):
-    """Find roles matching the given list of names. Returns ([Role], [not_found])."""
     lookup = role_dict(guild)
     found, not_found = [], []
     for name in [n.strip() for n in names if n.strip()]:
@@ -51,47 +48,15 @@ def parse_roles(guild, names):
     return found, not_found
 
 async def send_embed(channel, title, description, color=discord.Color.blue()):
-    """Send an embed message to a channel."""
     embed = Embed(title=title, description=description, color=color)
     await channel.send(embed=embed)
-
-class ConfirmView(ui.View):
-    def __init__(self, member, add_roles, remove_roles, callback):
-        super().__init__(timeout=60)
-        self.member = member
-        self.add_roles = add_roles
-        self.remove_roles = remove_roles
-        self.callback = callback
-        self.value = None
-        self.message = None  # Store the message for timeout handling
-
-    @ui.button(label="Confirm", style=discord.ButtonStyle.green)
-    async def confirm(self, interaction: Interaction, button: ui.Button):
-        await self.callback(interaction, True)
-        self.stop()
-
-    @ui.button(label="Cancel", style=discord.ButtonStyle.red)
-    async def cancel(self, interaction: Interaction, button: ui.Button):
-        await self.callback(interaction, False)
-        self.stop()
-
-    async def on_timeout(self):
-        # Disable all buttons when the view times out
-        for item in self.children:
-            item.disabled = True
-        if self.message:
-            try:
-                await self.message.edit(view=self)
-            except Exception:
-                pass  # Message may have been deleted or already edited
 
 class BulkRole(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.GUILD_ID = 1097913605082579024  # Set your guild/server ID here
-        self.dm_wizards = {}  # user_id -> state dict
+        self.dm_wizards = {}
 
-    # --- DM step-by-step preset creation and onboarding ---
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot:
@@ -111,13 +76,11 @@ class BulkRole(commands.Cog):
             await send_embed(message.channel, "Error", "❌ You must be a member of the server to use this command.", discord.Color.red())
             return
 
-        # Check role
         role = get(member.roles, name=REQUIRED_ROLE_NAME)
         if not role:
             await send_embed(message.channel, "Permission Denied", f"❌ You need the `{REQUIRED_ROLE_NAME}` role to use this feature.", discord.Color.red())
             return
 
-        # --- Universal exit command ---
         if message.content.strip().lower() == "exit":
             if message.author.id in self.dm_wizards:
                 del self.dm_wizards[message.author.id]
@@ -126,7 +89,6 @@ class BulkRole(commands.Cog):
                 await send_embed(message.channel, "No Process", "No process to exit. Type `!addpreset` to start a new one.", discord.Color.orange())
             return
 
-        # --- Force-reset wizard state ---
         if message.content.strip() == "!resetwizard":
             if message.author.id in self.dm_wizards:
                 del self.dm_wizards[message.author.id]
@@ -135,7 +97,6 @@ class BulkRole(commands.Cog):
                 await send_embed(message.channel, "No State", "No wizard state to reset.", discord.Color.orange())
             return
 
-        # --- Step-by-step wizard state ---
         if message.author.id in self.dm_wizards:
             state = self.dm_wizards[message.author.id]
             step = state["step"]
@@ -170,7 +131,7 @@ class BulkRole(commands.Cog):
                     remove_roles = ["*"]
                 elif remove_field not in ("none", ""):
                     remove_roles, remove_not_found = parse_roles(guild, remove_field.split(","))
-                
+
                 not_found_msgs = []
                 if add_not_found:
                     not_found_msgs.append(f"Add roles not found: {', '.join(add_not_found)}")
@@ -222,7 +183,6 @@ class BulkRole(commands.Cog):
                     await send_embed(message.channel, "Confirm", "Please type `confirm` to save, or `cancel` to abort.", discord.Color.orange())
                     return
 
-        # --- Command triggers (non-wizard) ---
         if message.content.strip().startswith("!addpreset"):
             self.dm_wizards[message.author.id] = {"step": "preset_name"}
             await send_embed(
@@ -277,7 +237,6 @@ class BulkRole(commands.Cog):
             )
             return
 
-        # --- Onboarding/help message for any other DM ---
         await send_embed(
             message.channel,
             "Welcome",
@@ -291,7 +250,6 @@ class BulkRole(commands.Cog):
             "Just type a command above to get started!"
         )
 
-    # --- Slash command sync ---
     @commands.Cog.listener()
     async def on_ready(self):
         await self.bot.wait_until_ready()
@@ -301,7 +259,6 @@ class BulkRole(commands.Cog):
         except Exception as e:
             logging.error(f"Failed to sync commands: {e}")
 
-    # --- Autocomplete for preset names ---
     async def preset_autocomplete(self, interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
         presets = load_presets()
         return [
@@ -310,7 +267,6 @@ class BulkRole(commands.Cog):
             if current.lower() in name.lower()
         ][:25]
 
-    # --- Slash command ---
     @app_commands.command(name="bulk-role", description="Apply a bulk role preset to a user")
     @app_commands.describe(member="The user to apply the preset to", preset="The preset name")
     @app_commands.autocomplete(preset=preset_autocomplete)
@@ -321,12 +277,10 @@ class BulkRole(commands.Cog):
             await interaction.followup.send(embed=Embed(title="Error", description="This command must be used in a server.", color=discord.Color.red()), ephemeral=True)
             return
 
-        # Permission check
         if not guild.me.guild_permissions.manage_roles:
             await interaction.followup.send(embed=Embed(title="Permission Error", description="❌ I lack the `Manage Roles` permission.", color=discord.Color.red()), ephemeral=True)
             return
 
-        # Check invoking user has required role
         user_member = guild.get_member(interaction.user.id)
         if not user_member or not get(user_member.roles, name=REQUIRED_ROLE_NAME):
             await interaction.followup.send(embed=Embed(title="Permission Denied", description=f"❌ You need the `{REQUIRED_ROLE_NAME}` role to use this command.", color=discord.Color.red()), ephemeral=True)
@@ -358,43 +312,46 @@ class BulkRole(commands.Cog):
             f"**Preset:** `{preset}`\n"
             f"**Will add:** {add_names}\n"
             f"**Will remove:** {remove_names}\n\n"
-            "Do you want to proceed?"
+            "Type `yes` to confirm, or `no` to cancel."
         )
         embed = Embed(title="Confirm Bulk Role Action", description=description, color=discord.Color.orange())
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
-        async def confirmed_callback(inter: Interaction, confirmed: bool):
-            if inter.user.id != interaction.user.id:
-                await inter.response.send_message("You can't respond to this confirmation.", ephemeral=True)
-                return
-            if not confirmed:
-                try:
-                    await inter.response.edit_message(
-                        embed=Embed(title="Cancelled", description="❌ Action cancelled.", color=discord.Color.red()), view=None)
-                except discord.NotFound:
-                    await inter.followup.send("This action is no longer valid (confirmation expired).", ephemeral=True)
-                return
+        def check(m):
+            return (
+                m.author == interaction.user
+                and m.channel == interaction.channel
+                and m.content.lower() in ["yes", "no"]
+            )
+        try:
+            msg = await self.bot.wait_for("message", check=check, timeout=60)
+        except asyncio.TimeoutError:
+            await interaction.followup.send("❌ Confirmation timed out.", ephemeral=True)
+            return
+
+        if msg.content.lower() == "yes":
             try:
                 await member.remove_roles(*remove_roles, reason=f"Bulk role preset '{preset}' (by {interaction.user})")
                 await member.add_roles(*add_roles, reason=f"Bulk role preset '{preset}' (by {interaction.user})")
-                try:
-                    await inter.response.edit_message(
-                        embed=Embed(title="Success", description=f"✅ Applied preset `{preset}` to {member.mention}.", color=discord.Color.green()),
-                        view=None
-                    )
-                except discord.NotFound:
-                    await inter.followup.send(
-                        f"✅ Applied preset `{preset}` to {member.mention}, but the confirmation message expired.", ephemeral=True)
-            except discord.DiscordException as e:
-                try:
-                    await inter.response.edit_message(
-                        embed=Embed(title="Error", description=f"❌ Error updating roles: {e}", color=discord.Color.red()), view=None)
-                except discord.NotFound:
-                    await inter.followup.send(
-                        f"❌ Error updating roles: {e} (confirmation expired)", ephemeral=True)
-
-        view = ConfirmView(member, add_roles, remove_roles, confirmed_callback)
-        msg = await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-        view.message = msg
+                await interaction.followup.send(
+                    embed=Embed(
+                        title="Success",
+                        description=f"✅ Applied preset `{preset}` to {member.mention}.",
+                        color=discord.Color.green(),
+                    ),
+                    ephemeral=True,
+                )
+            except Exception as e:
+                await interaction.followup.send(
+                    embed=Embed(
+                        title="Error",
+                        description=f"❌ Error updating roles: {e}",
+                        color=discord.Color.red(),
+                    ),
+                    ephemeral=True,
+                )
+        else:
+            await interaction.followup.send("❌ Action cancelled.", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(BulkRole(bot))
