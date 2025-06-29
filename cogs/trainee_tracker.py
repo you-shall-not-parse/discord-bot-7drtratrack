@@ -195,18 +195,64 @@ def generate_report_embed(self, nickname):
     return embed
 
 
-    def generate_summary_and_legend_embed(self, trainees_sorted):
-        # unchanged from your current code — just moved here
-        pass
+def generate_summary_and_legend_embed(self, trainees_sorted):
+    if nickname in trainee_messages:
+        try:
+            msg = await track_channel.fetch_message(trainee_messages[nickname])
+            embed = generate_report_embed(nickname)
+            await msg.edit(embed=embed)
+        except discord.NotFound:
+            pass
 
-    async def update_trainee_embed(self, nickname, track_channel):
-        # unchanged from your current code — just moved here
-        pass
+async def update_trainee_embed(self, nickname, track_channel):
+    summary = {
+        "Behind": [],
+        "On-Track": [],
+        "Ready to Graduate": [],
+        "Graduated": []
+    }
 
+    for nickname, data in trainees_sorted:
+        joined_days_ago = (datetime.utcnow().replace(tzinfo=None) - data['join_date'].replace(tzinfo=None)).days
+        if data["graduated"]:
+            summary["Graduated"].append(nickname)
+        elif data["has_support"] and data["has_engineer"] and joined_days_ago >= 28:
+            summary["Ready to Graduate"].append(nickname)
+        elif data["has_support"] or data["has_engineer"] or joined_days_ago <= 14:
+            summary["On-Track"].append(nickname)
+        else:
+            summary["Behind"].append(nickname)
+
+    embed = discord.Embed(title="**Trainee Tracker: Legend & Summary**", color=discord.Color.blurple())
+
+    # Legend section
+    embed.add_field(name="Legend", value=(
+        "🟪 **Purple** — Ready to Graduate! Has both roles AND 2+ weeks, amazing! \n"
+        "🟩 **Green** — Has both Support and Engineer but not done 2 weeks yet, great\n"
+        "🟦 **Blue** — Has one of Support or Engineer, good \n"
+        "⬛ **Grey** — No roles but under 2 weeks, not bad\n"
+        "🟧 **Orange** — No roles and in server over 4 weeks, bad\n"
+        "🎓 **Graduate** — Graduated"
+    ), inline=False)
+
+    # Spacing line
+    embed.add_field(name="\u200b", value="—" * 30, inline=False)
+
+    # Summary section
+    for category, names in summary.items():
+        if names:
+            embed.add_field(name=category, value="\n".join(names), inline=False)
+    return embed
+    
     async def update_existing_summary_message(self, track_channel):
-        # unchanged from your current code — just moved here
-        pass
+    sorted_trainees = sorted(trainee_data.items(), key=lambda x: x[1]['join_date'])
+    summary = generate_summary_and_legend_embed(sorted_trainees)
 
+    # Locate the existing summary message
+    async for message in track_channel.history(limit=50):  # Adjust limit as needed
+        if message.author == bot.user and "Trainee Tracker: Legend & Summary" in message.embeds[0].title:
+            await message.edit(embed=summary)
+            return
 
 async def setup(bot):
     await bot.add_cog(TraineeTracker(bot))
