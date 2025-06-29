@@ -23,15 +23,14 @@ def save_presets(presets):
 class BulkRole(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.GUILD_ID = 1097913605082579024
-        
+        self.GUILD_ID = 1097913605082579024  # Set your guild/server ID here
+
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot:
             return
 
         if isinstance(message.channel, discord.DMChannel):
-            # You need to define GUILD_ID somewhere accessible, e.g., as a constant or config
             guild = self.bot.get_guild(self.GUILD_ID)
             member = guild.get_member(message.author.id)
             if not member:
@@ -113,17 +112,3 @@ class BulkRole(commands.Cog):
         add_roles = [discord.utils.get(guild.roles, id=int(rid)) for rid in presets[preset]["add"]]
 
         if presets[preset]["remove"] == ["*"]:
-            remove_roles = [role for role in member.roles if not role.managed and role != guild.default_role]
-        else:
-            remove_roles = [discord.utils.get(guild.roles, id=int(rid)) for rid in presets[preset]["remove"] if discord.utils.get(guild.roles, id=int(rid))]
-
-        await member.remove_roles(*remove_roles)
-        await member.add_roles(*add_roles)
-        await interaction.response.send_message(f"✅ Applied preset `{preset}` to {member.mention}.")
-
-    async def cog_load(self):
-        # Register the app command with the bot's command tree
-        self.bot.tree.add_command(self.bulk_role)
-
-async def setup(bot):
-    await bot.add_cog(BulkRole(bot))
