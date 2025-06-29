@@ -32,7 +32,7 @@ class BulkRole(commands.Cog):
 
         if isinstance(message.channel, discord.DMChannel):
             # You need to define GUILD_ID somewhere accessible, e.g., as a constant or config
-            guild = self.bot.get_guild(GUILD_ID)
+            guild = self.bot.get_guild(self.GUILD_ID)
             member = guild.get_member(message.author.id)
             if not member:
                 await message.channel.send("❌ You must be a member of the server to use this command.")
