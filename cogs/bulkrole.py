@@ -27,7 +27,7 @@ class BulkRole(commands.Cog):
         self.GUILD_ID = 1097913605082579024  # Set your guild/server ID here
         self.dm_wizards = {}  # user_id -> state dict
 
-    # --- DM step-by-step preset creation ---
+    # --- DM step-by-step preset creation and onboarding ---
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot:
@@ -51,6 +51,24 @@ class BulkRole(commands.Cog):
         role = get(member.roles, name=REQUIRED_ROLE_NAME)
         if not role:
             await message.channel.send(f"❌ You need the `{REQUIRED_ROLE_NAME}` role to use this feature.")
+            return
+
+        # --- Universal exit command ---
+        if message.content.strip().lower() == "exit":
+            if message.author.id in self.dm_wizards:
+                del self.dm_wizards[message.author.id]
+                await message.channel.send("🚪 Exited the wizard/process. Type `!addpreset` to start again.")
+            else:
+                await message.channel.send("No process to exit. Type `!addpreset` to start a new one.")
+            return
+
+        # --- Force-reset wizard state ---
+        if message.content.strip() == "!resetwizard":
+            if message.author.id in self.dm_wizards:
+                del self.dm_wizards[message.author.id]
+                await message.channel.send("🧹 Wizard state reset.")
+            else:
+                await message.channel.send("No wizard state to reset.")
             return
 
         # --- Step-by-step wizard state ---
@@ -210,15 +228,29 @@ class BulkRole(commands.Cog):
                 await message.channel.send(f"❌ Preset `{preset_name}` not found.")
             return
 
-        # Usage/help prompt
         elif message.content.strip().startswith("!"):
             await message.channel.send(
                 "Commands:\n"
                 "`!addpreset` — interactive preset creation\n"
                 "`!listpresets` — list all presets\n"
                 "`!delpreset <preset_name>` — delete a preset\n"
+                "`!resetwizard` — force-reset the wizard if you’re stuck\n"
+                "`exit` — exit any wizard/process at any time\n"
                 "In the wizard, type `none` for no roles or `*` to remove all roles."
             )
+            return
+
+        # --- Onboarding/help message for any other DM ---
+        await message.channel.send(
+            "👋 **Welcome! Here’s what you can do via DM:**\n"
+            "• `!addpreset` — interactive preset creation wizard\n"
+            "• `!listpresets` — list all saved presets\n"
+            "• `!delpreset <preset_name>` — delete a preset\n"
+            "• `!resetwizard` — force-reset the wizard if you’re stuck\n"
+            "• `exit` — exit any wizard/process at any time\n"
+            "In the wizard, type `none` for no roles or `*` to remove all roles.\n"
+            "Just type a command above to get started!"
+        )
 
     # --- Slash command sync ---
     @commands.Cog.listener()
