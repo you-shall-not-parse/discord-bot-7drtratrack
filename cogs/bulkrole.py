@@ -1,8 +1,13 @@
 # ---------------- BULK ROLE PRESET HANDLER ----------------
+import os
 import json
+import discord
 from discord import app_commands
+from discord.utils import get
 
 PRESET_FILE = "role_presets.json"
+REQUIRED_ROLE_NAME = "BulkRoleAdmin"  # <-- set this to your required role name
+
 if not os.path.exists(PRESET_FILE):
     with open(PRESET_FILE, "w") as f:
         json.dump({}, f)
@@ -21,10 +26,21 @@ async def on_message(message):
         return
 
     if isinstance(message.channel, discord.DMChannel):
+        guild = bot.get_guild(GUILD_ID)
+        member = guild.get_member(message.author.id)
+        if not member:
+            await message.channel.send("❌ You must be a member of the server to use this command.")
+            return
+
+        # Check if member has the required role
+        role = get(member.roles, name=REQUIRED_ROLE_NAME)
+        if not role:
+            await message.channel.send(f"❌ You need the `{REQUIRED_ROLE_NAME}` role to use this feature.")
+            return
+
         parts = message.content.strip().split(" ", 3)
         if len(parts) >= 4 and parts[0] == "!addpreset":
             preset_name = parts[1]
-            guild = bot.get_guild(GUILD_ID)
             add_roles, remove_roles = [], []
             not_found = []
 
@@ -60,7 +76,6 @@ async def on_message(message):
                 await message.channel.send("📭 No presets saved.")
                 return
 
-            guild = bot.get_guild(GUILD_ID)
             def resolve_names(role_ids):
                 if role_ids == ["*"]:
                     return ["ALL ROLES"]
