@@ -4,6 +4,9 @@ import discord
 from discord.ext import commands
 import asyncio
 
+load_dotenv()
+TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 
