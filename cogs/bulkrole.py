@@ -23,7 +23,8 @@ def save_presets(presets):
 class BulkRole(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-
+        self.GUILD_ID = 1097913605082579024
+        
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot:
