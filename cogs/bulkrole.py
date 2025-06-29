@@ -5,13 +5,12 @@ import discord
 from discord.ext import commands
 from discord import app_commands, Embed
 from discord.utils import get
-from typing import List
-
-# Setup logging
-logging.basicConfig(level=logging.INFO)
 
 PRESET_FILE = "role_presets.json"
-REQUIRED_ROLE_NAME = "Assistant"  # Set to your server's assistant/admin role
+REQUIRED_ROLE_NAME = "Assistant"
+GUILD_ID = 1097913605082579024  # Set your guild/server ID here
+
+logging.basicConfig(level=logging.INFO)
 
 if not os.path.exists(PRESET_FILE):
     with open(PRESET_FILE, "w") as f:
@@ -21,7 +20,7 @@ def load_presets():
     try:
         with open(PRESET_FILE, "r") as f:
             return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError) as e:
+    except Exception as e:
         logging.error(f"Error loading presets: {e}")
         return {}
 
@@ -39,69 +38,53 @@ def parse_roles(guild, names):
     lookup = role_dict(guild)
     found, not_found = [], []
     for name in [n.strip() for n in names if n.strip()]:
-        r = lookup.get(name.lower())
-        if r:
-            found.append(r.id)
+        role = lookup.get(name.lower())
+        if role:
+            found.append(role.id)
         else:
             not_found.append(name)
     return found, not_found
 
 async def send_embed(channel, title, description, color=discord.Color.blue()):
-    embed = Embed(title=title, description=description, color=color)
-    await channel.send(embed=embed)
+    await channel.send(embed=Embed(title=title, description=description, color=color))
 
 class BulkRole(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.GUILD_ID = 1097913605082579024  # Set your guild/server ID here
         self.dm_wizards = {}
 
     @commands.Cog.listener()
     async def on_message(self, message):
-        if message.author.bot:
+        if message.author.bot or not isinstance(message.channel, discord.DMChannel):
             return
 
-        # Only care about DMs
-        if not isinstance(message.channel, discord.DMChannel):
-            return
-
-        guild = self.bot.get_guild(self.GUILD_ID)
+        guild = self.bot.get_guild(GUILD_ID)
         if not guild:
             await send_embed(message.channel, "Error", "❌ Bot couldn't access the configured server!", discord.Color.red())
             return
-
         member = guild.get_member(message.author.id)
         if not member:
             await send_embed(message.channel, "Error", "❌ You must be a member of the server to use this command.", discord.Color.red())
             return
-
-        role = get(member.roles, name=REQUIRED_ROLE_NAME)
-        if not role:
+        if not get(member.roles, name=REQUIRED_ROLE_NAME):
             await send_embed(message.channel, "Permission Denied", f"❌ You need the `{REQUIRED_ROLE_NAME}` role to use this feature.", discord.Color.red())
             return
 
-        if message.content.strip().lower() == "exit":
-            if message.author.id in self.dm_wizards:
-                del self.dm_wizards[message.author.id]
-                await send_embed(message.channel, "Exited", "🚪 Exited the wizard/process. Type `!addpreset` to start again.", discord.Color.orange())
-            else:
-                await send_embed(message.channel, "No Process", "No process to exit. Type `!addpreset` to start a new one.", discord.Color.orange())
+        content = message.content.strip()
+        if content.lower() == "exit":
+            self.dm_wizards.pop(message.author.id, None)
+            await send_embed(message.channel, "Exited", "🚪 Exited the wizard/process. Type `!addpreset` to start again.", discord.Color.orange())
+            return
+        if content == "!resetwizard":
+            self.dm_wizards.pop(message.author.id, None)
+            await send_embed(message.channel, "Reset", "🧹 Wizard state reset.", discord.Color.orange())
             return
 
-        if message.content.strip() == "!resetwizard":
-            if message.author.id in self.dm_wizards:
-                del self.dm_wizards[message.author.id]
-                await send_embed(message.channel, "Reset", "🧹 Wizard state reset.", discord.Color.orange())
-            else:
-                await send_embed(message.channel, "No State", "No wizard state to reset.", discord.Color.orange())
-            return
-
+        # Wizard state machine
         if message.author.id in self.dm_wizards:
             state = self.dm_wizards[message.author.id]
-            step = state["step"]
-
-            if step == "preset_name":
-                pname = message.content.strip()
+            if state["step"] == "preset_name":
+                pname = content
                 if not pname:
                     await send_embed(message.channel, "Invalid", "Preset name can't be empty. Please enter a name:", discord.Color.red())
                     return
@@ -113,44 +96,26 @@ class BulkRole(commands.Cog):
                     "Now, reply with **two lines**:\n**First line:** roles to add (comma-separated or 'none')\n**Second line:** roles to remove (comma-separated, 'none', or '*')"
                 )
                 return
-
-            if step == "add_and_remove_roles":
-                lines = message.content.strip().split("\n")
+            elif state["step"] == "add_and_remove_roles":
+                lines = content.split("\n")
                 if len(lines) < 2:
                     await send_embed(message.channel, "Invalid", "Please provide two lines: first for roles to add, second for roles to remove.", discord.Color.red())
                     return
-
-                add_field = lines[0].strip().lower()
-                remove_field = lines[1].strip().lower()
-                add_roles, add_not_found = [], []
-                if add_field not in ("none", ""):
-                    add_roles, add_not_found = parse_roles(guild, add_field.split(","))
-                remove_roles, remove_not_found = [], []
-                if remove_field == "*":
-                    remove_roles = ["*"]
-                elif remove_field not in ("none", ""):
-                    remove_roles, remove_not_found = parse_roles(guild, remove_field.split(","))
-
-                not_found_msgs = []
-                if add_not_found:
-                    not_found_msgs.append(f"Add roles not found: {', '.join(add_not_found)}")
-                if remove_not_found:
-                    not_found_msgs.append(f"Remove roles not found: {', '.join(remove_not_found)}")
-                if not_found_msgs:
-                    await send_embed(message.channel, "Roles Not Found", "❌ " + " | ".join(not_found_msgs) + "\nPlease try again, or type `none`.", discord.Color.red())
+                add_roles, add_nf = parse_roles(guild, lines[0].split(","))
+                remove_roles, remove_nf = (["*"], []) if lines[1].strip() == "*" else parse_roles(guild, lines[1].split(","))
+                not_found = []
+                if add_nf: not_found.append(f"Add roles not found: {', '.join(add_nf)}")
+                if remove_nf: not_found.append(f"Remove roles not found: {', '.join(remove_nf)}")
+                if not_found:
+                    await send_embed(message.channel, "Roles Not Found", "❌ " + " | ".join(not_found) + "\nPlease try again, or type `none`.", discord.Color.red())
                     return
-
-                state["add_roles"] = add_roles
-                state["remove_roles"] = remove_roles
-
+                state["add_roles"], state["remove_roles"] = add_roles, remove_roles
                 add_names = "None" if not add_roles else ", ".join([get(guild.roles, id=rid).name for rid in add_roles])
-                if remove_roles == ["*"]:
-                    remove_names = "ALL ROLES"
-                elif not remove_roles:
-                    remove_names = "None"
-                else:
-                    remove_names = ", ".join([get(guild.roles, id=rid).name for rid in remove_roles])
-
+                remove_names = (
+                    "ALL ROLES" if remove_roles == ["*"] else
+                    "None" if not remove_roles else
+                    ", ".join([get(guild.roles, id=rid).name for rid in remove_roles])
+                )
                 state["step"] = "confirm"
                 await send_embed(
                     message.channel,
@@ -161,9 +126,8 @@ class BulkRole(commands.Cog):
                     "Type `confirm` to save, or `cancel` to abort."
                 )
                 return
-
-            if step == "confirm":
-                answer = message.content.strip().lower()
+            elif state["step"] == "confirm":
+                answer = content.lower()
                 if answer == "confirm":
                     presets = load_presets()
                     presets[state["preset_name"]] = {
@@ -172,17 +136,16 @@ class BulkRole(commands.Cog):
                     }
                     save_presets(presets)
                     await send_embed(message.channel, "Preset Saved", f"✅ Preset `{state['preset_name']}` saved.", discord.Color.green())
-                    del self.dm_wizards[message.author.id]
-                    return
+                    self.dm_wizards.pop(message.author.id, None)
                 elif answer == "cancel":
                     await send_embed(message.channel, "Cancelled", "❌ Preset creation cancelled.", discord.Color.orange())
-                    del self.dm_wizards[message.author.id]
-                    return
+                    self.dm_wizards.pop(message.author.id, None)
                 else:
                     await send_embed(message.channel, "Confirm", "Please type `confirm` to save, or `cancel` to abort.", discord.Color.orange())
-                    return
+                return
 
-        if message.content.strip().startswith("!addpreset"):
+        # Commands
+        if content.startswith("!addpreset"):
             self.dm_wizards[message.author.id] = {"step": "preset_name"}
             await send_embed(
                 message.channel,
@@ -190,29 +153,21 @@ class BulkRole(commands.Cog):
                 "Let's create a new preset!\nWhat should the preset name be?"
             )
             return
-
-        elif message.content.strip() == "!listpresets":
+        if content == "!listpresets":
             presets = load_presets()
             if not presets:
                 await send_embed(message.channel, "No Presets", "📭 No presets saved.", discord.Color.orange())
                 return
-
             def resolve_names(role_ids):
-                if role_ids == ["*"]:
-                    return ["ALL ROLES"]
-                return [
-                    get(guild.roles, id=int(rid)).name
-                    for rid in role_ids if get(guild.roles, id=int(rid))
-                ]
-
+                if role_ids == ["*"]: return ["ALL ROLES"]
+                return [get(guild.roles, id=int(rid)).name for rid in role_ids if get(guild.roles, id=int(rid))]
             msg = ""
             for pname, pdata in presets.items():
                 msg += f"🔹 `{pname}` — Add: {', '.join(resolve_names(pdata['add']))} | Remove: {', '.join(resolve_names(pdata['remove']))}\n"
             await send_embed(message.channel, "Presets", msg)
             return
-
-        elif message.content.strip().startswith("!delpreset "):
-            preset_name = message.content.strip().split(" ", 1)[1]
+        if content.startswith("!delpreset "):
+            preset_name = content.split(" ", 1)[1]
             presets = load_presets()
             if preset_name in presets:
                 del presets[preset_name]
@@ -221,8 +176,7 @@ class BulkRole(commands.Cog):
             else:
                 await send_embed(message.channel, "Not Found", f"❌ Preset `{preset_name}` not found.", discord.Color.red())
             return
-
-        elif message.content.strip().startswith("!"):
+        if content.startswith("!"):
             await send_embed(
                 message.channel,
                 "Commands",
@@ -235,7 +189,6 @@ class BulkRole(commands.Cog):
                 "In the wizard, type `none` for no roles or `*` to remove all roles."
             )
             return
-
         await send_embed(
             message.channel,
             "Welcome",
@@ -258,12 +211,11 @@ class BulkRole(commands.Cog):
         except Exception as e:
             logging.error(f"Failed to sync commands: {e}")
 
-    async def preset_autocomplete(self, interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
+    async def preset_autocomplete(self, interaction: discord.Interaction, current: str):
         presets = load_presets()
         return [
             app_commands.Choice(name=name, value=name)
-            for name in presets
-            if current.lower() in name.lower()
+            for name in presets if current.lower() in name.lower()
         ][:25]
 
     @app_commands.command(name="bulk-role", description="Apply a bulk role preset to a user")
@@ -275,16 +227,13 @@ class BulkRole(commands.Cog):
         if not guild:
             await interaction.followup.send(embed=Embed(title="Error", description="This command must be used in a server.", color=discord.Color.red()), ephemeral=True)
             return
-
         if not guild.me.guild_permissions.manage_roles:
             await interaction.followup.send(embed=Embed(title="Permission Error", description="❌ I lack the `Manage Roles` permission.", color=discord.Color.red()), ephemeral=True)
             return
-
         user_member = guild.get_member(interaction.user.id)
         if not user_member or not get(user_member.roles, name=REQUIRED_ROLE_NAME):
             await interaction.followup.send(embed=Embed(title="Permission Denied", description=f"❌ You need the `{REQUIRED_ROLE_NAME}` role to use this command.", color=discord.Color.red()), ephemeral=True)
             return
-
         presets = load_presets()
         if preset not in presets:
             await interaction.followup.send(embed=Embed(title="Not Found", description=f"❌ Preset `{preset}` not found.", color=discord.Color.red()), ephemeral=True)
@@ -314,7 +263,6 @@ class BulkRole(commands.Cog):
             "Applying now..."
         )
         embed = Embed(title="Bulk Role Action", description=description, color=discord.Color.orange())
-
         try:
             await member.remove_roles(*remove_roles, reason=f"Bulk role preset '{preset}' (by {interaction.user})")
             await member.add_roles(*add_roles, reason=f"Bulk role preset '{preset}' (by {interaction.user})")
@@ -323,7 +271,6 @@ class BulkRole(commands.Cog):
         except Exception as e:
             embed.color = discord.Color.red()
             embed.add_field(name="Error", value=f"❌ Error updating roles: {e}")
-
         await interaction.followup.send(embed=embed, ephemeral=True)
 
 async def setup(bot):
