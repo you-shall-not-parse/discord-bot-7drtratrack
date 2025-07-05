@@ -52,7 +52,7 @@ class Certify(commands.Cog):
         draw = ImageDraw.Draw(img)
 
         # Load font (ensure this font file is present in the same directory or specify a path)
-        font_path = os.path.join(os.path.dirname(__file__), "EBGaramond-VariableFont_wght.ttf")
+        font_path = os.path.join(os.path.dirname(__file__), "EBGaramond-VariableFont_wght.ttf",48)
         try:
             font = ImageFont.truetype(font_path, size=40)
         except:
@@ -60,9 +60,9 @@ class Certify(commands.Cog):
             await interaction.followup.send("⚠️ Custom font not found. Using default font.")
 
         # Adjust positions to match your design
-        draw.text((200, 150), certificate_name, font=font, fill="black")
-        draw.text((200, 230), person_name, font=font, fill="black")
-        draw.text((200, 390), officer_name, font=font, fill="black")
+        draw.text((755, 1126), certificate_name, font=font, fill="black")
+        draw.text((641, 1340), person_name, font=font, fill="black")
+        draw.text((403, 1348), officer_name, font=font, fill="black")
 
         # Save to buffer
         output_buffer = BytesIO()
