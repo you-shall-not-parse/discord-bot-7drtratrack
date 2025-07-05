@@ -72,9 +72,9 @@ class Certify(commands.Cog):
         officer_font_path = os.path.join(os.path.dirname(__file__), "AlegreyaSC-Regular.ttf")
 
         # Font sizes
-        cert_font_size = 78
-        person_font_size = 42   # Change as desired
-        officer_font_size = 42  # Change as desired
+        cert_font_size = 80
+        person_font_size = 46   # Change as desired
+        officer_font_size = 46  # Change as desired
 
         # Load fonts
         try:
@@ -109,8 +109,8 @@ class Certify(commands.Cog):
         draw_spaced_text(draw, (cert_start_x, y_cert), certificate_name, cert_font, "black", cert_spacing)
 
         # The other fields use fixed positions
-        draw_spaced_text(draw, (575, 1370), person_name, person_font, "black", person_spacing)
-        draw_spaced_text(draw, (420, 1440), officer_name, officer_font, "black", officer_spacing)
+        draw_spaced_text(draw, (575, 1375), person_name, person_font, "black", person_spacing)
+        draw_spaced_text(draw, (420, 1445), officer_name, officer_font, "black", officer_spacing)
 
         # Save to buffer
         output_buffer = BytesIO()
