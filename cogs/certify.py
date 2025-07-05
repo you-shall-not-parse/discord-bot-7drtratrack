@@ -9,10 +9,19 @@ def draw_spaced_text(draw, position, text, font, fill, spacing):
     x, y = position
     for char in text:
         draw.text((x, y), char, font=font, fill=fill)
-        # Use getbbox for accurate character width (works for Pillow>=8.0)
         bbox = font.getbbox(char)
         char_width = bbox[2] - bbox[0]
-        x += char_width + spacing  # spacing in pixels
+        x += char_width + spacing
+
+def get_spaced_text_width(text, font, spacing):
+    width = 0
+    for i, char in enumerate(text):
+        bbox = font.getbbox(char)
+        char_width = bbox[2] - bbox[0]
+        width += char_width
+        if i < len(text) - 1:
+            width += spacing
+    return width
 
 class Certify(commands.Cog):
     def __init__(self, bot):
@@ -66,12 +75,19 @@ class Certify(commands.Cog):
             font = ImageFont.load_default()
             await interaction.followup.send("⚠️ Custom font not found. Using default font.")
 
-        # Adjust positions and spacing as needed
-        spacing = 5  # Adjust this value to increase/decrease character spacing
+        spacing = 5
 
-        draw_spaced_text(draw, (460, 1080), certificate_name, font, "black", spacing=25)
-        draw_spaced_text(draw, (575, 1362), person_name, font, "black", spacing=25)
-        draw_spaced_text(draw, (420, 1430), officer_name, font, "black", spacing=25)
+        # Center the certificate name about a given pixel (e.g., x=700)
+        center_x = 700
+        y_cert = 905
+
+        cert_width = get_spaced_text_width(certificate_name, font, spacing)
+        cert_start_x = center_x - (cert_width // 2)
+        draw_spaced_text(draw, (cert_start_x, y_cert), certificate_name, font, "black", spacing)
+
+        # The other fields use fixed positions
+        draw_spaced_text(draw, (575, 1265), person_name, font, "black", spacing)
+        draw_spaced_text(draw, (420, 1320), officer_name, font, "black", spacing)
 
         # Save to buffer
         output_buffer = BytesIO()
