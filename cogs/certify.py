@@ -109,7 +109,7 @@ class Certify(commands.Cog):
         draw_spaced_text(draw, (cert_start_x, y_cert), certificate_name, cert_font, "black", cert_spacing)
 
         # The other fields use fixed positions
-        draw_spaced_text(draw, (575, 1383), person_name, person_font, "black", person_spacing)
+        draw_spaced_text(draw, (575, 1382), person_name, person_font, "black", person_spacing)
         draw_spaced_text(draw, (420, 1451), officer_name, officer_font, "black", officer_spacing)
 
         # Save to buffer
