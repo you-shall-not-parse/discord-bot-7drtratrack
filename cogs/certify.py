@@ -72,9 +72,9 @@ class Certify(commands.Cog):
         officer_font_path = os.path.join(os.path.dirname(__file__), "AlegreyaSC-Regular.ttf")
 
         # Font sizes
-        cert_font_size = 72
-        person_font_size = 40   # Change as desired
-        officer_font_size = 40  # Change as desired
+        cert_font_size = 78
+        person_font_size = 42   # Change as desired
+        officer_font_size = 42  # Change as desired
 
         # Load fonts
         try:
@@ -97,20 +97,20 @@ class Certify(commands.Cog):
 
         # Spacing
         cert_spacing = 25
-        person_spacing = 25
-        officer_spacing = 25
+        person_spacing = 22
+        officer_spacing = 22
 
         # Center the certificate name about a given pixel (e.g., x=700)
         center_x = 700
-        y_cert = 950
+        y_cert = 1000
 
         cert_width = get_spaced_text_width(certificate_name, cert_font, cert_spacing)
         cert_start_x = center_x - (cert_width // 2)
         draw_spaced_text(draw, (cert_start_x, y_cert), certificate_name, cert_font, "black", cert_spacing)
 
         # The other fields use fixed positions
-        draw_spaced_text(draw, (575, 1362), person_name, person_font, "black", person_spacing)
-        draw_spaced_text(draw, (420, 1430), officer_name, officer_font, "black", officer_spacing)
+        draw_spaced_text(draw, (575, 1370), person_name, person_font, "black", person_spacing)
+        draw_spaced_text(draw, (420, 1440), officer_name, officer_font, "black", officer_spacing)
 
         # Save to buffer
         output_buffer = BytesIO()
