@@ -50,7 +50,6 @@ class Certify(commands.Cog):
         # --- Role check block ---
         allowed_roles = {"Assistant"}  # <-- Set your allowed role names here
         member = interaction.user if hasattr(interaction, "user") else interaction.author
-        # 'member' might be a User if invoked in a DM, which doesn't have roles
         if not hasattr(member, "roles") or not any(role.name in allowed_roles for role in member.roles):
             await interaction.response.send_message("❌ You do not have permission to use this command.", ephemeral=True)
             return
@@ -67,29 +66,52 @@ class Certify(commands.Cog):
 
         draw = ImageDraw.Draw(img)
 
-        # Load font (ensure this font file is present in the same directory or specify a path)
-        font_path = os.path.join(os.path.dirname(__file__), "AlegreyaSC-Bold.ttf")
-        try:
-            font = ImageFont.truetype(font_path, size=72)
-        except:
-            font = ImageFont.load_default()
-            await interaction.followup.send("⚠️ Custom font not found. Using default font.")
+        # Font paths
+        cert_font_path = os.path.join(os.path.dirname(__file__), "AlegreyaSC-Bold.ttf")
+        person_font_path = os.path.join(os.path.dirname(__file__), "AlegreyaSC-Regular.ttf")
+        officer_font_path = os.path.join(os.path.dirname(__file__), "AlegreyaSC-Regular.ttf")
 
-        spacing = 5
+        # Font sizes
+        cert_font_size = 72
+        person_font_size = 40   # Change as desired
+        officer_font_size = 40  # Change as desired
+
+        # Load fonts
+        try:
+            cert_font = ImageFont.truetype(cert_font_path, size=cert_font_size)
+        except:
+            cert_font = ImageFont.load_default()
+            await interaction.followup.send("⚠️ Certificate title font not found. Using default font.")
+
+        try:
+            person_font = ImageFont.truetype(person_font_path, size=person_font_size)
+        except:
+            person_font = ImageFont.load_default()
+            await interaction.followup.send("⚠️ Person font not found. Using default font.")
+
+        try:
+            officer_font = ImageFont.truetype(officer_font_path, size=officer_font_size)
+        except:
+            officer_font = ImageFont.load_default()
+            await interaction.followup.send("⚠️ Officer font not found. Using default font.")
+
+        # Spacing
+        cert_spacing = 25
+        person_spacing = 25
+        officer_spacing = 25
 
         # Center the certificate name about a given pixel (e.g., x=700)
         center_x = 700
         y_cert = 950
 
-        cert_width = get_spaced_text_width(certificate_name, font, spacing)
+        cert_width = get_spaced_text_width(certificate_name, cert_font, cert_spacing)
         cert_start_x = center_x - (cert_width // 2)
-        draw_spaced_text(draw, (cert_start_x, y_cert), certificate_name, font, "black", spacing)
+        draw_spaced_text(draw, (cert_start_x, y_cert), certificate_name, cert_font, "black", cert_spacing)
 
         # The other fields use fixed positions
-        draw_spaced_text(draw, (575, 1362), person_name, font, "black", spacing=25)
-        draw_spaced_text(draw, (420, 1430), officer_name, font, "black", spacing=25)
+        draw_spaced_text(draw, (575, 1362), person_name, person_font, "black", person_spacing)
+        draw_spaced_text(draw, (420, 1430), officer_name, officer_font, "black", officer_spacing)
 
-                          
         # Save to buffer
         output_buffer = BytesIO()
         img.save(output_buffer, format="PNG")
