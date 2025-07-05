@@ -31,6 +31,15 @@ class Certify(commands.Cog):
                       unit: str,
                       officer_name: str):
 
+        # --- Role check block ---
+        allowed_roles = {"Assistant"}  # <-- Set your allowed role names here
+        member = interaction.user if hasattr(interaction, "user") else interaction.author
+        # 'member' might be a User if invoked in a DM, which doesn't have roles
+        if not hasattr(member, "roles") or not any(role.name in allowed_roles for role in member.roles):
+            await interaction.response.send_message("❌ You do not have permission to use this command.", ephemeral=True)
+            return
+        # --- End role check ---
+
         await interaction.response.defer()
 
         # Open the image template
@@ -43,7 +52,7 @@ class Certify(commands.Cog):
         draw = ImageDraw.Draw(img)
 
         # Load font (ensure this font file is present in the same directory or specify a path)
-        font_path = os.path.join(os.path.dirname(__file__), "font.ttf")
+        font_path = os.path.join(os.path.dirname(__file__), "arial.ttf")
         try:
             font = ImageFont.truetype(font_path, size=40)
         except:
@@ -61,7 +70,10 @@ class Certify(commands.Cog):
         img.save(output_buffer, format="PNG")
         output_buffer.seek(0)
 
-        await interaction.followup.send("🎖️ Certificate generated!", file=discord.File(fp=output_buffer, filename="certificate.png"))
+        await interaction.followup.send(
+            "🎖️ Certificate generated!",
+            file=discord.File(fp=output_buffer, filename="certificate.png")
+        )
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Certify(bot))
