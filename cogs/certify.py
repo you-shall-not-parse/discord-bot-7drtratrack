@@ -50,7 +50,7 @@ class Certify(commands.Cog):
         draw = ImageDraw.Draw(img)
 
         # Load font (ensure this font file is present in the same directory or specify a path)
-        font_path = os.path.join(os.path.dirname(__file__), "EBGaramond-VariableFont_wght.ttf")
+        font_path = os.path.join(os.path.dirname(__file__), "EBGaramond-VariableFont_wght.ttf",72)
         try:
             font = ImageFont.truetype(font_path, size=40)
         except:
