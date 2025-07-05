@@ -61,9 +61,8 @@ class Certify(commands.Cog):
 
         # Adjust positions to match your design
         draw.text((200, 150), certificate_name, font=font, fill="black")
-        draw.text((200, 230), f"Awarded to: {person_name}", font=font, fill="black")
-        draw.text((200, 310), f"Unit: {unit}", font=font, fill="black")
-        draw.text((200, 390), f"Issued by: {officer_name}", font=font, fill="black")
+        draw.text((200, 230), person_name, font=font, fill="black")
+        draw.text((200, 390), officer_name, font=font, fill="black")
 
         # Save to buffer
         output_buffer = BytesIO()
