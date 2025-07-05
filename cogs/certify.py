@@ -72,7 +72,7 @@ class Certify(commands.Cog):
         officer_font_path = os.path.join(os.path.dirname(__file__), "AlegreyaSC-Regular.ttf")
 
         # Font sizes
-        cert_font_size = 72
+        cert_font_size = 76
         person_font_size = 46   # Change as desired
         officer_font_size = 46  # Change as desired
 
