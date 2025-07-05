@@ -22,13 +22,11 @@ class Certify(commands.Cog):
     @app_commands.describe(
         person_name="Name of the person",
         certificate_name="Certificate title",
-        unit="Unit name",
         officer_name="Officer's name"
     )
     async def certify(self, interaction: discord.Interaction,
                       person_name: str,
                       certificate_name: str,
-                      unit: str,
                       officer_name: str):
 
         # --- Role check block ---
@@ -52,7 +50,7 @@ class Certify(commands.Cog):
         draw = ImageDraw.Draw(img)
 
         # Load font (ensure this font file is present in the same directory or specify a path)
-        font_path = os.path.join(os.path.dirname(__file__), "EBGaramond-VariableFont_wght.ttf",48)
+        font_path = os.path.join(os.path.dirname(__file__), "EBGaramond-VariableFont_wght.ttf")
         try:
             font = ImageFont.truetype(font_path, size=40)
         except:
