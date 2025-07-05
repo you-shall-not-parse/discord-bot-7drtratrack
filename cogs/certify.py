@@ -69,8 +69,8 @@ class Certify(commands.Cog):
         # Adjust positions and spacing as needed
         spacing = 5  # Adjust this value to increase/decrease character spacing
 
-        draw_spaced_text(draw, (400, 1200), certificate_name, font, "black", spacing=15)
-        draw_spaced_text(draw, (575, 1360), person_name, font, "black", spacing=15)
+        draw_spaced_text(draw, (460, 1080), certificate_name, font, "black", spacing=15)
+        draw_spaced_text(draw, (575, 1362), person_name, font, "black", spacing=15)
         draw_spaced_text(draw, (420, 1430), officer_name, font, "black", spacing=15)
 
         # Save to buffer
