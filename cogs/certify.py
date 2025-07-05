@@ -50,9 +50,9 @@ class Certify(commands.Cog):
         draw = ImageDraw.Draw(img)
 
         # Load font (ensure this font file is present in the same directory or specify a path)
-        font_path = os.path.join(os.path.dirname(__file__), "EBGaramond-VariableFont_wght.ttf",72)
+        font_path = os.path.join(os.path.dirname(__file__), "EBGaramond-VariableFont_wght.ttf")
         try:
-            font = ImageFont.truetype(font_path, size=40)
+            font = ImageFont.truetype(font_path, size=72)
         except:
             font = ImageFont.load_default()
             await interaction.followup.send("⚠️ Custom font not found. Using default font.")
