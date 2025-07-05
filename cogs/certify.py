@@ -79,16 +79,17 @@ class Certify(commands.Cog):
 
         # Center the certificate name about a given pixel (e.g., x=700)
         center_x = 700
-        y_cert = 905
+        y_cert = 950
 
         cert_width = get_spaced_text_width(certificate_name, font, spacing)
         cert_start_x = center_x - (cert_width // 2)
         draw_spaced_text(draw, (cert_start_x, y_cert), certificate_name, font, "black", spacing)
 
         # The other fields use fixed positions
-        draw_spaced_text(draw, (575, 1265), person_name, font, "black", spacing)
-        draw_spaced_text(draw, (420, 1320), officer_name, font, "black", spacing)
+        draw_spaced_text(draw, (575, 1362), person_name, font, "black", spacing=25)
+        draw_spaced_text(draw, (420, 1430), officer_name, font, "black", spacing=25)
 
+                          
         # Save to buffer
         output_buffer = BytesIO()
         img.save(output_buffer, format="PNG")
