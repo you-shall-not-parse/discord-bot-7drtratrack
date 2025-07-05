@@ -58,9 +58,9 @@ class Certify(commands.Cog):
             await interaction.followup.send("⚠️ Custom font not found. Using default font.")
 
         # Adjust positions to match your design
-        draw.text((755, 1126), certificate_name, font=font, fill="black")
-        draw.text((641, 1340), person_name, font=font, fill="black")
-        draw.text((403, 1348), officer_name, font=font, fill="black")
+        draw.text((178, 906), certificate_name, font=font, fill="black")
+        draw.text((556, 1267), person_name, font=font, fill="black")
+        draw.text((400, 1338), officer_name, font=font, fill="black")
 
         # Save to buffer
         output_buffer = BytesIO()
