@@ -5,6 +5,13 @@ from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 import os
 
+def draw_spaced_text(draw, position, text, font, fill, spacing):
+    x, y = position
+    for char in text:
+        draw.text((x, y), char, font=font, fill=fill)
+        char_width, _ = draw.textsize(char, font=font)
+        x += char_width + spacing  # spacing in pixels
+
 class Certify(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -57,10 +64,12 @@ class Certify(commands.Cog):
             font = ImageFont.load_default()
             await interaction.followup.send("⚠️ Custom font not found. Using default font.")
 
-        # Adjust positions to match your design
-        draw.text((365, 905), certificate_name, font=font, fill="black")
-        draw.text((575, 1265), person_name, font=font, fill="black")
-        draw.text((420, 1320), officer_name, font=font, fill="black")
+        # Adjust positions and spacing as needed
+        spacing = 5  # Adjust this value to increase/decrease character spacing
+
+        draw_spaced_text(draw, (430, 905), certificate_name, font, "black", spacing=5)
+        draw_spaced_text(draw, (585, 1270), person_name, font, "black", spacing=5)
+        draw_spaced_text(draw, (430, 1330), officer_name, font, "black", spacing=5)
 
         # Save to buffer
         output_buffer = BytesIO()
