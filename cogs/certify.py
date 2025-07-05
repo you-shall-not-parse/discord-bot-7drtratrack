@@ -61,7 +61,7 @@ class Certify(commands.Cog):
         # Load font (ensure this font file is present in the same directory or specify a path)
         font_path = os.path.join(os.path.dirname(__file__), "AlegreyaSC-Bold.ttf")
         try:
-            font = ImageFont.truetype(font_path, size=72)
+            font = ImageFont.truetype(font_path, size=68)
         except:
             font = ImageFont.load_default()
             await interaction.followup.send("⚠️ Custom font not found. Using default font.")
@@ -69,9 +69,9 @@ class Certify(commands.Cog):
         # Adjust positions and spacing as needed
         spacing = 5  # Adjust this value to increase/decrease character spacing
 
-        draw_spaced_text(draw, (365, 905), certificate_name, font, "black", spacing=5)
-        draw_spaced_text(draw, (575, 1265), person_name, font, "black", spacing=5)
-        draw_spaced_text(draw, (420, 1320), officer_name, font, "black", spacing=5)
+        draw_spaced_text(draw, (365, 920), certificate_name, font, "black", spacing=5)
+        draw_spaced_text(draw, (575, 1285), person_name, font, "black", spacing=5)
+        draw_spaced_text(draw, (420, 1335), officer_name, font, "black", spacing=5)
 
         # Save to buffer
         output_buffer = BytesIO()
