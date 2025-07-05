@@ -48,7 +48,7 @@ class Certify(commands.Cog):
                       officer_name: str):
 
         # --- Role check block ---
-        allowed_roles = {"Assistant"}  # <-- Set your allowed role names here
+        allowed_roles = {"Assistant","7DR-NCO","7DR-SNCO","Admin Core"}  # <-- Set your allowed role names here
         member = interaction.user if hasattr(interaction, "user") else interaction.author
         if not hasattr(member, "roles") or not any(role.name in allowed_roles for role in member.roles):
             await interaction.response.send_message("❌ You do not have permission to use this command.", ephemeral=True)
