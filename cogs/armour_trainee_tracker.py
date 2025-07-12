@@ -8,7 +8,7 @@ class ArmourTraineeTracker(commands.Cog):
         self.GUILD_ID = 1097913605082579024
         self.ARMOUR_ROLE_ID = 1099615408518070313 #changed
         self.BAC_ROLE_ID = 1182154521129009202 #changed from BAC
-        self.DRIVER_ROLE_ID = 1100005700106719312 #changed from Driver
+        self.DRIVER_ROLE_ID = 1108427017998827521 #changed from Driver
         self.GUNNER_ROLE_ID = 1108426942610407494 #changed from none - new
         self.RECRUITFORM_CHANNEL_ID = 1098331019364552845
         self.TRACKING_CHANNEL_ID = 1391119412047777974 #changed
