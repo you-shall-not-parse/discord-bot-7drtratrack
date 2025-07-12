@@ -194,7 +194,7 @@ class TraineeTracker(commands.Cog):
             joined_days_ago = (datetime.utcnow().replace(tzinfo=None) - data['join_date'].replace(tzinfo=None)).days
             if data["graduated"]:
                 summary["Graduated"].append(nickname)
-            elif data["has_support"] and data["has_engineer"] and joined_days_ago >= 28:
+            elif data["has_support"] and data["has_engineer"] and joined_days_ago >= 14:
                 summary["Ready to Graduate"].append(nickname)
             elif data["has_support"] or data["has_engineer"] or joined_days_ago <= 14:
                 summary["On-Track"].append(nickname)
