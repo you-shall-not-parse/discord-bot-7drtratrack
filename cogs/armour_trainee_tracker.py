@@ -150,12 +150,10 @@ class ArmourTraineeTracker(commands.Cog):
 
         if data['graduated']:
             embed.color = discord.Color.greyple()
-        elif data['has_BAC'] and data['has_Driver'] and joined_days_ago >= 14:
-            embed.color = discord.Color.purple()
             embed.title = f"**{nickname}**"
-        elif data['has_BAC'] and data['has_Driver']:
+        elif data['has_BAC']:
             embed.color = discord.Color.green()
-        elif data['has_BAC'] or data['has_Driver']:
+        elif data['has_Driver'] or data['has_Gunner']:
             embed.color = discord.Color.blue()
         elif joined_days_ago > 28:
             embed.color = discord.Color.orange()
@@ -167,6 +165,7 @@ class ArmourTraineeTracker(commands.Cog):
         embed.add_field(name="+14 Days", value=data["joined_plus_2_weeks"].strftime('%d-%m-%Y'), inline=True)
         embed.add_field(name="BAC Role", value="✅" if data["has_BAC"] else "❌", inline=True)
         embed.add_field(name="Driver Role", value="✅" if data["has_Driver"] else "❌", inline=True)
+        embed.add_field(name="Gunner Role", value="✅" if data["has_Gunner"] else "❌", inline=True)
         embed.add_field(name="Recruit Form Posted", value="✅" if data["recruitform_posted"] else "❌", inline=True)
         if data["graduated"] and data["graduation_date"]:
             embed.add_field(name="Graduation Date", value=data["graduation_date"].strftime('%Y-%m-%d'), inline=True)
@@ -191,7 +190,6 @@ class ArmourTraineeTracker(commands.Cog):
         summary = {
             "Behind": [],
             "On-Track": [],
-            "Ready to Graduate": [],
             "Graduated": []
         }
 
@@ -199,9 +197,7 @@ class ArmourTraineeTracker(commands.Cog):
             joined_days_ago = (datetime.utcnow().replace(tzinfo=None) - data['join_date'].replace(tzinfo=None)).days
             if data["graduated"]:
                 summary["Graduated"].append(nickname)
-            elif data["has_BAC"] and data["has_Driver"] and joined_days_ago >= 28:
-                summary["Ready to Graduate"].append(nickname)
-            elif data["has_BAC"] or data["has_Driver"] or joined_days_ago <= 14:
+            elif data["has_BAC"] or data["has_Driver"] or data["has_Gunner"] or joined_days_ago <= 14:
                 summary["On-Track"].append(nickname)
             else:
                 summary["Behind"].append(nickname)
@@ -209,9 +205,8 @@ class ArmourTraineeTracker(commands.Cog):
         embed = discord.Embed(title="Trainee Tracker: Legend & Summary", color=discord.Color.blurple())
 
         embed.add_field(name="Legend", value=(
-            "🟪 **Purple** — Ready to Graduate! Has both roles AND 2+ weeks, amazing!\n"
-            "🟩 **Green** — Has both BAC and Driver but not done 2 weeks yet, great\n"
-            "🟦 **Blue** — Has one of BAC or Driver, good\n"
+            "🟩 **Green** — Has BAC but not done 2 weeks yet, great\n"
+            "🟦 **Blue** — Has Driver or Gunner, good\n"
             "⬛ **Grey** — No roles but under 2 weeks, not bad\n"
             "🟧 **Orange** — No roles and in server over 4 weeks, bad\n"
             "🎓 **Graduate** — Graduated"
