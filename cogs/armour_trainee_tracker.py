@@ -188,8 +188,10 @@ class ArmourTraineeTracker(commands.Cog):
 
     def generate_summary_and_legend_embed(self, trainees_sorted):
         summary = {
-            "Behind": [],
-            "On-Track": [],
+            "Now Inactive or Reserve Joiner (Red)": [],
+            "Behind (Orange)": [],
+            "Need Training (Grey)": [],
+            "Active (Green)": [],
             "Graduated": []
         }
 
@@ -198,17 +200,21 @@ class ArmourTraineeTracker(commands.Cog):
             if data["graduated"]:
                 summary["Graduated"].append(nickname)
             elif data["has_BAC"] or data["has_Driver"] or data["has_Gunner"] or joined_days_ago <= 14:
-                summary["On-Track"].append(nickname)
+                summary["Active"].append(nickname)
+            elif joined_days_ago <= 14:
+                summary["Need Training"].append(nickname)
+            elif data["has_BAC"] or data["has_Driver"] or data["has_Gunner"] or joined_days_ago <= 14:
+                summary["Behind"].append(nickname)
             else:
                 summary["Behind"].append(nickname)
 
         embed = discord.Embed(title="Trainee Tracker: Legend & Summary", color=discord.Color.blurple())
 
         embed.add_field(name="Legend", value=(
-            "🟩 **Green** — Has BAC but not done 2 weeks yet, great\n"
-            "🟦 **Blue** — Has Driver or Gunner, good\n"
-            "⬛ **Grey** — No roles but under 2 weeks, not bad\n"
-            "🟧 **Orange** — No roles and in server over 4 weeks, bad\n"
+            "🟩 **Active** — Has a cert and in server less than 2 weeks, gret\n"
+            "⬛ **Need Training** — No certs but under 2 weeks, not bad\n"
+            "🟧 **Behind** — No certs and in server over 2 weeks, bad\n"
+            "🟥 **Now Inactive** - Been tank crew trainee over 4 weeks, terrible (unless they're a joiner from infantry)\n"
             "🎓 **Graduate** — Graduated"
         ), inline=False)
 
