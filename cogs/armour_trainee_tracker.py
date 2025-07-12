@@ -155,11 +155,14 @@ class ArmourTraineeTracker(commands.Cog):
             embed.color = discord.Color.green()
         elif data['has_Driver'] or data['has_Gunner']:
             embed.color = discord.Color.blue()
-        elif joined_days_ago > 28:
+        elif joined_days_ago > 14 and (not data['has_Driver'] or data['has_Gunner']):
             embed.color = discord.Color.orange()
         else:
             embed.color = discord.Color.dark_grey()
 
+
+
+        
         embed.add_field(name="Profile", value=data["profile_name"], inline=True)
         embed.add_field(name="Join Date", value=data["join_date"].strftime('%d-%m-%Y'), inline=True)
         embed.add_field(name="+14 Days", value=data["joined_plus_2_weeks"].strftime('%d-%m-%Y'), inline=True)
