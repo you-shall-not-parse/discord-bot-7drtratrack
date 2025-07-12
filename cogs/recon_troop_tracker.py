@@ -147,12 +147,10 @@ class ReconTroopTracker(commands.Cog):
 
         if data['graduated']:
             embed.color = discord.Color.greyple()
-        elif data['has_SPOTTER'] and data['has_SNIPER'] and joined_days_ago >= 14:
+        elif data['has_SPOTTER'] or data['has_SNIPER'] and joined_days_ago >= 14:
             embed.color = discord.Color.purple()
             embed.title = f"**{nickname}**"
-        elif data['has_SPOTTER'] and data['has_SNIPER']:
-            embed.color = discord.Color.green()
-        elif data['has_SPOTTER'] or data['has_SNIPER']:
+        elif data["has_SPOTTER"] or data["has_SNIPER"] or joined_days_ago <= 13:
             embed.color = discord.Color.blue()
         elif joined_days_ago > 28:
             embed.color = discord.Color.orange()
@@ -206,10 +204,10 @@ class ReconTroopTracker(commands.Cog):
         embed = discord.Embed(title="Trainee Tracker: Legend & Summary", color=discord.Color.blurple())
 
         embed.add_field(name="Legend", value=(
-            "🟩 **Green** — Has both Spotter and Sniper but not done 2 weeks yet, great\n"
-            "🟦 **Blue** — Has one of Spotter or Sniper, good\n"
+            "🟪 **Purple** — Ready to Graduate! Has either Spotter or Sniper AND 2+ weeks, amazing!\n"
+            "🟦 **Blue** — Has one of Spotter or Sniper but less than 2 weeks, good\n"
             "⬛ **Grey** — No roles but under 2 weeks, not bad\n"
-            "🟧 **Orange** — No roles and in server over 2 weeks, bad\n"
+            "🟧 **Orange** — No roles and in server over 4 weeks, bad\n"
             "🎓 **Graduate** — Graduated"
         ), inline=False)
 
