@@ -152,11 +152,34 @@ class TraineeTracker(commands.Cog):
             embed.color = discord.Color.green()
         elif data['has_support'] or data['has_engineer']:
             embed.color = discord.Color.blue()
-        elif joined_days_ago > 28:
+        elif joined_days_ago > 14 and (not data['has_support'] or data['has_engineer']):
             embed.color = discord.Color.orange()
         else:
             embed.color = discord.Color.dark_grey()
 
+####
+    
+    def generate_report_embed(self, nickname):
+        data = self.trainee_data[nickname]
+        embed = discord.Embed(
+            title=f"{nickname}"
+        )
+        joined_days_ago = (datetime.utcnow().replace(tzinfo=None) - data['join_date'].replace(tzinfo=None)).days
+
+        if data['graduated']:
+            embed.color = discord.Color.greyple()
+        elif data['has_SPOTTER'] or data['has_SNIPER'] and joined_days_ago >= 14:
+            embed.color = discord.Color.purple()
+            embed.title = f"**{nickname}**"
+        elif data["has_SPOTTER"] or data["has_SNIPER"] and joined_days_ago <= 13:
+            embed.color = discord.Color.blue()
+        elif joined_days_ago > 14 and (not data["has_SPOTTER"] or data["has_SNIPER"]):
+            embed.color = discord.Color.orange()
+        else:
+            embed.color = discord.Color.dark_grey()
+
+####
+        
         embed.add_field(name="Profile", value=data["profile_name"], inline=True)
         embed.add_field(name="Join Date", value=data["join_date"].strftime('%d-%m-%Y'), inline=True)
         embed.add_field(name="+14 Days", value=data["joined_plus_2_weeks"].strftime('%d-%m-%Y'), inline=True)
