@@ -136,7 +136,6 @@ class ReconTroopTracker(commands.Cog):
             track_channel = self.bot.get_channel(self.TRACKING_CHANNEL_ID)
             await self.update_trainee_embed(nickname, track_channel)
 
-#new section
     
     def generate_report_embed(self, nickname):
         data = self.trainee_data[nickname]
@@ -207,7 +206,7 @@ class ReconTroopTracker(commands.Cog):
             "🟪 **Purple** — Ready to Graduate! Has either Spotter or Sniper AND 2+ weeks, amazing!\n"
             "🟦 **Blue** — Has one of Spotter or Sniper but less than 2 weeks, good\n"
             "⬛ **Grey** — No roles but under 2 weeks, not bad\n"
-            "🟧 **Orange** — No roles and in server over 4 weeks, bad\n"
+            "🟧 **Orange** — No roles and in server over 2 weeks, bad\n"
             "🎓 **Graduate** — Graduated"
         ), inline=False)
 
