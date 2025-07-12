@@ -150,10 +150,12 @@ class ArmourTraineeTracker(commands.Cog):
 
         if data['graduated']:
             embed.color = discord.Color.greyple()
+        elif data['has_BAC'] and data['has_Driver'] and joined_days_ago >= 14:
+            embed.color = discord.Color.purple()
             embed.title = f"**{nickname}**"
-        elif data['has_BAC']:
+        elif data['has_BAC'] and data['has_Driver']:
             embed.color = discord.Color.green()
-        elif data['has_Driver'] or data['has_Gunner']:
+        elif data['has_BAC'] or data['has_Driver']:
             embed.color = discord.Color.blue()
         elif joined_days_ago > 28:
             embed.color = discord.Color.orange()
@@ -165,7 +167,6 @@ class ArmourTraineeTracker(commands.Cog):
         embed.add_field(name="+14 Days", value=data["joined_plus_2_weeks"].strftime('%d-%m-%Y'), inline=True)
         embed.add_field(name="BAC Role", value="✅" if data["has_BAC"] else "❌", inline=True)
         embed.add_field(name="Driver Role", value="✅" if data["has_Driver"] else "❌", inline=True)
-        embed.add_field(name="Gunner Role", value="✅" if data["has_Gunner"] else "❌", inline=True)
         embed.add_field(name="Recruit Form Posted", value="✅" if data["recruitform_posted"] else "❌", inline=True)
         if data["graduated"] and data["graduation_date"]:
             embed.add_field(name="Graduation Date", value=data["graduation_date"].strftime('%Y-%m-%d'), inline=True)
@@ -186,45 +187,43 @@ class ArmourTraineeTracker(commands.Cog):
             except discord.NotFound:
                 pass
 
-   def generate_summary_and_legend_embed(self, trainees_sorted):
-    summary = {
-        "Active": [],
-        "Need Training": [],
-        "Behind": [],
-        "Now Inactive": [],
-        "Graduated": []
-    }
+    def generate_summary_and_legend_embed(self, trainees_sorted):
+        summary = {
+            "Behind": [],
+            "On-Track": [],
+            "Ready to Graduate": [],
+            "Graduated": []
+        }
 
-    for nickname, data in trainees_sorted:
-        joined_days_ago = (datetime.utcnow().replace(tzinfo=None) - data['join_date'].replace(tzinfo=None)).days
-        has_cert = data["has_BAC"] or data["has_Driver"] or data["has_Gunner"]
+        for nickname, data in trainees_sorted:
+            joined_days_ago = (datetime.utcnow().replace(tzinfo=None) - data['join_date'].replace(tzinfo=None)).days
+            if data["graduated"]:
+                summary["Graduated"].append(nickname)
+            elif data["has_BAC"] and data["has_Driver"] and joined_days_ago >= 28:
+                summary["Ready to Graduate"].append(nickname)
+            elif data["has_BAC"] or data["has_Driver"] or joined_days_ago <= 14:
+                summary["On-Track"].append(nickname)
+            else:
+                summary["Behind"].append(nickname)
 
-        if data["graduated"]:
-            summary["Graduated"].append(nickname)
-        elif has_cert and joined_days_ago < 14:
-            summary["Active"].append(nickname)
-        elif not has_cert and joined_days_ago < 14:
-            summary["Need Training"].append(nickname)
-        elif not has_cert and joined_days_ago >= 28:
-            summary["Now Inactive"].append(nickname)
-        elif not has_cert and joined_days_ago >= 14:
-            summary["Behind"].append(nickname)
-        else:
-            summary["Behind"].append(nickname)
+        embed = discord.Embed(title="Trainee Tracker: Legend & Summary", color=discord.Color.blurple())
 
-    embed = discord.Embed(title="Trainee Tracker: Legend & Summary", color=discord.Color.blurple())
-    embed.add_field(name="Legend", value=(
-        "🟩 **Active** — Has a cert and in server less than 2 weeks, great\n"
-        "⬛ **Need Training** — No certs but under 2 weeks, not bad\n"
-        "🟧 **Behind** — No certs and in server over 2 weeks, bad\n"
-        "🟥 **Now Inactive** — Been tank crew trainee over 4 weeks, terrible (unless they're a joiner from infantry)\n"
-        "🎓 **Graduate** — Graduated"
-    ), inline=False)
-    embed.add_field(name="\u200b", value="—" * 30, inline=False)
-    for category, names in summary.items():
-        if names:
-            embed.add_field(name=category, value="\n".join(names), inline=False)
-    return embed
+        embed.add_field(name="Legend", value=(
+            "🟪 **Purple** — Ready to Graduate! Has both roles AND 2+ weeks, amazing!\n"
+            "🟩 **Green** — Has both BAC and Driver but not done 2 weeks yet, great\n"
+            "🟦 **Blue** — Has one of BAC or Driver, good\n"
+            "⬛ **Grey** — No roles but under 2 weeks, not bad\n"
+            "🟧 **Orange** — No roles and in server over 4 weeks, bad\n"
+            "🎓 **Graduate** — Graduated"
+        ), inline=False)
+
+        embed.add_field(name="\u200b", value="—" * 30, inline=False)
+
+        for category, names in summary.items():
+            if names:
+                embed.add_field(name=category, value="\n".join(names), inline=False)
+
+        return embed
 
     async def update_existing_summary_message(self, track_channel):
         sorted_trainees = sorted(self.trainee_data.items(), key=lambda x: x[1]['join_date'])
