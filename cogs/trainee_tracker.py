@@ -61,7 +61,7 @@ class TraineeTracker(commands.Cog):
         await track_channel.send(embed=summary)
 
     @commands.Cog.listener()
-async def on_message(self, message):
+    async def on_message(self, message):
     if message.author.bot:
         return
     nickname = message.author.display_name
