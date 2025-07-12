@@ -195,23 +195,22 @@ def generate_summary_and_legend_embed(self, trainees_sorted):
         "Graduated": []
     }
 
-    for nickname, data in trainees_sorted:
-        joined_days_ago = (datetime.utcnow().replace(tzinfo=None) - data['join_date'].replace(tzinfo=None)).days
-        has_cert = data["has_BAC"] or data["has_Driver"] or data["has_Gunner"]
+for nickname, data in trainees_sorted:
+    joined_days_ago = (datetime.utcnow().replace(tzinfo=None) - data['join_date'].replace(tzinfo=None)).days
+    has_cert = data["has_BAC"] or data["has_Driver"] or data["has_Gunner"]
 
-        if data["graduated"]:
-            summary["Graduated"].append(nickname)
-        elif has_cert and joined_days_ago < 14:
-            summary["Active"].append(nickname)
-        elif not has_cert and joined_days_ago < 14:
-            summary["Need Training"].append(nickname)
-        elif not has_cert and joined_days_ago >= 14:
-            summary["Behind"].append(nickname)
-        elif joined_days_ago >= 28:
-            summary["Now Inactive"].append(nickname)
-        else:
-            # fallback for any unhandled case (optional)
-            summary["Behind"].append(nickname)
+    if data["graduated"]:
+        summary["Graduated"].append(nickname)
+    elif has_cert and joined_days_ago < 14:
+        summary["Active"].append(nickname)
+    elif not has_cert and joined_days_ago < 14:
+        summary["Need Training"].append(nickname)
+    elif not has_cert and joined_days_ago >= 28:
+        summary["Now Inactive"].append(nickname)
+    elif not has_cert and joined_days_ago >= 14:
+        summary["Behind"].append(nickname)
+    else:
+        summary["Behind"].append(nickname)
 
     embed = discord.Embed(title="Trainee Tracker: Legend & Summary", color=discord.Color.blurple())
     embed.add_field(name="Legend", value=(
