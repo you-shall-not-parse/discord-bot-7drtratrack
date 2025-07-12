@@ -230,4 +230,4 @@ class ArmourTraineeTracker(commands.Cog):
                 return
 
 async def setup(bot):
-    await bot.add_cog(TraineeTracker(bot))
+    await bot.add_cog(ArmourTraineeTracker(bot))
