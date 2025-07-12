@@ -150,7 +150,7 @@ class ReconTroopTracker(commands.Cog):
         elif data['has_SPOTTER'] or data['has_SNIPER'] and joined_days_ago >= 14:
             embed.color = discord.Color.purple()
             embed.title = f"**{nickname}**"
-        elif data["has_SPOTTER"] or data["has_SNIPER"] or joined_days_ago <= 13:
+        elif data["has_SPOTTER"] or data["has_SNIPER"] and joined_days_ago <= 13:
             embed.color = discord.Color.blue()
         elif joined_days_ago > 14 and (not data["has_SPOTTER"] or data["has_SNIPER"]):
             embed.color = discord.Color.orange()
