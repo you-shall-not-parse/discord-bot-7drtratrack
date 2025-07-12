@@ -188,8 +188,8 @@ class ArmourTraineeTracker(commands.Cog):
 
     def generate_summary_and_legend_embed(self, trainees_sorted):
         summary = {
-            "Behind": [],
-            "On-Track": [],
+            "Behind (Orange)": [],
+            "On-Track (Green, Blue & Grey)": [],
             "Graduated": []
         }
 
@@ -208,7 +208,7 @@ class ArmourTraineeTracker(commands.Cog):
             "🟩 **Green** — Has BAC but not done 2 weeks yet, great\n"
             "🟦 **Blue** — Has Driver or Gunner, good\n"
             "⬛ **Grey** — No roles but under 2 weeks, not bad\n"
-            "🟧 **Orange** — No roles and in server over 4 weeks, bad\n"
+            "🟧 **Orange** — No roles and in server over 2 weeks, bad\n"
             "🎓 **Graduate** — Graduated"
         ), inline=False)
 
