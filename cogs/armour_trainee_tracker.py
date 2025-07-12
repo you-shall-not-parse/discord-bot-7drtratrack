@@ -186,45 +186,45 @@ class ArmourTraineeTracker(commands.Cog):
             except discord.NotFound:
                 pass
 
-def generate_summary_and_legend_embed(self, trainees_sorted):
-    summary = {
-        "Active": [],
-        "Need Training": [],
-        "Behind": [],
-        "Now Inactive": [],
-        "Graduated": []
-    }
+    def generate_summary_and_legend_embed(self, trainees_sorted):
+        summary = {
+            "Active": [],
+            "Need Training": [],
+            "Behind": [],
+            "Now Inactive": [],
+            "Graduated": []
+        }
 
-for nickname, data in trainees_sorted:
-    joined_days_ago = (datetime.utcnow().replace(tzinfo=None) - data['join_date'].replace(tzinfo=None)).days
-    has_cert = data["has_BAC"] or data["has_Driver"] or data["has_Gunner"]
+    for nickname, data in trainees_sorted:
+        joined_days_ago = (datetime.utcnow().replace(tzinfo=None) - data['join_date'].replace(tzinfo=None)).days
+        has_cert = data["has_BAC"] or data["has_Driver"] or data["has_Gunner"]
 
-    if data["graduated"]:
-        summary["Graduated"].append(nickname)
-    elif has_cert and joined_days_ago < 14:
-        summary["Active"].append(nickname)
-    elif not has_cert and joined_days_ago < 14:
-        summary["Need Training"].append(nickname)
-    elif not has_cert and joined_days_ago >= 28:
-        summary["Now Inactive"].append(nickname)
-    elif not has_cert and joined_days_ago >= 14:
-        summary["Behind"].append(nickname)
-    else:
-        summary["Behind"].append(nickname)
+        if data["graduated"]:
+            summary["Graduated"].append(nickname)
+        elif has_cert and joined_days_ago < 14:
+            summary["Active"].append(nickname)
+        elif not has_cert and joined_days_ago < 14:
+            summary["Need Training"].append(nickname)
+        elif not has_cert and joined_days_ago >= 28:
+            summary["Now Inactive"].append(nickname)
+        elif not has_cert and joined_days_ago >= 14:
+            summary["Behind"].append(nickname)
+        else:
+            summary["Behind"].append(nickname)
 
-    embed = discord.Embed(title="Trainee Tracker: Legend & Summary", color=discord.Color.blurple())
-    embed.add_field(name="Legend", value=(
-        "🟩 **Active** — Has a cert and in server less than 2 weeks, great\n"
-        "⬛ **Need Training** — No certs but under 2 weeks, not bad\n"
-        "🟧 **Behind** — No certs and in server over 2 weeks, bad\n"
-        "🟥 **Now Inactive** — Been tank crew trainee over 4 weeks, terrible (unless they're a joiner from infantry)\n"
-        "🎓 **Graduate** — Graduated"
-    ), inline=False)
-    embed.add_field(name="\u200b", value="—" * 30, inline=False)
-    for category, names in summary.items():
-        if names:
-            embed.add_field(name=category, value="\n".join(names), inline=False)
-return embed
+        embed = discord.Embed(title="Trainee Tracker: Legend & Summary", color=discord.Color.blurple())
+        embed.add_field(name="Legend", value=(
+            "🟩 **Active** — Has a cert and in server less than 2 weeks, great\n"
+            "⬛ **Need Training** — No certs but under 2 weeks, not bad\n"
+            "🟧 **Behind** — No certs and in server over 2 weeks, bad\n"
+            "🟥 **Now Inactive** — Been tank crew trainee over 4 weeks, terrible (unless they're a joiner from infantry)\n"
+            "🎓 **Graduate** — Graduated"
+        ), inline=False)
+        embed.add_field(name="\u200b", value="—" * 30, inline=False)
+        for category, names in summary.items():
+            if names:
+                embed.add_field(name=category, value="\n".join(names), inline=False)
+    return embed
 
     async def update_existing_summary_message(self, track_channel):
         sorted_trainees = sorted(self.trainee_data.items(), key=lambda x: x[1]['join_date'])
