@@ -196,7 +196,7 @@ class ReconTroopTracker(commands.Cog):
             joined_days_ago = (datetime.utcnow().replace(tzinfo=None) - data['join_date'].replace(tzinfo=None)).days
             if data["graduated"]:
                 summary["Graduated"].append(nickname)
-            elif data["has_SPOTTER"] and data["has_SNIPER"] and joined_days_ago >= 28:
+            elif data["has_SPOTTER"] and data["has_SNIPER"] and joined_days_ago >= 14:
                 summary["Ready to Graduate"].append(nickname)
             elif data["has_SPOTTER"] or data["has_SNIPER"] or joined_days_ago <= 14:
                 summary["On-Track"].append(nickname)
@@ -206,7 +206,6 @@ class ReconTroopTracker(commands.Cog):
         embed = discord.Embed(title="Trainee Tracker: Legend & Summary", color=discord.Color.blurple())
 
         embed.add_field(name="Legend", value=(
-            "🟪 **Purple** — Ready to Graduate! Has both roles AND 2+ weeks, amazing!\n"
             "🟩 **Green** — Has both Spotter and Sniper but not done 2 weeks yet, great\n"
             "🟦 **Blue** — Has one of Spotter or Sniper, good\n"
             "⬛ **Grey** — No roles but under 2 weeks, not bad\n"
