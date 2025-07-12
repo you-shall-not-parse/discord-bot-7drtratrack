@@ -224,7 +224,7 @@ for nickname, data in trainees_sorted:
     for category, names in summary.items():
         if names:
             embed.add_field(name=category, value="\n".join(names), inline=False)
-    return embed
+return embed
 
     async def update_existing_summary_message(self, track_channel):
         sorted_trainees = sorted(self.trainee_data.items(), key=lambda x: x[1]['join_date'])
