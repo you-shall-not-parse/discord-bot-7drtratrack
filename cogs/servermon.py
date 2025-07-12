@@ -2,21 +2,26 @@ import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 from rcon.source import Client
+from dotenv import load_dotenv
 import sqlite3
 import re
 import os
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "kd_stats.db")
+load_dotenv()  # Load variables from .env
 
 class RconTracker(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.rcon_host = "YOUR.SERVER.IP"
-        self.rcon_port = 12345
-        self.rcon_password = "your_password"
-        self.last_seen_lines = set()
-        self.db = sqlite3.connect(DB_PATH)
+
+        self.rcon_host = os.getenv("RCON_HOST")
+        self.rcon_port = int(os.getenv("RCON_PORT"))
+        self.rcon_password = os.getenv("RCON_PASSWORD")
+
+        self.db_path = os.path.join(os.path.dirname(__file__), "kd_stats.db")
+        self.db = sqlite3.connect(self.db_path)
         self.create_table()
+
+        self.last_seen_lines = set()
         self.rcon_task.start()
 
     def create_table(self):
@@ -34,13 +39,11 @@ class RconTracker(commands.Cog):
         victim = victim.strip()
 
         with self.db:
-            # Update killer
             self.db.execute("""
                 INSERT INTO player_stats (name, kills, deaths)
                 VALUES (?, 1, 0)
                 ON CONFLICT(name) DO UPDATE SET kills = kills + 1;
             """, (killer,))
-            # Update victim
             self.db.execute("""
                 INSERT INTO player_stats (name, kills, deaths)
                 VALUES (?, 0, 1)
