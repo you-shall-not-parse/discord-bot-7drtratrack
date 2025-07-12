@@ -186,8 +186,8 @@ class ReconTroopTracker(commands.Cog):
 
     def generate_summary_and_legend_embed(self, trainees_sorted):
         summary = {
-            "Behind (Orange)": [],
-            "On-Track (Green, Blue & Grey) ": [],
+            "Behind": [],
+            "On-Track": [],
             "Ready to Graduate": [],
             "Graduated": []
         }
