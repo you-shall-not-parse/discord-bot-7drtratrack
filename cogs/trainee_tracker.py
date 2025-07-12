@@ -62,16 +62,16 @@ class TraineeTracker(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message):
-    if message.author.bot:
-        return
-    nickname = message.author.display_name
-    track_channel = self.bot.get_channel(self.TRACKING_CHANNEL_ID)
-    if message.channel.id == self.RECRUITFORM_CHANNEL_ID:
-        if nickname in self.trainee_messages:
-            self.trainee_data[nickname]["recruitform_posted"] = True
-            self.trainee_data[nickname]["recruitform_msg_id"] = message.id  # <-- NEW LINE
-            await self.update_trainee_embed(nickname, track_channel)
-    # Removed: sign-up tracking in signup channels
+        if message.author.bot:
+            return
+        nickname = message.author.display_name
+        track_channel = self.bot.get_channel(self.TRACKING_CHANNEL_ID)
+        if message.channel.id == self.RECRUITFORM_CHANNEL_ID:
+            if nickname in self.trainee_messages:
+                self.trainee_data[nickname]["recruitform_posted"] = True
+                self.trainee_data[nickname]["recruitform_msg_id"] = message.id  # <-- NEW LINE
+                await self.update_trainee_embed(nickname, track_channel)
+        # Removed: sign-up tracking in signup channels
 
     @commands.Cog.listener()
     async def on_member_update(self, before, after):
@@ -135,8 +135,6 @@ class TraineeTracker(commands.Cog):
             track_channel = self.bot.get_channel(self.TRACKING_CHANNEL_ID)
             await self.update_trainee_embed(nickname, track_channel)
 
-#new section
-    
     def generate_report_embed(self, nickname):
         data = self.trainee_data[nickname]
         embed = discord.Embed(
@@ -163,7 +161,9 @@ class TraineeTracker(commands.Cog):
         embed.add_field(name="+14 Days", value=data["joined_plus_2_weeks"].strftime('%d-%m-%Y'), inline=True)
         embed.add_field(name="Support Role", value="✅" if data["has_support"] else "❌", inline=True)
         embed.add_field(name="Engineer Role", value="✅" if data["has_engineer"] else "❌", inline=True)
-        if data["recruitform_posted"] and "recruitform_msg_id" in data:
+
+        # Recruit form field with hyperlink
+        if data.get("recruitform_posted") and data.get("recruitform_msg_id"):
             recruitform_url = f"https://discord.com/channels/{self.GUILD_ID}/{self.RECRUITFORM_CHANNEL_ID}/{data['recruitform_msg_id']}"
             recruitform_field = f"[✅ Recruit Form Posted]({recruitform_url})"
         else:
@@ -173,6 +173,7 @@ class TraineeTracker(commands.Cog):
             value=recruitform_field,
             inline=True
         )
+
         if data["graduated"] and data["graduation_date"]:
             embed.add_field(name="Graduation Date", value=data["graduation_date"].strftime('%Y-%m-%d'), inline=True)
         if data["left_server"]:
@@ -180,8 +181,6 @@ class TraineeTracker(commands.Cog):
         elif data["graduated"]:
             embed.set_footer(text=f"🎓 Graduated on {data['graduation_date'].strftime('%d-%m-%Y')}")
         return embed
-
-
 
     async def update_trainee_embed(self, nickname, track_channel):
         if nickname in self.trainee_messages:
