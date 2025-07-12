@@ -196,7 +196,7 @@ class TraineeTracker(commands.Cog):
                 summary["Graduated"].append(nickname)
             elif data["has_support"] and data["has_engineer"] and joined_days_ago >= 14:
                 summary["Ready to Graduate"].append(nickname)
-            elif data["has_support"] or data["has_engineer"] or joined_days_ago <= 14:
+            elif data["has_support"] or data["has_engineer"] or joined_days_ago <= 13:
                 summary["On-Track"].append(nickname)
             else:
                 summary["Behind"].append(nickname)
