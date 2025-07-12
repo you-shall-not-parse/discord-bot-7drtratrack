@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 from datetime import datetime, timedelta
 
-class ReconTraineeTracker(commands.Cog):
+class ReconTroopTracker(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.GUILD_ID = 1097913605082579024
