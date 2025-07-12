@@ -205,7 +205,7 @@ def generate_summary_and_legend_embed(self, trainees_sorted):
             summary["Active"].append(nickname)
         elif not has_cert and joined_days_ago < 14:
             summary["Need Training"].append(nickname)
-        elif not has_cert joined_days_ago >= 14
+        elif not has_cert and joined_days_ago >= 14
             summary["Behind"].append(nickname)
         elif joined_days_ago >= 28:
             summary["Now Inactive"].append(nickname)
