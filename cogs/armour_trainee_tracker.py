@@ -9,7 +9,7 @@ class ArmourTraineeTracker(commands.Cog):
         self.ARMOUR_ROLE_ID = 1099615408518070313 #changed
         self.BAC_ROLE_ID = 1182154521129009202 #changed from BAC
         self.DRIVER_ROLE_ID = 1100005700106719312 #changed from Driver
-#        self.GUNNER_ROLE_ID = 1108426942610407494 #changed from none - new
+        self.GUNNER_ROLE_ID = 1108426942610407494 #changed from none - new
         self.RECRUITFORM_CHANNEL_ID = 1098331019364552845
         self.TRACKING_CHANNEL_ID = 1391119412047777974 #changed
         self.trainee_data = {}
@@ -32,12 +32,14 @@ class ArmourTraineeTracker(commands.Cog):
                 joined_plus_2_weeks = join_date + timedelta(days=14)
                 has_BAC = any(role.id == self.BAC_ROLE_ID for role in member.roles)
                 has_Driver = any(role.id == self.DRIVER_ROLE_ID for role in member.roles)
+                has_Gunner = any(role.id == self.GUNNER_ROLE_ID for role in member.roles)
                 self.trainee_data[nickname] = {
                     "profile_name": profile_name,
                     "join_date": join_date,
                     "joined_plus_2_weeks": joined_plus_2_weeks,
                     "has_BAC": has_BAC,
                     "has_Driver": has_Driver,
+                    "has_Gunner": has_Gunner,
                     "recruitform_posted": False,
                     "left_server": False,
                     "graduated": False,
@@ -91,6 +93,7 @@ class ArmourTraineeTracker(commands.Cog):
                 "joined_plus_2_weeks": join_date + timedelta(days=14),
                 "has_BAC": any(role.id == self.BAC_ROLE_ID for role in after.roles),
                 "has_Driver": any(role.id == self.DRIVER_ROLE_ID for role in after.roles),
+                "has_Gunner": any(role.id == self.GUNNER_ROLE_ID for role in after.roles),
                 "recruitform_posted": False,
                 "left_server": False,
                 "graduated": False,
@@ -123,6 +126,7 @@ class ArmourTraineeTracker(commands.Cog):
 
         self.trainee_data[nickname]["has_BAC"] = any(role.id == self.BAC_ROLE_ID for role in after.roles)
         self.trainee_data[nickname]["has_Driver"] = any(role.id == self.DRIVER_ROLE_ID for role in after.roles)
+        self.trainee_data[nickname]["has_Gunner"] = any(role.id == self.GUNNER_ROLE_ID for role in after.roles)
 
         await self.update_trainee_embed(nickname, track_channel)
         await self.update_existing_summary_message(track_channel)
