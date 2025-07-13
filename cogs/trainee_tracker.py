@@ -1,10 +1,12 @@
 import discord
 from discord.ext import commands
 from datetime import datetime, timedelta
+import asyncio
 
 class TraineeTracker(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self._send_lock = asyncio.Lock()
         self.GUILD_ID = 1097913605082579024
         self.INFANTRY_ROLE_ID = 1099596178141757542
         self.SUPPORT_ROLE_ID = 1100005693546844242
@@ -13,6 +15,23 @@ class TraineeTracker(commands.Cog):
         self.TRACKING_CHANNEL_ID = 1368543744193990676
         self.trainee_data = {}
         self.trainee_messages = {}
+
+    async def send_rate_limited(self, channel, content=None, embed=None):
+        async with self._send_lock:
+            try:
+                msg = await channel.send(content=content, embed=embed)
+                await asyncio.sleep(1.5)
+                return msg
+            except discord.HTTPException as e:
+                print(f"[RateLimited Send] Failed: {e}")
+
+    async def edit_rate_limited(self, message, **kwargs):
+        async with self._send_lock:
+            try:
+                await message.edit(**kwargs)
+                await asyncio.sleep(1.5)
+            except discord.HTTPException as e:
+                print(f"[RateLimited Edit] Failed: {e}")
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -54,11 +73,12 @@ class TraineeTracker(commands.Cog):
         sorted_trainees = sorted(self.trainee_data.items(), key=lambda x: x[1]['join_date'])
         for nickname, data in sorted_trainees:
             embed = self.generate_report_embed(nickname)
-            msg = await track_channel.send(embed=embed)
-            self.trainee_messages[nickname] = msg.id
+            msg = await self.send_rate_limited(track_channel, embed=embed)
+            if msg:
+                self.trainee_messages[nickname] = msg.id
 
         summary = self.generate_summary_and_legend_embed(sorted_trainees)
-        await track_channel.send(embed=summary)
+        await self.send_rate_limited(track_channel, embed=summary)
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -70,7 +90,6 @@ class TraineeTracker(commands.Cog):
             if nickname in self.trainee_messages:
                 self.trainee_data[nickname]["recruitform_posted"] = True
                 await self.update_trainee_embed(nickname, track_channel)
-        # Removed: sign-up tracking in signup channels
 
     @commands.Cog.listener()
     async def on_member_update(self, before, after):
@@ -97,8 +116,9 @@ class TraineeTracker(commands.Cog):
             }
 
             embed = self.generate_report_embed(nickname)
-            msg = await track_channel.send(embed=embed)
-            self.trainee_messages[nickname] = msg.id
+            msg = await self.send_rate_limited(track_channel, embed=embed)
+            if msg:
+                self.trainee_messages[nickname] = msg.id
 
             async for m in track_channel.history(limit=50):
                 if m.author == self.bot.user and m.embeds:
@@ -108,7 +128,7 @@ class TraineeTracker(commands.Cog):
 
             sorted_trainees = sorted(self.trainee_data.items(), key=lambda x: x[1]['join_date'])
             summary = self.generate_summary_and_legend_embed(sorted_trainees)
-            await track_channel.send(embed=summary)
+            await self.send_rate_limited(track_channel, embed=summary)
 
         if nickname not in self.trainee_data:
             return
@@ -134,13 +154,9 @@ class TraineeTracker(commands.Cog):
             track_channel = self.bot.get_channel(self.TRACKING_CHANNEL_ID)
             await self.update_trainee_embed(nickname, track_channel)
 
-#new section
-    
     def generate_report_embed(self, nickname):
         data = self.trainee_data[nickname]
-        embed = discord.Embed(
-            title=f"{nickname}"
-        )
+        embed = discord.Embed(title=f"{nickname}")
         joined_days_ago = (datetime.utcnow().replace(tzinfo=None) - data['join_date'].replace(tzinfo=None)).days
 
         if data['graduated']:
@@ -152,7 +168,7 @@ class TraineeTracker(commands.Cog):
             embed.color = discord.Color.green()
         elif data['has_support'] or data['has_engineer']:
             embed.color = discord.Color.blue()
-        elif joined_days_ago > 14 and (not data['has_support'] or data['has_engineer']):
+        elif joined_days_ago > 14:
             embed.color = discord.Color.orange()
         else:
             embed.color = discord.Color.dark_grey()
@@ -171,14 +187,12 @@ class TraineeTracker(commands.Cog):
             embed.set_footer(text=f"🎓 Graduated on {data['graduation_date'].strftime('%d-%m-%Y')}")
         return embed
 
-
-
     async def update_trainee_embed(self, nickname, track_channel):
         if nickname in self.trainee_messages:
             try:
                 msg = await track_channel.fetch_message(self.trainee_messages[nickname])
                 embed = self.generate_report_embed(nickname)
-                await msg.edit(embed=embed)
+                await self.edit_rate_limited(msg, embed=embed)
             except discord.NotFound:
                 pass
 
@@ -202,7 +216,6 @@ class TraineeTracker(commands.Cog):
                 summary["Behind"].append(nickname)
 
         embed = discord.Embed(title="Trainee Tracker: Legend & Summary", color=discord.Color.blurple())
-
         embed.add_field(name="Legend", value=(
             "🟪 **Purple** — Ready to Graduate! Has both roles AND 2+ weeks, amazing!\n"
             "🟩 **Green** — Has both Support and Engineer but not done 2 weeks yet, great\n"
@@ -225,7 +238,7 @@ class TraineeTracker(commands.Cog):
         summary = self.generate_summary_and_legend_embed(sorted_trainees)
         async for message in track_channel.history(limit=50):
             if message.author == self.bot.user and message.embeds and "Trainee Tracker: Legend & Summary" in message.embeds[0].title:
-                await message.edit(embed=summary)
+                await self.edit_rate_limited(message, embed=summary)
                 return
 
 async def setup(bot):
