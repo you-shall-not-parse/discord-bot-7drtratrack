@@ -108,9 +108,6 @@ class RconTracker(commands.Cog):
             f"📊 `{name}` — {kills} K / {deaths} D — K/D: `{ratio:.2f}`"
         )
 
-    async def cog_load(self):
-        self.bot.tree.add_command(self.kd)
-
     def cog_unload(self):
         self.db.close()
 
