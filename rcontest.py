@@ -46,7 +46,7 @@ def main():
     print("Authentication successful!")
 
     # Query current map (packet_type 2 = SERVERDATA_EXECCOMMAND)
-    send_packet(sock, 2, 2, "currentmap")
+    send_packet(sock, 2, 2, "showmap")
     request_id, response_type, body = receive_packet(sock)
     print(f"Current map: {body}")
 
