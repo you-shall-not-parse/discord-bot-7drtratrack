@@ -16,22 +16,25 @@ class TraineeTracker(commands.Cog):
         self.trainee_data = {}
         self.trainee_messages = {}
 
-    async def send_rate_limited(self, channel, content=None, embed=None):
+# rate limiter
+    
+    async def send_rate_limited(self, channel, *, content=None, embed=None):
         async with self._send_lock:
             try:
                 msg = await channel.send(content=content, embed=embed)
-                await asyncio.sleep(1.5)
+                await asyncio.sleep(2.5)
                 return msg
             except discord.HTTPException as e:
-                print(f"[RateLimited Send] Failed: {e}")
+                print(f"[Send Failed] {e}")
+                return None
 
-    async def edit_rate_limited(self, message, **kwargs):
+    async def edit_rate_limited(self, message, *, content=None, embed=None):
         async with self._send_lock:
             try:
-                await message.edit(**kwargs)
-                await asyncio.sleep(1.5)
+                await message.edit(content=content, embed=embed)
+                await asyncio.sleep(2.5)
             except discord.HTTPException as e:
-                print(f"[RateLimited Edit] Failed: {e}")
+                print(f"[Edit Failed] {e}")
 
     @commands.Cog.listener()
     async def on_ready(self):
