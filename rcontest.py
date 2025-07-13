@@ -1,16 +1,18 @@
-from rcon.source import Client
 import os
 from dotenv import load_dotenv
 
-load_dotenv()  # load variables from .env into environment
+load_dotenv()
 
-rcon_host = os.getenv("RCON_HOST")
-rcon_port = int(os.getenv("RCON_PORT"))  # convert port to int
-rcon_password = os.getenv("RCON_PASSWORD")
+host = os.getenv("RCON_HOST")
+port = int(os.getenv("RCON_PORT"))
+password = os.getenv("RCON_PASSWORD")
+
+from rcon.source import Client
 
 try:
     with Client(host, port, passwd=password) as client:
         response = client.run("status")
-        print("✅ Connected! Response:\n", response)
+        print("✅ Connected! Server response:")
+        print(response)
 except Exception as e:
-    print("❌ Failed to connect:", e)
+    print(f"❌ Failed to connect: {e}")
