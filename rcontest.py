@@ -1,7 +1,7 @@
 import socket
 
 SERVER_IP = '176.57.171.44'
-SERVER_PORT = 28016
+SERVER_PORT = 28025
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 sock.connect((SERVER_IP, SERVER_PORT))
