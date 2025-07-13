@@ -3,7 +3,7 @@ import struct
 
 SERVER_IP = '176.57.171.44'
 SERVER_PORT = 28016
-RCON_PASSWORD = 'your_password_here'
+RCON_PASSWORD = 'bedcc53'
 
 def send_packet(sock, request_id, packet_type, body):
     body_bytes = body.encode('utf-8') + b'\x00'
