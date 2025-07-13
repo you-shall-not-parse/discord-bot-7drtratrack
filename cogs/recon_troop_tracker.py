@@ -16,6 +16,8 @@ class ReconTroopTracker(commands.Cog):
         self.trainee_data = {}
         self.trainee_messages = {}
 
+# rate limiter
+    
     async def send_rate_limited(self, channel, *, content=None, embed=None):
         async with self._send_lock:
             try:
