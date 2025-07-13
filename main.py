@@ -49,8 +49,8 @@ async def main():
         # Load your cogs
         await bot.load_extension("cogs.bulkrole")
         await bot.load_extension("cogs.trainee_tracker")
-        await bot.load_extension("cogs.armour_trainee_tracker")
-        await bot.load_extension("cogs.recon_troop_tracker")
+        # await bot.load_extension("cogs.armour_trainee_tracker")
+        # await bot.load_extension("cogs.recon_troop_tracker")
         await bot.load_extension("cogs.certify")
         # await bot.load_extension("cogs.rcon_tracker")
         await bot.start(TOKEN)
