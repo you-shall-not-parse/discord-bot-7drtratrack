@@ -3,7 +3,7 @@ import struct
 
 SERVER_IP = '176.57.171.44'  # Your server IP here
 SERVER_PORT = 28016          # Your server port here
-RCON_PASSWORD = 'your_rcon_password_here'  # Your RCON password
+RCON_PASSWORD = 'bedcc53'  # Your RCON password
 
 # Helper to receive exactly n bytes
 def receive_all(sock, n):
