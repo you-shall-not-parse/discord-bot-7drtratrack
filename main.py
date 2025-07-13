@@ -26,6 +26,22 @@ async def on_ready():
     logging.info("------")
     print(f"Bot is ready! Logged in as {bot.user} (ID: {bot.user.id})")
 
+# Only process commands in guild channels, NOT in DMs
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+    if not isinstance(message.channel, discord.DMChannel):
+        await bot.process_commands(message)
+    # Do NOT process commands in DMs; your cogs handle DMs
+
+# Suppress CommandNotFound in DMs
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound) and isinstance(ctx.channel, discord.DMChannel):
+        return  # Silently ignore CommandNotFound in DMs
+    raise error
+
 # Tests the RCON connection
 def test_rcon_connection():
     host = os.getenv("RCON_HOST")
@@ -44,22 +60,6 @@ def test_rcon_connection():
 if not test_rcon_connection():
     print("🛑 Exiting: Unable to connect to RCON.")
     exit(1)
-
-# Only process commands in guild channels, NOT in DMs
-@bot.event
-async def on_message(message):
-    if message.author.bot:
-        return
-    if not isinstance(message.channel, discord.DMChannel):
-        await bot.process_commands(message)
-    # Do NOT process commands in DMs; your cogs handle DMs
-
-# Suppress CommandNotFound in DMs
-@bot.event
-async def on_command_error(ctx, error):
-    if isinstance(error, commands.CommandNotFound) and isinstance(ctx.channel, discord.DMChannel):
-        return  # Silently ignore CommandNotFound in DMs
-    raise error
 
 async def main():
     if not TOKEN:
