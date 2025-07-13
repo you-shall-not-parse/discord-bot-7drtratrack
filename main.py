@@ -41,6 +41,10 @@ def test_rcon_connection():
         print(f"❌ RCON test failed: {e}")
         return False
 
+if not test_rcon_connection():
+    print("🛑 Exiting: Unable to connect to RCON.")
+    exit(1)
+
 # Only process commands in guild channels, NOT in DMs
 @bot.event
 async def on_message(message):
