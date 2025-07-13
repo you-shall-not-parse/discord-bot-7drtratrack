@@ -68,7 +68,7 @@ class RconTracker(commands.Cog):
     async def rcon_task(self):
         try:
             with Client(self.rcon_host, self.rcon_port, passwd=self.rcon_password) as client:
-                logs = client.run("GetLogLines 100")
+                logs = client.run("status")
                 lines = logs.strip().split("\n")
 
                 # Determine new lines to process
