@@ -4,7 +4,6 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 import asyncio
-from rcon.source import Client # Tests the connection to RCON
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
@@ -42,24 +41,6 @@ async def on_command_error(ctx, error):
         return  # Silently ignore CommandNotFound in DMs
     raise error
 
-# Tests the RCON connection
-def test_rcon_connection():
-    host = os.getenv("RCON_HOST")
-    port = int(os.getenv("RCON_PORT"))
-    password = os.getenv("RCON_PASSWORD")
-
-    try:
-        with Client(host, port, passwd=password) as client:
-            test = client.run("GetLogLines 1")
-            print("✅ RCON test successful: received log line.")
-            return True
-    except Exception as e:
-        print(f"❌ RCON test failed: {e}")
-        return False
-
-if not test_rcon_connection():
-    print("🛑 Exiting: Unable to connect to RCON.")
-    exit(1)
 
 async def main():
     if not TOKEN:
