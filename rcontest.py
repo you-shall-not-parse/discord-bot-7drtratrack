@@ -1,18 +1,16 @@
 import socket
 import struct
+from getpass import getpass
 
 SERVER_IP = '176.57.171.44'
-SERVER_PORT = 25575
-RCON_PASSWORD = input("Enter your RCON password: ")
+SERVER_PORT = 28016  # Correct RCON port!
+RCON_PASSWORD = getpass("Enter your RCON password: ")
 
 def send_packet(sock, request_id, packet_type, body):
     body_bytes = body.encode('utf-8') + b'\x00'
-    size = 4 + 4 + len(body_bytes)  # request_id + packet_type + body + null terminator
-    packet = struct.pack('<i', size)
-    packet += struct.pack('<i', request_id)
-    packet += struct.pack('<i', packet_type)
-    packet += body_bytes
-    sock.sendall(packet)
+    packet = struct.pack('<iii', request_id, packet_type, 0) + body_bytes + b'\x00'
+    size = len(packet)
+    sock.sendall(struct.pack('<i', size) + packet)
 
 def receive_packet(sock):
     raw_size = sock.recv(4)
@@ -25,29 +23,34 @@ def receive_packet(sock):
         if not more:
             break
         data += more
-    if len(data) < 8:
+    if len(data) < 12:
         return None, None, None
-    request_id, response_type = struct.unpack('<ii', data[:8])
-    body = data[8:-1].decode('utf-8', errors='ignore')
-    return request_id, response_type, body
+    request_id, packet_type, _ = struct.unpack('<iii', data[:12])
+    body = data[12:-2].decode('utf-8', errors='ignore')
+    return request_id, packet_type, body
 
 def main():
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.connect((SERVER_IP, SERVER_PORT))
     print(f"Connected to {SERVER_IP}:{SERVER_PORT}")
 
-    # Authenticate (packet_type 3 = SERVERDATA_AUTH)
+    # Authenticate
     send_packet(sock, 1, 3, RCON_PASSWORD)
-    request_id, response_type, body = receive_packet(sock)
+    request_id, packet_type, body = receive_packet(sock)
+    # Read the empty response after auth
+    receive_packet(sock)
     if request_id == -1:
         print("Authentication failed.")
         sock.close()
         return
     print("Authentication successful!")
 
-    # Query current map (packet_type 2 = SERVERDATA_EXECCOMMAND)
+    # Send "showmap" command
     send_packet(sock, 2, 2, "showmap")
-    request_id, response_type, body = receive_packet(sock)
+    # Read command response
+    request_id, packet_type, body = receive_packet(sock)
+    # Read the empty response after command
+    receive_packet(sock)
     print(f"Current map: {body}")
 
     sock.close()
