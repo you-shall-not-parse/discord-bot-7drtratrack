@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 import sqlite3
 import re
 import os
+import asyncio
 
 load_dotenv()
 
@@ -26,6 +27,7 @@ class RconTracker(commands.Cog):
 
         self.rcon_task.start()
 
+    
     def create_table(self):
         with self.db:
             self.db.execute("""
