@@ -22,7 +22,7 @@ class TraineeTracker(commands.Cog):
         async with self._send_lock:
             try:
                 msg = await channel.send(content=content, embed=embed)
-                await asyncio.sleep(2.5)
+                await asyncio.sleep(3)
                 return msg
             except discord.HTTPException as e:
                 print(f"[Send Failed] {e}")
@@ -32,7 +32,7 @@ class TraineeTracker(commands.Cog):
         async with self._send_lock:
             try:
                 await message.edit(content=content, embed=embed)
-                await asyncio.sleep(2.5)
+                await asyncio.sleep(3)
             except discord.HTTPException as e:
                 print(f"[Edit Failed] {e}")
 
