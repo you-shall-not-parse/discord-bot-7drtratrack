@@ -46,7 +46,7 @@ def main():
     print("Authentication successful!")
 
     # Send "showmap" command
-    send_packet(sock, 2, 2, "showmap")
+    send_packet(sock, 2, 2, "help")
     # Read command response
     request_id, packet_type, body = receive_packet(sock)
     # Read the empty response after command
