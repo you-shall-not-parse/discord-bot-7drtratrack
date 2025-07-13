@@ -2,7 +2,7 @@ import socket
 import struct
 
 SERVER_IP = '176.57.171.44'
-SERVER_PORT = 28015
+SERVER_PORT = 28016
 RCON_PASSWORD = 'bedcc53'
 
 def send_packet(sock, request_id, packet_type, body):
