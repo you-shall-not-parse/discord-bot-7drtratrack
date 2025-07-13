@@ -1,20 +1,38 @@
 import discord
 from discord.ext import commands
 from datetime import datetime, timedelta
+import asyncio
 
 class ReconTroopTracker(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self._send_lock = asyncio.Lock()
         self.GUILD_ID = 1097913605082579024
         self.RECONTRAN_ROLE_ID = 1103626508645453975
         self.SPOTTER_ROLE_ID = 1102199425654333522
         self.SNIPER_ROLE_ID = 1102199204887138324
-      # self.VETRANSNIPER_ROLE_ID = 1240610719653957652
-      # self.VETRANSPOTTER_ROLE_ID = 1240610936696471572
         self.RECRUITFORM_CHANNEL_ID = 1098331019364552845
         self.TRACKING_CHANNEL_ID = 1391119515609333880
         self.trainee_data = {}
         self.trainee_messages = {}
+
+    async def send_rate_limited(self, channel, *, content=None, embed=None):
+        async with self._send_lock:
+            try:
+                msg = await channel.send(content=content, embed=embed)
+                await asyncio.sleep(1.5)
+                return msg
+            except discord.HTTPException as e:
+                print(f"[Send Failed] {e}")
+                return None
+
+    async def edit_rate_limited(self, message, *, content=None, embed=None):
+        async with self._send_lock:
+            try:
+                await message.edit(content=content, embed=embed)
+                await asyncio.sleep(1.5)
+            except discord.HTTPException as e:
+                print(f"[Edit Failed] {e}")
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -56,11 +74,12 @@ class ReconTroopTracker(commands.Cog):
         sorted_trainees = sorted(self.trainee_data.items(), key=lambda x: x[1]['join_date'])
         for nickname, data in sorted_trainees:
             embed = self.generate_report_embed(nickname)
-            msg = await track_channel.send(embed=embed)
-            self.trainee_messages[nickname] = msg.id
+            msg = await self.send_rate_limited(track_channel, embed=embed)
+            if msg:
+                self.trainee_messages[nickname] = msg.id
 
         summary = self.generate_summary_and_legend_embed(sorted_trainees)
-        await track_channel.send(embed=summary)
+        await self.send_rate_limited(track_channel, embed=summary)
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -72,7 +91,6 @@ class ReconTroopTracker(commands.Cog):
             if nickname in self.trainee_messages:
                 self.trainee_data[nickname]["recruitform_posted"] = True
                 await self.update_trainee_embed(nickname, track_channel)
-        # Removed: sign-up tracking in signup channels
 
     @commands.Cog.listener()
     async def on_member_update(self, before, after):
@@ -81,10 +99,10 @@ class ReconTroopTracker(commands.Cog):
         if not track_channel:
             return
 
-        gained_infantry_role = self.RECONTRAN_ROLE_ID not in [r.id for r in before.roles] and \
-                               self.RECONTRAN_ROLE_ID in [r.id for r in after.roles]
+        gained_recon_role = self.RECONTRAN_ROLE_ID not in [r.id for r in before.roles] and \
+                            self.RECONTRAN_ROLE_ID in [r.id for r in after.roles]
 
-        if nickname not in self.trainee_data and gained_infantry_role:
+        if nickname not in self.trainee_data and gained_recon_role:
             join_date = after.joined_at or datetime.utcnow()
             self.trainee_data[nickname] = {
                 "profile_name": after.name,
@@ -99,8 +117,9 @@ class ReconTroopTracker(commands.Cog):
             }
 
             embed = self.generate_report_embed(nickname)
-            msg = await track_channel.send(embed=embed)
-            self.trainee_messages[nickname] = msg.id
+            msg = await self.send_rate_limited(track_channel, embed=embed)
+            if msg:
+                self.trainee_messages[nickname] = msg.id
 
             async for m in track_channel.history(limit=50):
                 if m.author == self.bot.user and m.embeds:
@@ -110,7 +129,7 @@ class ReconTroopTracker(commands.Cog):
 
             sorted_trainees = sorted(self.trainee_data.items(), key=lambda x: x[1]['join_date'])
             summary = self.generate_summary_and_legend_embed(sorted_trainees)
-            await track_channel.send(embed=summary)
+            await self.send_rate_limited(track_channel, embed=summary)
 
         if nickname not in self.trainee_data:
             return
@@ -136,22 +155,19 @@ class ReconTroopTracker(commands.Cog):
             track_channel = self.bot.get_channel(self.TRACKING_CHANNEL_ID)
             await self.update_trainee_embed(nickname, track_channel)
 
-    
     def generate_report_embed(self, nickname):
         data = self.trainee_data[nickname]
-        embed = discord.Embed(
-            title=f"{nickname}"
-        )
+        embed = discord.Embed(title=f"{nickname}")
         joined_days_ago = (datetime.utcnow().replace(tzinfo=None) - data['join_date'].replace(tzinfo=None)).days
 
         if data['graduated']:
             embed.color = discord.Color.greyple()
-        elif data['has_SPOTTER'] or data['has_SNIPER'] and joined_days_ago >= 14:
+        elif (data['has_SPOTTER'] or data['has_SNIPER']) and joined_days_ago >= 14:
             embed.color = discord.Color.purple()
             embed.title = f"**{nickname}**"
-        elif data["has_SPOTTER"] or data["has_SNIPER"] and joined_days_ago <= 13:
+        elif (data["has_SPOTTER"] or data["has_SNIPER"]) and joined_days_ago <= 13:
             embed.color = discord.Color.blue()
-        elif joined_days_ago > 14 and (not data["has_SPOTTER"] or data["has_SNIPER"]):
+        elif joined_days_ago > 14 and not (data["has_SPOTTER"] or data["has_SNIPER"]):
             embed.color = discord.Color.orange()
         else:
             embed.color = discord.Color.dark_grey()
@@ -170,14 +186,12 @@ class ReconTroopTracker(commands.Cog):
             embed.set_footer(text=f"🎓 Graduated on {data['graduation_date'].strftime('%d-%m-%Y')}")
         return embed
 
-
-
     async def update_trainee_embed(self, nickname, track_channel):
         if nickname in self.trainee_messages:
             try:
                 msg = await track_channel.fetch_message(self.trainee_messages[nickname])
                 embed = self.generate_report_embed(nickname)
-                await msg.edit(embed=embed)
+                await self.edit_rate_limited(msg, embed=embed)
             except discord.NotFound:
                 pass
 
@@ -193,7 +207,7 @@ class ReconTroopTracker(commands.Cog):
             joined_days_ago = (datetime.utcnow().replace(tzinfo=None) - data['join_date'].replace(tzinfo=None)).days
             if data["graduated"]:
                 summary["Graduated"].append(nickname)
-            elif data["has_SPOTTER"] or data["has_SNIPER"] and joined_days_ago >= 14:
+            elif (data["has_SPOTTER"] or data["has_SNIPER"]) and joined_days_ago >= 14:
                 summary["Ready to Graduate"].append(nickname)
             elif data["has_SPOTTER"] or data["has_SNIPER"] or joined_days_ago <= 13:
                 summary["On-Track"].append(nickname)
@@ -203,10 +217,10 @@ class ReconTroopTracker(commands.Cog):
         embed = discord.Embed(title="Trainee Tracker: Legend & Summary", color=discord.Color.blurple())
 
         embed.add_field(name="Legend", value=(
-            "🟪 **Purple** — Ready to Graduate! Has either Spotter or Sniper AND 2+ weeks, amazing!\n"
-            "🟦 **Blue** — Has one of Spotter or Sniper but less than 2 weeks, good\n"
-            "⬛ **Grey** — No roles but under 2 weeks, not bad\n"
-            "🟧 **Orange** — No roles and in server over 2 weeks, bad\n"
+            "🟪 **Purple** — Ready to Graduate! Has either Spotter or Sniper AND 2+ weeks\n"
+            "🟦 **Blue** — Has Spotter or Sniper, under 2 weeks\n"
+            "⬛ **Grey** — No roles, under 2 weeks\n"
+            "🟧 **Orange** — No roles, over 2 weeks\n"
             "🎓 **Graduate** — Graduated"
         ), inline=False)
 
@@ -223,7 +237,7 @@ class ReconTroopTracker(commands.Cog):
         summary = self.generate_summary_and_legend_embed(sorted_trainees)
         async for message in track_channel.history(limit=50):
             if message.author == self.bot.user and message.embeds and "Trainee Tracker: Legend & Summary" in message.embeds[0].title:
-                await message.edit(embed=summary)
+                await self.edit_rate_limited(message, embed=summary)
                 return
 
 async def setup(bot):
