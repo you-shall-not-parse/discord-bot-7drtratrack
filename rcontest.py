@@ -1,17 +1,59 @@
 import socket
+import struct
+from getpass import getpass
 
-STATS_IP = '176.57.171.44'    # Replace with your stats server IP
-STATS_PORT = 28025            # Replace with your stats port (not RCON port!)
+SERVER_IP = '176.57.171.44'
+SERVER_PORT = 28016  # Correct RCON port!
+RCON_PASSWORD = getpass("Enter your RCON password: ")
 
-def get_player_stats(player_name):
-    # Example protocol: send player name, receive stats as JSON/text
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.connect((STATS_IP, STATS_PORT))
-        sock.sendall(player_name.encode('utf-8'))
-        response = sock.recv(4096)
-        print(f"Stats for {player_name}:")
-        print(response.decode('utf-8'))
+def send_packet(sock, request_id, packet_type, body):
+    body_bytes = body.encode('utf-8') + b'\x00'
+    packet = struct.pack('<iii', request_id, packet_type, 0) + body_bytes + b'\x00'
+    size = len(packet)
+    sock.sendall(struct.pack('<i', size) + packet)
+
+def receive_packet(sock):
+    raw_size = sock.recv(4)
+    if not raw_size:
+        return None, None, None
+    size = struct.unpack('<i', raw_size)[0]
+    data = b''
+    while len(data) < size:
+        more = sock.recv(size - len(data))
+        if not more:
+            break
+        data += more
+    if len(data) < 12:
+        return None, None, None
+    request_id, packet_type, _ = struct.unpack('<iii', data[:12])
+    body = data[12:-2].decode('utf-8', errors='ignore')
+    return request_id, packet_type, body
+
+def main():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.connect((SERVER_IP, SERVER_PORT))
+    print(f"Connected to {SERVER_IP}:{SERVER_PORT}")
+
+    # Authenticate
+    send_packet(sock, 1, 3, RCON_PASSWORD)
+    request_id, packet_type, body = receive_packet(sock)
+    # Read the empty response after auth
+    receive_packet(sock)
+    if request_id == -1:
+        print("Authentication failed.")
+        sock.close()
+        return
+    print("Authentication successful!")
+
+    # Send "showmap" command
+    send_packet(sock, 2, 2, "Get Map")
+    # Read command response
+    request_id, packet_type, body = receive_packet(sock)
+    # Read the empty response after command
+    receive_packet(sock)
+    print(f"Current map: {body}")
+
+    sock.close()
 
 if __name__ == "__main__":
-    player = input("Enter player name: ")
-    get_player_stats(player)
+    main()
