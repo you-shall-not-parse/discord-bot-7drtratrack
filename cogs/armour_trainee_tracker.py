@@ -17,11 +17,13 @@ class ArmourTraineeTracker(commands.Cog):
         self.trainee_data = {}
         self.trainee_messages = {}
 
+# rate limiter
+    
     async def send_rate_limited(self, channel, *, content=None, embed=None):
         async with self._send_lock:
             try:
                 msg = await channel.send(content=content, embed=embed)
-                await asyncio.sleep(1.5)
+                await asyncio.sleep(2)
                 return msg
             except discord.HTTPException as e:
                 print(f"[Send Failed] {e}")
@@ -31,7 +33,7 @@ class ArmourTraineeTracker(commands.Cog):
         async with self._send_lock:
             try:
                 await message.edit(content=content, embed=embed)
-                await asyncio.sleep(1.5)
+                await asyncio.sleep(2)
             except discord.HTTPException as e:
                 print(f"[Edit Failed] {e}")
 
