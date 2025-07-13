@@ -7,7 +7,7 @@ import sqlite3
 import re
 import os
 
-load_dotenv()  # Load variables from .env
+load_dotenv()
 
 class RconTracker(commands.Cog):
     def __init__(self, bot):
@@ -18,10 +18,12 @@ class RconTracker(commands.Cog):
         self.rcon_password = os.getenv("RCON_PASSWORD")
 
         self.db_path = os.path.join(os.path.dirname(__file__), "kd_stats.db")
+        self.last_line_path = os.path.join(os.path.dirname(__file__), "last_line.txt")
+
         self.db = sqlite3.connect(self.db_path)
         self.create_table()
+        self.last_seen_line = self.load_last_line()
 
-        self.last_seen_lines = set()
         self.rcon_task.start()
 
     def create_table(self):
@@ -33,6 +35,16 @@ class RconTracker(commands.Cog):
                     deaths INTEGER DEFAULT 0
                 );
             """)
+
+    def load_last_line(self):
+        if os.path.exists(self.last_line_path):
+            with open(self.last_line_path, "r", encoding="utf-8") as f:
+                return f.read().strip()
+        return None
+
+    def save_last_line(self, line: str):
+        with open(self.last_line_path, "w", encoding="utf-8") as f:
+            f.write(line)
 
     def update_kd(self, killer: str, victim: str):
         killer = killer.strip()
@@ -55,13 +67,25 @@ class RconTracker(commands.Cog):
         try:
             with Client(self.rcon_host, self.rcon_port, passwd=self.rcon_password) as client:
                 logs = client.run("GetLogLines 100")
-                for line in logs.split("\n"):
-                    if "KILL:" in line and line not in self.last_seen_lines:
+                lines = logs.strip().split("\n")
+
+                # Determine new lines to process
+                if self.last_seen_line in lines:
+                    new_lines = lines[lines.index(self.last_seen_line)+1:]
+                else:
+                    new_lines = lines  # first time or old line expired
+
+                for line in new_lines:
+                    if "KILL:" in line:
                         match = re.match(r"KILL: (.+?) \(.*?\) killed (.+?) \(.*?\)", line)
                         if match:
                             killer, victim = match.groups()
                             self.update_kd(killer, victim)
-                            self.last_seen_lines.add(line)
+
+                if lines:
+                    self.last_seen_line = lines[-1]
+                    self.save_last_line(self.last_seen_line)
+
         except Exception as e:
             print(f"[RCON ERROR] {e}")
 
