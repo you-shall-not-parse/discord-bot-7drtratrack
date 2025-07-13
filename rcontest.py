@@ -1,8 +1,12 @@
 from rcon.source import Client
+import os
+from dotenv import load_dotenv
 
-host = "176.57.171.44"
-port = 28016
-password = "bedcc53"
+load_dotenv()  # load variables from .env into environment
+
+rcon_host = os.getenv("RCON_HOST")
+rcon_port = int(os.getenv("RCON_PORT"))  # convert port to int
+rcon_password = os.getenv("RCON_PASSWORD")
 
 try:
     with Client(host, port, passwd=password) as client:
