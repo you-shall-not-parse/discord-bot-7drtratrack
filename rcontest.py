@@ -1,51 +1,66 @@
 import socket
 import struct
 
-def send_rcon_command(sock, command, request_id, rcon_type=2):
-    # Build packet: size(4) + id(4) + type(4) + command + 2 null bytes
-    payload = command.encode('utf8') + b'\x00\x00'
-    size = 4 + 4 + len(payload)  # id + type + payload
-    packet = struct.pack('<iii', size, request_id, rcon_type) + payload
-    sock.send(packet)
+SERVER_IP = '176.57.171.44'  # Your server IP here
+SERVER_PORT = 28016          # Your server port here
+RCON_PASSWORD = 'your_rcon_password_here'  # Your RCON password
+
+# Helper to receive exactly n bytes
+def receive_all(sock, n):
+    data = b''
+    while len(data) < n:
+        packet = sock.recv(n - len(data))
+        if not packet:
+            return None
+        data += packet
+    return data
+
+def send_rcon_packet(sock, request_id, packet_type, payload):
+    payload_bytes = payload.encode('utf8') + b'\x00'
+    size = 4 + 4 + len(payload_bytes) + 1  # request_id + type + payload + 2 null bytes
+    packet = struct.pack('<i', size)
+    packet += struct.pack('<i', request_id)
+    packet += struct.pack('<i', packet_type)
+    packet += payload_bytes
+    packet += b'\x00'  # extra null terminator
+    sock.sendall(packet)
 
 def receive_rcon_response(sock):
-    # Receive size (4 bytes)
-    raw_size = sock.recv(4)
+    raw_size = receive_all(sock, 4)
     if not raw_size:
         return None
     size = struct.unpack('<i', raw_size)[0]
-    data = sock.recv(size)
-    # Unpack response: id(4), type(4), string payload, 2 null bytes
+    data = receive_all(sock, size)
+    if not data or len(data) < 8:
+        return None
     request_id, response_type = struct.unpack('<ii', data[:8])
-    response = data[8:-2].decode('utf8')
+    response = data[8:-2].decode('utf8', errors='ignore')
     return response
 
 def main():
-    host = '176.57.171.44'
-    port = 28016
-    password = 'YOUR_RCON_PASSWORD'  # Replace with your RCON password
-
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.connect((host, port))
+    sock.connect((SERVER_IP, SERVER_PORT))
+    print(f"Connected to {SERVER_IP}:{SERVER_PORT}")
 
-    # Authenticate
-    request_id = 1
-    send_rcon_command(sock, password, request_id, rcon_type=3)  # 3 is auth
-    response = receive_rcon_response(sock)
-    if response == '':
-        print("Authentication succeeded")
-    else:
-        print(f"Authentication failed: {response}")
+    # Authenticate (packet type 3 = SERVERDATA_AUTH)
+    send_rcon_packet(sock, 1, 3, RCON_PASSWORD)
+    auth_response = receive_rcon_response(sock)
+    if auth_response is None:
+        print("Failed to receive auth response")
         sock.close()
         return
+    print(f"Auth response: {auth_response}")
 
-    # Send get map command
-    request_id += 1
-    send_rcon_command(sock, 'get g_mapname', request_id)
-    response = receive_rcon_response(sock)
-    print("Current map:", response)
+    # Query current map (packet type 2 = SERVERDATA_EXECCOMMAND)
+    send_rcon_packet(sock, 2, 2, "currentmap")
+    map_response = receive_rcon_response(sock)
+    if map_response is None:
+        print("Failed to receive map response")
+        sock.close()
+        return
+    print(f"Current map: {map_response}")
 
     sock.close()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
