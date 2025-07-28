@@ -61,7 +61,7 @@ class LoreCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         init_db()
-        self.daily_quote_channel_id = YOUR_CHANNEL_ID  # <-- Replace with your channel ID (as integer)
+        self.daily_quote_channel_id = 1399102943004721224 # <-- Replace with your channel ID (as integer)
         self.daily_quote_task.start()
 
     def cog_unload(self):
