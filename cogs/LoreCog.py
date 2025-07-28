@@ -6,14 +6,14 @@ import requests
 from bs4 import BeautifulSoup
 
 def add_quote(quote, author=None):
-    conn = sqlite3.connect("quotes.db")
+    conn = sqlite3.connect("cogs/quotes.db")
     c = conn.cursor()
     c.execute('INSERT INTO quotes (quote, author) VALUES (?, ?)', (quote, author))
     conn.commit()
     conn.close()
 
 def get_random_quote():
-    conn = sqlite3.connect("quotes.db")
+    conn = sqlite3.connect("cogs/quotes.db")
     c = conn.cursor()
     c.execute('SELECT quote, author FROM quotes ORDER BY RANDOM() LIMIT 1')
     row = c.fetchone()
