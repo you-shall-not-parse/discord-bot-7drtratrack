@@ -4,11 +4,9 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 import asyncio
-import openai
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-openai.api_key = os.environ.get("OPENAI_API_KEY")
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
