@@ -43,14 +43,15 @@ class LoreCog(commands.Cog):
 
     def get_random_topic(self):
         try:
-            with open("cogs/lore_topics.txt", "r", encoding="utf-8") as f:
+            lore_file = os.path.join(os.path.dirname(__file__), "lore_topics.txt")
+            with open(lore_file, "r", encoding="utf-8") as f:
                 topics = [line.strip() for line in f if line.strip()]
             if not topics:
-                logger.error("cogs/lore_topics.txt is empty.")
+                logger.error("lore_topics.txt is empty.")
                 return None
             return random.choice(topics)
         except FileNotFoundError:
-            logger.error("cogs/lore_topics.txt not found.")
+            logger.error("lore_topics.txt not found in cogs directory.")
             return None
         except Exception as e:
             logger.error(f"Error reading lore_topics.txt: {e}")
@@ -58,7 +59,7 @@ class LoreCog(commands.Cog):
 
     @app_commands.command(name="lore", description="Get lore from Warhammer Lexicanum.")
     async def lore(self, interaction: discord.Interaction, topic: str):
-        await interaction.response.defer()
+        await interaction.response.defer()  # Defer immediately
         try:
             summary, url = self.get_lexicanum_summary(topic)
             if summary:
@@ -71,7 +72,12 @@ class LoreCog(commands.Cog):
 
     @app_commands.command(name="asklore", description="Ask a lore question (AI answer)")
     async def asklore(self, interaction: discord.Interaction, question: str):
-        await interaction.response.defer()
+        try:
+            await interaction.response.defer()  # Defer immediately
+        except Exception as e:
+            logger.error(f"Failed to defer interaction in /asklore: {e}")
+            return
+
         prompt = (
             "You are a Warhammer 40K lore expert. Answer the following question as if summarizing canon material:\n\n"
             f"Question: {question}"
@@ -82,7 +88,6 @@ class LoreCog(commands.Cog):
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=400
             )
-            # Defensive: OpenAI API structure could change
             try:
                 answer = response.choices[0].message.content.strip()
             except Exception:
@@ -118,7 +123,6 @@ class LoreCog(commands.Cog):
     async def before_post(self):
         await self.bot.wait_until_ready()
 
-    # Optional: Global error handler for this cog (for command errors)
     @commands.Cog.listener()
     async def on_command_error(self, ctx, error):
         logger.error(f"Command error in LoreCog: {error}")
