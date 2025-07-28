@@ -1,83 +1,63 @@
+import os
+import logging
 import discord
 from discord.ext import commands
-import sqlite3
-import requests
-from bs4 import BeautifulSoup
-import random
+from dotenv import load_dotenv
+import asyncio
 
-def init_db():
-    conn = sqlite3.connect("quotes.db")
-    c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS quotes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            quote TEXT NOT NULL,
-            author TEXT
-        )
-    ''')
-    conn.commit()
-    conn.close()
+load_dotenv()
+TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
-def add_quote(quote, author=None):
-    conn = sqlite3.connect("quotes.db")
-    c = conn.cursor()
-    c.execute('INSERT INTO quotes (quote, author) VALUES (?, ?)', (quote, author))
-    conn.commit()
-    conn.close()
+# Setup logging
+logging.basicConfig(level=logging.INFO)
 
-def get_random_quote():
-    conn = sqlite3.connect("quotes.db")
-    c = conn.cursor()
-    c.execute('SELECT quote, author FROM quotes ORDER BY RANDOM() LIMIT 1')
-    row = c.fetchone()
-    conn.close()
-    if row:
-        quote, author = row
-        return f'"{quote}"\n— {author}' if author else f'"{quote}"'
-    return "No quotes found."
+# Intents setup
+intents = discord.Intents.default()
+intents.members = True
+intents.message_content = True  # Needed for on_message and message content in DMs
 
-def get_lexicanum_lore(topic):
-    url = f"https://wh40k.lexicanum.com/wiki/{topic.replace(' ', '_')}"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    response = requests.get(url, headers=headers)
-    if response.status_code != 200:
-        return f"Could not fetch lore for {topic}.", url
-    soup = BeautifulSoup(response.content, "html.parser")
-    content_div = soup.find("div", id="bodyContent")
-    summary = None
-    if content_div:
-        for elem in content_div.find_all(["p", "h2"], recursive=False):
-            if elem.name == "h2":
-                break
-            if elem.name == "p":
-                text = elem.get_text(strip=True)
-                if len(text) > 100:
-                    summary = text
-                    break
-    return (summary if summary else "No suitable lore found."), url
+# Command prefix (won't affect slash commands)
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-class LoreCog(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
-        init_db()
+@bot.event
+async def on_ready():
+    logging.info(f"Logged in as {bot.user} (ID: {bot.user.id})")
+    logging.info("------")
+    print(f"Bot is ready! Logged in as {bot.user} (ID: {bot.user.id})")
 
-    @discord.app_commands.command(name="addquote", description="Add your own lore quote!")
-    @discord.app_commands.describe(quote="The quote to add", author="(Optional) Who said it?")
-    async def addquote(self, interaction: discord.Interaction, quote: str, author: str = None):
-        add_quote(quote, author)
-        await interaction.response.send_message("Your quote has been added!", ephemeral=True)
+# Only process commands in guild channels, NOT in DMs
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+    if not isinstance(message.channel, discord.DMChannel):
+        await bot.process_commands(message)
+    # Do NOT process commands in DMs; your cogs handle DMs
 
-    @discord.app_commands.command(name="lore", description="Get a random lore quote from the database.")
-    async def lore(self, interaction: discord.Interaction):
-        quote = get_random_quote()
-        await interaction.response.send_message(f"**Lore Quote:**\n{quote}")
+# Suppress CommandNotFound in DMs
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound) and isinstance(ctx.channel, discord.DMChannel):
+        return  # Silently ignore CommandNotFound in DMs
+    raise error
 
-    @discord.app_commands.command(name="lexlore", description="Get summary lore from Lexicanum.")
-    @discord.app_commands.describe(topic="The Lexicanum topic (e.g., Space Marines)")
-    async def lexlore(self, interaction: discord.Interaction, topic: str):
-        await interaction.response.defer()
-        summary, url = get_lexicanum_lore(topic)
-        await interaction.followup.send(f"**Lexicanum Lore for '{topic}':**\n{summary}\n<{url}>")
 
-async def setup(bot):
-    await bot.add_cog(LoreCog(bot))
+async def main():
+    if not TOKEN:
+        raise RuntimeError("DISCORD_BOT_TOKEN is not set in your environment or .env file!")
+    async with bot:
+        # Load your cogs
+        await bot.load_extension("cogs.bulkrole")
+        await bot.load_extension("cogs.trainee_tracker")
+        await bot.load_extension("cogs.armour_trainee_tracker")
+        await bot.load_extension("cogs.recon_troop_tracker")
+        await bot.load_extension("cogs.certify")
+        await bot.load_extension("cogs.LoreCog")
+        # await bot.load_extension("cogs.rcon_tracker")
+        await bot.start(TOKEN)
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Bot shut down manually.")
