@@ -7,7 +7,7 @@ import random
 import openai
 import config
 
-DAILY_CHANNEL_ID = 1399102943004721224
+DAILY_CHANNEL_ID = 1399102943004721224  # Only used from here now!
 
 class LoreCog(commands.Cog):
     def __init__(self, bot):
@@ -61,7 +61,7 @@ class LoreCog(commands.Cog):
     async def daily_post(self):
         topic = self.get_random_topic()
         summary, url = self.get_lexicanum_summary(topic)
-        channel = self.bot.get_channel(config.DAILY_CHANNEL_ID)
+        channel = self.bot.get_channel(DAILY_CHANNEL_ID)  # Use the global, not config
         if channel and summary:
             await channel.send(f"**Daily Lore: {topic}**\n{summary}\n<{url}>")
 
