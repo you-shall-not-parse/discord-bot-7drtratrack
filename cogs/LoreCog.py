@@ -46,7 +46,7 @@ def get_lexicanum_lore(topic):
 class LoreCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.daily_quote_channel_id = YOUR_CHANNEL_ID  # <-- Replace with your channel ID (integer)
+        self.daily_quote_channel_id = 1399102943004721224  # <-- Replace with your channel ID (integer)
         self.daily_quote_task.start()
 
     def cog_unload(self):
