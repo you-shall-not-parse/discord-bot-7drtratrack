@@ -7,6 +7,9 @@ import random
 import openai
 import config
 import logging
+import os
+
+openai.api_key = os.environ.get("OPENAI_API_KEY")
 
 DAILY_CHANNEL_ID = 1399102943004721224
 
