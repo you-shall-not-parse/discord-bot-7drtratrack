@@ -1,9 +1,10 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import sqlite3
+import random
+import datetime
 import requests
 from bs4 import BeautifulSoup
-import random
 
 def init_db():
     conn = sqlite3.connect("quotes.db")
@@ -60,6 +61,19 @@ class LoreCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         init_db()
+        self.daily_quote_channel_id = YOUR_CHANNEL_ID  # <-- Replace with your channel ID (as integer)
+        self.daily_quote_task.start()
+
+    def cog_unload(self):
+        self.daily_quote_task.cancel()
+
+    @tasks.loop(time=datetime.time(hour=9, minute=0))  # Posts at 09:00 UTC
+    async def daily_quote_task(self):
+        await self.bot.wait_until_ready()
+        channel = self.bot.get_channel(self.daily_quote_channel_id)
+        if channel is not None:
+            quote = get_random_quote()
+            await channel.send(f"**Daily Lore Quote:**\n{quote}")
 
     @discord.app_commands.command(name="addquote", description="Add your own lore quote!")
     @discord.app_commands.describe(quote="The quote to add", author="(Optional) Who said it?")
