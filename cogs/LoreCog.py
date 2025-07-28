@@ -10,14 +10,14 @@ import logging
 
 DAILY_CHANNEL_ID = 1399102943004721224
 
-# Optional: Configure logging for error visibility
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("LoreCog")
 
 class LoreCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        openai.api_key = os.environ.get("OPENAI_API_KEY")
+        # New OpenAI client syntax for openai>=1.0.0
+        self.openai_client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
         self.daily_post.start()
 
     def get_lexicanum_summary(self, topic):
@@ -59,7 +59,7 @@ class LoreCog(commands.Cog):
 
     @app_commands.command(name="lore", description="Get lore from Warhammer Lexicanum.")
     async def lore(self, interaction: discord.Interaction, topic: str):
-        await interaction.response.defer()  # Defer immediately
+        await interaction.response.defer()
         try:
             summary, url = self.get_lexicanum_summary(topic)
             if summary:
@@ -73,7 +73,7 @@ class LoreCog(commands.Cog):
     @app_commands.command(name="asklore", description="Ask a lore question (AI answer)")
     async def asklore(self, interaction: discord.Interaction, question: str):
         try:
-            await interaction.response.defer()  # Defer immediately
+            await interaction.response.defer()
         except Exception as e:
             logger.error(f"Failed to defer interaction in /asklore: {e}")
             return
@@ -83,16 +83,12 @@ class LoreCog(commands.Cog):
             f"Question: {question}"
         )
         try:
-            response = openai.ChatCompletion.create(
+            response = self.openai_client.chat.completions.create(
                 model="gpt-4",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=400
             )
-            try:
-                answer = response.choices[0].message.content.strip()
-            except Exception:
-                logger.error(f"Unexpected OpenAI API response: {response}")
-                answer = "Sorry, I couldn't retrieve an answer from the AI."
+            answer = response.choices[0].message.content.strip()
             await interaction.followup.send(f"**Q:** {question}\n**A:** {answer}")
         except Exception as e:
             logger.error(f"Error in /asklore command or OpenAI API: {e}")
