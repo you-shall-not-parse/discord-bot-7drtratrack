@@ -22,38 +22,7 @@ def get_random_quote():
         quote, author = row
         return f'"{quote}"\n— {author}' if author else f'"{quote}"'
     return "No quotes found."
-
-def get_lexicanum_lore(topic):
-    import requests
-    from bs4 import BeautifulSoup
-
-    url = f"https://wh40k.lexicanum.com/wiki/{topic.replace(' ', '_')}"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    response = requests.get(url, headers=headers)
-    if response.status_code != 200:
-        return f"Could not fetch lore for {topic}.", url
-
-    soup = BeautifulSoup(response.content, "html.parser")
-    # Look for the first paragraph after the infobox or toc
-    content_div = soup.find("div", id="mw-content-text")
-    if not content_div:
-        return "No suitable lore found.", url
-
-    paragraphs = content_div.find_all("p", recursive=False)
-    for p in paragraphs:
-        text = p.get_text(strip=True)
-        # Skip empty or navigation paragraphs
-        if text and len(text) > 80:
-            return text, url
-
-    # If nothing found, try deeper search (not just immediate children)
-    for p in content_div.find_all("p"):
-        text = p.get_text(strip=True)
-        if text and len(text) > 80:
-            return text, url
-
-    return "No suitable lore found.", url
-
+    
 class LoreCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -81,13 +50,6 @@ class LoreCog(commands.Cog):
     async def lore(self, interaction: discord.Interaction):
         quote = get_random_quote()
         await interaction.response.send_message(f"**Lore Quote:**\n{quote}")
-
-    @discord.app_commands.command(name="lexlore", description="Get summary lore from Lexicanum (might be garbage, it is not smart).")
-    @discord.app_commands.describe(topic="The Lexicanum topic (e.g., Space Marines)")
-    async def lexlore(self, interaction: discord.Interaction, topic: str):
-        await interaction.response.defer()
-        summary, url = get_lexicanum_lore(topic)
-        await interaction.followup.send(f"**Lexicanum Lore for '{topic}':**\n{summary}\n<{url}>")
 
 async def setup(bot):
     await bot.add_cog(LoreCog(bot))
