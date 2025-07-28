@@ -7,6 +7,8 @@ import random
 import openai
 import config
 
+DAILY_CHANNEL_ID = 1399102943004721224
+
 class LoreCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
