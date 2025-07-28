@@ -43,14 +43,14 @@ class LoreCog(commands.Cog):
 
     def get_random_topic(self):
         try:
-            with open("lore_topics.txt", "r", encoding="utf-8") as f:
+            with open("cogs/lore_topics.txt", "r", encoding="utf-8") as f:
                 topics = [line.strip() for line in f if line.strip()]
             if not topics:
-                logger.error("lore_topics.txt is empty.")
+                logger.error("cogs/lore_topics.txt is empty.")
                 return None
             return random.choice(topics)
         except FileNotFoundError:
-            logger.error("lore_topics.txt not found.")
+            logger.error("cogs/lore_topics.txt not found.")
             return None
         except Exception as e:
             logger.error(f"Error reading lore_topics.txt: {e}")
