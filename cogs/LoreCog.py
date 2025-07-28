@@ -1,23 +1,9 @@
 import discord
 from discord.ext import commands, tasks
 import sqlite3
-import random
 import datetime
 import requests
 from bs4 import BeautifulSoup
-
-def init_db():
-    conn = sqlite3.connect("quotes.db")
-    c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS quotes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            quote TEXT NOT NULL,
-            author TEXT
-        )
-    ''')
-    conn.commit()
-    conn.close()
 
 def add_quote(quote, author=None):
     conn = sqlite3.connect("quotes.db")
@@ -60,8 +46,7 @@ def get_lexicanum_lore(topic):
 class LoreCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        init_db()
-        self.daily_quote_channel_id = 1399102943004721224 # <-- Replace with your channel ID (as integer)
+        self.daily_quote_channel_id = YOUR_CHANNEL_ID  # <-- Replace with your channel ID (integer)
         self.daily_quote_task.start()
 
     def cog_unload(self):
@@ -86,7 +71,7 @@ class LoreCog(commands.Cog):
         quote = get_random_quote()
         await interaction.response.send_message(f"**Lore Quote:**\n{quote}")
 
-    @discord.app_commands.command(name="lexlore", description="Get summary lore from Lexicanum.")
+    @discord.app_commands.command(name="lexlore", description="Get summary lore from Lexicanum (might be garbage, it is not smart).")
     @discord.app_commands.describe(topic="The Lexicanum topic (e.g., Space Marines)")
     async def lexlore(self, interaction: discord.Interaction, topic: str):
         await interaction.response.defer()
