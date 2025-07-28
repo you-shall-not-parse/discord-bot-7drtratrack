@@ -4,6 +4,19 @@ import sqlite3
 import datetime
 import requests
 from bs4 import BeautifulSoup
+import sqlite3
+
+conn = sqlite3.connect('cogs/quotes.db')
+c = conn.cursor()
+c.execute('''
+CREATE TABLE IF NOT EXISTS quotes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    quote TEXT NOT NULL,
+    author TEXT
+)
+''')
+conn.commit()
+conn.close()
 
 def add_quote(quote, author=None):
     conn = sqlite3.connect("cogs/quotes.db")
