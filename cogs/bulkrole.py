@@ -144,39 +144,58 @@ class BulkRole(commands.Cog):
                     await send_embed(message.channel, "Confirm", "Please type `confirm` to save, or `cancel` to abort.", discord.Color.orange())
                 return
 
-        # Commands
-        if content.startswith("!addpreset"):
-            self.dm_wizards[message.author.id] = {"step": "preset_name"}
+        # Only respond to /bulkrole and bang (!) commands
+        if content.strip().lower() == "/bulkrole":
             await send_embed(
                 message.channel,
-                "Create Preset",
-                "Let's create a new preset!\nWhat should the preset name be?"
+                "Welcome",
+                "👋 **Welcome! Here’s what you can do via DM:**\n"
+                "• `!addpreset` — interactive preset creation wizard\n"
+                "• `!listpresets` — list all saved presets\n"
+                "• `!delpreset <preset_name>` — delete a preset\n"
+                "• `!resetwizard` — force-reset the wizard if you’re stuck\n"
+                "• `exit` — exit any wizard/process at any time\n"
+                "In the wizard, type `none` for no roles or `*` to remove all roles.\n"
+                "Just type a command above to get started!"
             )
             return
-        if content == "!listpresets":
-            presets = load_presets()
-            if not presets:
-                await send_embed(message.channel, "No Presets", "📭 No presets saved.", discord.Color.orange())
-                return
-            def resolve_names(role_ids):
-                if role_ids == ["*"]: return ["ALL ROLES"]
-                return [get(guild.roles, id=int(rid)).name for rid in role_ids if get(guild.roles, id=int(rid))]
-            msg = ""
-            for pname, pdata in presets.items():
-                msg += f"🔹 `{pname}` — Add: {', '.join(resolve_names(pdata['add']))} | Remove: {', '.join(resolve_names(pdata['remove']))}\n"
-            await send_embed(message.channel, "Presets", msg)
-            return
-        if content.startswith("!delpreset "):
-            preset_name = content.split(" ", 1)[1]
-            presets = load_presets()
-            if preset_name in presets:
-                del presets[preset_name]
-                save_presets(presets)
-                await send_embed(message.channel, "Deleted", f"🗑️ Preset `{preset_name}` deleted.", discord.Color.green())
-            else:
-                await send_embed(message.channel, "Not Found", f"❌ Preset `{preset_name}` not found.", discord.Color.red())
-            return
+
         if content.startswith("!"):
+            if content == "!resetwizard":
+                self.dm_wizards.pop(message.author.id, None)
+                await send_embed(message.channel, "Reset", "🧹 Wizard state reset.", discord.Color.orange())
+                return
+            if content.startswith("!addpreset"):
+                self.dm_wizards[message.author.id] = {"step": "preset_name"}
+                await send_embed(
+                    message.channel,
+                    "Create Preset",
+                    "Let's create a new preset!\nWhat should the preset name be?"
+                )
+                return
+            if content == "!listpresets":
+                presets = load_presets()
+                if not presets:
+                    await send_embed(message.channel, "No Presets", "📭 No presets saved.", discord.Color.orange())
+                    return
+                def resolve_names(role_ids):
+                    if role_ids == ["*"]: return ["ALL ROLES"]
+                    return [get(guild.roles, id=int(rid)).name for rid in role_ids if get(guild.roles, id=int(rid))]
+                msg = ""
+                for pname, pdata in presets.items():
+                    msg += f"🔹 `{pname}` — Add: {', '.join(resolve_names(pdata['add']))} | Remove: {', '.join(resolve_names(pdata['remove']))}\n"
+                await send_embed(message.channel, "Presets", msg)
+                return
+            if content.startswith("!delpreset "):
+                preset_name = content.split(" ", 1)[1]
+                presets = load_presets()
+                if preset_name in presets:
+                    del presets[preset_name]
+                    save_presets(presets)
+                    await send_embed(message.channel, "Deleted", f"🗑️ Preset `{preset_name}` deleted.", discord.Color.green())
+                else:
+                    await send_embed(message.channel, "Not Found", f"❌ Preset `{preset_name}` not found.", discord.Color.red())
+                return
             await send_embed(
                 message.channel,
                 "Commands",
@@ -189,18 +208,9 @@ class BulkRole(commands.Cog):
                 "In the wizard, type `none` for no roles or `*` to remove all roles."
             )
             return
-        await send_embed(
-            message.channel,
-            "Welcome",
-            "👋 **Welcome! Here’s what you can do via DM:**\n"
-            "• `!addpreset` — interactive preset creation wizard\n"
-            "• `!listpresets` — list all saved presets\n"
-            "• `!delpreset <preset_name>` — delete a preset\n"
-            "• `!resetwizard` — force-reset the wizard if you’re stuck\n"
-            "• `exit` — exit any wizard/process at any time\n"
-            "In the wizard, type `none` for no roles or `*` to remove all roles.\n"
-            "Just type a command above to get started!"
-        )
+
+        # Otherwise, ignore the DM (do not respond)
+        return
 
     @commands.Cog.listener()
     async def on_ready(self):
