@@ -6,7 +6,7 @@ FORM_CHANNEL_ID = 1099806153170489485   # Channel where the form embed/button is
 ANSWER_POST_CHANNEL_ID = 1099806153170489485  # Channel where form responses are posted
 
 QUESTIONS = [
-    "Welcome! Please note that if you're on mobile then you may need to click 'commands' to expose the text input for your phone keyboard to pop up!\n\n What is your current T17 username?",
+    "What is your current T17 username?",
     "What is your Age?",
     "What is your country of residence?",
     "What is your timezone?",
