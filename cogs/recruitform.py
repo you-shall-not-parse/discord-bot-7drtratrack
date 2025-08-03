@@ -70,7 +70,7 @@ class RecruitFormCog(commands.Cog):
         channel = self.bot.get_channel(ANSWER_POST_CHANNEL_ID)
         if channel:
             embed = discord.Embed(
-                title="New Application Submission",
+                title="New Recruitform",
                 description=f"User: {user.mention}",
                 color=discord.Color.green()
             )
