@@ -59,30 +59,55 @@ class BulkRole(commands.Cog):
             return
 
         guild = self.bot.get_guild(GUILD_ID)
+        member = guild.get_member(message.author.id) if guild else None
+        content = message.content.strip()
+
+        # Only respond to /bulkrole or if user is in wizard session
+        in_wizard = message.author.id in self.dm_wizards
+        is_bulkrole_trigger = content.lower() == "/bulkrole"
+
+        if not (is_bulkrole_trigger or in_wizard):
+            # Ignore all other DMs (including recruitform answers, ! commands, etc.)
+            return
+
+        # Permission check: only for bulkrole trigger or wizard
         if not guild:
             await send_embed(message.channel, "Error", "❌ Bot couldn't access the configured server!", discord.Color.red())
             return
-        member = guild.get_member(message.author.id)
         if not member:
             await send_embed(message.channel, "Error", "❌ You must be a member of the server to use this command.", discord.Color.red())
             return
         if not get(member.roles, name=REQUIRED_ROLE_NAME):
-            await send_embed(message.channel, "Permission Denied", f"❌ You need the `{REQUIRED_ROLE_NAME}` role to use this feature.", discord.Color.red())
+            await send_embed(
+                message.channel,
+                "Permission Denied",
+                f"❌ You need the `{REQUIRED_ROLE_NAME}` role to use this feature.",
+                discord.Color.red()
+            )
             return
 
-        content = message.content.strip()
-        if content.lower() == "exit":
-            self.dm_wizards.pop(message.author.id, None)
-            await send_embed(message.channel, "Exited", "🚪 Exited the wizard/process. Type `!addpreset` to start again.", discord.Color.orange())
-            return
-        if content == "!resetwizard":
-            self.dm_wizards.pop(message.author.id, None)
-            await send_embed(message.channel, "Reset", "🧹 Wizard state reset.", discord.Color.orange())
+        # If /bulkrole, start wizard
+        if is_bulkrole_trigger:
+            self.dm_wizards[message.author.id] = {"step": "preset_name"}
+            await send_embed(
+                message.channel,
+                "Create Preset",
+                "Let's create a new preset!\nWhat should the preset name be?"
+            )
             return
 
-        # Wizard state machine
-        if message.author.id in self.dm_wizards:
+        # Wizard state machine (only active if in_wizard)
+        if in_wizard:
             state = self.dm_wizards[message.author.id]
+            if content.lower() == "exit":
+                self.dm_wizards.pop(message.author.id, None)
+                await send_embed(message.channel, "Exited", "🚪 Exited the wizard/process. Type `/bulkrole` to start again.", discord.Color.orange())
+                return
+            if content == "!resetwizard":
+                self.dm_wizards.pop(message.author.id, None)
+                await send_embed(message.channel, "Reset", "🧹 Wizard state reset.", discord.Color.orange())
+                return
+
             if state["step"] == "preset_name":
                 pname = content
                 if not pname:
@@ -143,74 +168,6 @@ class BulkRole(commands.Cog):
                 else:
                     await send_embed(message.channel, "Confirm", "Please type `confirm` to save, or `cancel` to abort.", discord.Color.orange())
                 return
-
-        # Only respond to /bulkrole and bang (!) commands
-        if content.strip().lower() == "/bulkrole":
-            await send_embed(
-                message.channel,
-                "Welcome",
-                "👋 **Welcome! Here’s what you can do via DM:**\n"
-                "• `!addpreset` — interactive preset creation wizard\n"
-                "• `!listpresets` — list all saved presets\n"
-                "• `!delpreset <preset_name>` — delete a preset\n"
-                "• `!resetwizard` — force-reset the wizard if you’re stuck\n"
-                "• `exit` — exit any wizard/process at any time\n"
-                "In the wizard, type `none` for no roles or `*` to remove all roles.\n"
-                "Just type a command above to get started!"
-            )
-            return
-
-        if content.startswith("!"):
-            if content == "!resetwizard":
-                self.dm_wizards.pop(message.author.id, None)
-                await send_embed(message.channel, "Reset", "🧹 Wizard state reset.", discord.Color.orange())
-                return
-            if content.startswith("!addpreset"):
-                self.dm_wizards[message.author.id] = {"step": "preset_name"}
-                await send_embed(
-                    message.channel,
-                    "Create Preset",
-                    "Let's create a new preset!\nWhat should the preset name be?"
-                )
-                return
-            if content == "!listpresets":
-                presets = load_presets()
-                if not presets:
-                    await send_embed(message.channel, "No Presets", "📭 No presets saved.", discord.Color.orange())
-                    return
-                def resolve_names(role_ids):
-                    if role_ids == ["*"]: return ["ALL ROLES"]
-                    return [get(guild.roles, id=int(rid)).name for rid in role_ids if get(guild.roles, id=int(rid))]
-                msg = ""
-                for pname, pdata in presets.items():
-                    msg += f"🔹 `{pname}` — Add: {', '.join(resolve_names(pdata['add']))} | Remove: {', '.join(resolve_names(pdata['remove']))}\n"
-                await send_embed(message.channel, "Presets", msg)
-                return
-            if content.startswith("!delpreset "):
-                preset_name = content.split(" ", 1)[1]
-                presets = load_presets()
-                if preset_name in presets:
-                    del presets[preset_name]
-                    save_presets(presets)
-                    await send_embed(message.channel, "Deleted", f"🗑️ Preset `{preset_name}` deleted.", discord.Color.green())
-                else:
-                    await send_embed(message.channel, "Not Found", f"❌ Preset `{preset_name}` not found.", discord.Color.red())
-                return
-            await send_embed(
-                message.channel,
-                "Commands",
-                "Commands:\n"
-                "`!addpreset` — interactive preset creation\n"
-                "`!listpresets` — list all presets\n"
-                "`!delpreset <preset_name>` — delete a preset\n"
-                "`!resetwizard` — force-reset the wizard if you’re stuck\n"
-                "`exit` — exit any wizard/process at any time\n"
-                "In the wizard, type `none` for no roles or `*` to remove all roles."
-            )
-            return
-
-        # Otherwise, ignore the DM (do not respond)
-        return
 
     @commands.Cog.listener()
     async def on_ready(self):
