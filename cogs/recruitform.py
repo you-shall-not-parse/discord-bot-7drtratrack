@@ -6,7 +6,7 @@ FORM_CHANNEL_ID = 1099806153170489485   # Channel where the form embed/button is
 ANSWER_POST_CHANNEL_ID = 1099806153170489485  # Channel where form responses are posted
 
 QUESTIONS = [
-    "What is your current T17 username?",
+    "Welcome! Please note that if you're on mobile then you may need to click 'commands' to expose the text input for your phone keyboard to pop up! \n What is your current T17 username?",
     "What is your Age?",
     "What is your country of residence?",
     "What is your timezone?",
@@ -37,7 +37,7 @@ class RecruitFormCog(commands.Cog):
             return
         embed = discord.Embed(
             title="Recruitment Form",
-            description="We need this info to get you all set up with a platoon. In completing this form I agree to be an active member of this unit, positively contributing to the discord server chats, taking part in training sessions 1-2 times per week and regularly attending Friday events. I understand if I don't positively contribute and stop communicating with my platoon, I will be removed from the unit. Click the button below to start your application.",
+            description="We need this info to get you all set up with a platoon. In completing this form I agree to be an active member of this unit, positively contributing to the discord server chats, taking part in training sessions 1-2 times per week and regularly attending Friday events. \n I understand if I don't positively contribute and stop communicating with my platoon, I will be removed from the unit. \n Click the button below to start your application.",
             color=discord.Color.blue()
         )
         view = RecruitButtonView(self)
@@ -61,7 +61,7 @@ class RecruitFormCog(commands.Cog):
         except Exception as e:
             print(f"Error in DM form: {e}")
             try:
-                await dm.send("An error occurred while processing your form.")
+                await dm.send("An error occurred while processing your form, please try again the same way you did previously.")
             except Exception:
                 pass
 
@@ -70,7 +70,7 @@ class RecruitFormCog(commands.Cog):
         channel = self.bot.get_channel(ANSWER_POST_CHANNEL_ID)
         if channel:
             embed = discord.Embed(
-                title="New Recruitform",
+                title="New Recruit Form",
                 description=f"User: {user.mention}",
                 color=discord.Color.green()
             )
