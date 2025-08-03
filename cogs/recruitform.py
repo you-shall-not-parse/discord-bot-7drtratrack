@@ -104,5 +104,6 @@ class RecruitButtonView(discord.ui.View):
 #                else:
 #                    await user.send("No roles were granted based on your answers.")
 
-def setup(bot):
-    bot.add_cog(RecruitFormCog(bot))
+
+async def setup(bot):
+    await bot.add_cog(RecruitFormCog(bot))
