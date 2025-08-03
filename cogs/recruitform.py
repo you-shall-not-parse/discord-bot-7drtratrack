@@ -4,16 +4,17 @@ from discord.ext import commands
 # === CONFIGURATION ===
 FORM_CHANNEL_ID = 1099806153170489485   # Channel where the form embed/button is posted
 ANSWER_POST_CHANNEL_ID = 1099806153170489485  # Channel where form responses are posted
-# ROLE_MAPPING = {
-#    "answer_text": role_id
-#    "yes": 111111111111111111,
-#    "python": 222222222222222222,
-# }
 
 QUESTIONS = [
     "Do you agree to the server rules? (yes/no)",
     "What is your favorite programming language?",
 ]
+
+# Optional: Uncomment and customize for role mapping
+# ROLE_MAPPING = {
+#    "yes": 123456789012345678,  # Example role IDs
+#    "python": 234567890123456789,
+# }
 
 class RecruitFormCog(commands.Cog):
     def __init__(self, bot):
@@ -36,6 +37,60 @@ class RecruitFormCog(commands.Cog):
         msg = await channel.send(embed=embed, view=view)
         self.embed_message_id = msg.id
 
+    async def start_form(self, user: discord.User):
+        """DMs the form questions to the user and collects answers."""
+        try:
+            dm = await user.create_dm()
+            answers = []
+            for question in QUESTIONS:
+                await dm.send(question)
+                def check(m):
+                    return m.author == user and m.channel == dm
+                msg = await self.bot.wait_for('message', check=check, timeout=120)
+                answers.append(msg.content.strip())
+            await dm.send("Thank you! Processing your answers...")
+            await self.post_answers(user, answers)
+            # await self.process_roles(user, answers)  # Uncomment if using roles
+        except Exception as e:
+            print(f"Error in DM form: {e}")
+            try:
+                await dm.send("An error occurred while processing your form.")
+            except Exception:
+                pass
+
+    async def post_answers(self, user, answers):
+        """Posts the answers to the designated channel."""
+        channel = self.bot.get_channel(ANSWER_POST_CHANNEL_ID)
+        if channel:
+            embed = discord.Embed(
+                title="New Application Submission",
+                description=f"User: {user.mention}",
+                color=discord.Color.green()
+            )
+            for idx, (q, a) in enumerate(zip(QUESTIONS, answers), 1):
+                embed.add_field(name=f"Q{idx}: {q}", value=f"A: {a}", inline=False)
+            await channel.send(embed=embed)
+        else:
+            print(f"Answer post channel ID {ANSWER_POST_CHANNEL_ID} not found.")
+
+    # Optional: Role granting based on answers
+    # async def process_roles(self, user, answers):
+    #     for guild in self.bot.guilds:
+    #         member = guild.get_member(user.id)
+    #         if member:
+    #             roles_to_add = []
+    #             for answer in answers:
+    #                 role_id = ROLE_MAPPING.get(answer.lower())
+    #                 if role_id:
+    #                     role = guild.get_role(role_id)
+    #                     if role and role not in member.roles:
+    #                         roles_to_add.append(role)
+    #             if roles_to_add:
+    #                 await member.add_roles(*roles_to_add, reason="Recruitment form answers")
+    #                 await user.send(f"Roles granted: {', '.join(role.name for role in roles_to_add)}")
+    #             else:
+    #                 await user.send("No roles were granted based on your answers.")
+
 class RecruitButtonView(discord.ui.View):
     def __init__(self, cog):
         super().__init__(timeout=None)
@@ -53,57 +108,6 @@ class RecruitButtonView(discord.ui.View):
             "Check your DMs for the recruitment form!", ephemeral=True
         )
         await self.cog.start_form(interaction.user)
-
-    # Method to DM the form
-    async def start_form(self, user: discord.User):
-        try:
-            dm = await user.create_dm()
-            answers = []
-            for question in QUESTIONS:
-                await dm.send(question)
-                def check(m):
-                    return m.author == user and m.channel == dm
-                msg = await self.cog.bot.wait_for('message', check=check, timeout=120)
-                answers.append(msg.content.strip())
-            await dm.send("Thank you! Processing your answers...")
-            await self.post_answers(user, answers)
-            await self.process_roles(user, answers)
-        except Exception as e:
-            print(f"Error in DM form: {e}")
-
-    # Post answers in the defined channel
-    async def post_answers(self, user, answers):
-        channel = self.cog.bot.get_channel(ANSWER_POST_CHANNEL_ID)
-        if channel:
-            embed = discord.Embed(
-                title="New Application Submission",
-                description=f"User: {user.mention}",
-                color=discord.Color.green()
-            )
-            for idx, (q, a) in enumerate(zip(QUESTIONS, answers), 1):
-                embed.add_field(name=f"Q{idx}: {q}", value=f"A: {a}", inline=False)
-            await channel.send(embed=embed)
-        else:
-            print(f"Answer post channel ID {ANSWER_POST_CHANNEL_ID} not found.")
-
-# Role granting
-#    async def process_roles(self, user, answers):
-#        for guild in self.cog.bot.guilds:
-#            member = guild.get_member(user.id)
-#            if member:
-#                roles_to_add = []
-#                for answer in answers:
-#                    role_id = ROLE_MAPPING.get(answer.lower())
-#                    if role_id:
-#                        role = guild.get_role(role_id)
-#                        if role and role not in member.roles:
-#                            roles_to_add.append(role)
-#                if roles_to_add:
-#                    await member.add_roles(*roles_to_add, reason="Recruitment form answers")
-#                    await user.send(f"Roles granted: {', '.join(role.name for role in roles_to_add)}")
-#                else:
-#                    await user.send("No roles were granted based on your answers.")
-
 
 async def setup(bot):
     await bot.add_cog(RecruitFormCog(bot))
