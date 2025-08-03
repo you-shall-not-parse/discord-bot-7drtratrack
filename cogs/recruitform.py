@@ -47,7 +47,8 @@ class RecruitFormCog(commands.Cog):
     async def start_form(self, user: discord.User):
         """starts the form"""
         try:
-            dm = await user.create_dm("Welcome! Note if you're on a mobile phone you might need to click the commands button and then close the command pane in order to open the text input to this DM and see your phone keyboard!")
+            dm = await user.create_dm()
+            await dm.send("Welcome! Note if you're on a mobile phone you might need to click the commands button and then close the command pane in order to open the text input to this DM.")
             answers = []
             for question in QUESTIONS:
                 await dm.send(question)
