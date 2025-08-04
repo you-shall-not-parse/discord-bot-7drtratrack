@@ -49,7 +49,7 @@ class RecruitFormCog(commands.Cog):
         """starts the form"""
         try:
             dm = await user.create_dm()
-            await dm.send("Welcome! Note if you're on a mobile phone you might need to click the commands button and then close the command pane in order to open the text input to this DM.")
+            await dm.send("**Welcome! Note if you're on a mobile phone you might need to click the commands button and then close the command pane in order to open the text input to this DM.**")
             answers = []
             for question in QUESTIONS:
                 await dm.send(question)
@@ -81,7 +81,7 @@ class RecruitFormCog(commands.Cog):
                 if idx == 2:  # Age question is second in the list
                     try:
                         age = int(a)
-                        if 0 <= age <= 18:
+                        if 0 <= age < 18:
                             a = f"{a} 🚩"
                     except ValueError:
                         pass  # Non-integer answer, do not flag
