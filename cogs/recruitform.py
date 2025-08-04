@@ -3,7 +3,7 @@ from discord.ext import commands
 
 # === CONFIGURATION ===
 FORM_CHANNEL_ID = 1401634001248190515   # Channel where the form embed/button is posted
-ANSWER_POST_CHANNEL_ID = 1401634001248190515  # Channel where form responses are posted
+ANSWER_POST_CHANNEL_ID = 1098331019364552845  # Channel where form responses are posted
 
 QUESTIONS = [
     "What is your current T17 username?",
