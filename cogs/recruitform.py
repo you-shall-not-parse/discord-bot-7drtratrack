@@ -7,7 +7,7 @@ ANSWER_POST_CHANNEL_ID = 1401634001248190515  # Channel where form responses are
 
 QUESTIONS = [
     "What is your current T17 username?",
-    "What is your Age?",
+    "What is your Age? (as a number/integer)",
     "What is your country of residence?",
     "What is your timezone?",
     "What is your Hell Let Loose in-game level?",
