@@ -24,6 +24,7 @@ QUESTIONS = [
 # }
 
 class RecruitFormCog(commands.Cog):
+
     def __init__(self, bot):
         self.bot = bot
         self.embed_message_id = None
@@ -76,6 +77,14 @@ class RecruitFormCog(commands.Cog):
                 color=discord.Color.green()
             )
             for idx, (q, a) in enumerate(zip(QUESTIONS, answers), 1):
+                # If this is the age question, check if the answer is an integer between 0 and 18
+                if idx == 2:  # Age question is second in the list
+                    try:
+                        age = int(a)
+                        if 0 <= age <= 18:
+                            a = f"{a} 🚩"
+                    except ValueError:
+                        pass  # Non-integer answer, do not flag
                 embed.add_field(name=f"Q{idx}: {q}", value=f"A: {a}", inline=False)
             await channel.send(embed=embed)
         else:
