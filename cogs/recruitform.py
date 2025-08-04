@@ -57,7 +57,7 @@ class RecruitFormCog(commands.Cog):
                     return m.author == user and m.channel == dm
                 msg = await self.bot.wait_for('message', check=check, timeout=120)
                 answers.append(msg.content.strip())
-            await dm.send("Thank you! Your answers are now in the #recruitform channel!\n\n **If you have not done so already, your next and final step of the induction process is to change your T17 in-game name on Hell Let Loose and post it in #team-17-names channel**.\n\n Your new name must include 'Pte' before your name with the # numbers that show in-game immediately after you've changed your name, e.g. Pte Mike#6869. If you're struggling check out the induction video or ask one of our officers!")
+            await dm.send("Thank you! Your answers are now in the #recruitform-responses channel!\n\n **If you have not done so already, your next and final step of the induction process is to change your T17 in-game name on Hell Let Loose and post it in #team-17-names channel**.\n\n Your new name must include 'Pte' before your name with the # numbers that show in-game immediately after you've changed your name, e.g. Pte Mike#6869. If you're struggling check out the induction video or ask one of our officers!")
             await self.post_answers(user, answers)
             # await self.process_roles(user, answers)  # Uncomment if using roles
         except Exception as e:
