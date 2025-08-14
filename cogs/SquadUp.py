@@ -4,7 +4,6 @@ from discord.ext import commands
 import json
 import os
 
-# ---------- JSON Helpers ----------
 DATA_FOLDER = "data"
 POSTS_FILE = os.path.join(DATA_FOLDER, "squadup_posts.json")
 CONFIG_FILE = os.path.join(DATA_FOLDER, "squadup_config.json")
@@ -36,79 +35,100 @@ def save_json(path, data):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)
 
-# ---------- Views & Buttons ----------
+class SquadButton(discord.ui.Button):
+    def __init__(self, squad_name):
+        super().__init__(label=f"Join {squad_name}", style=discord.ButtonStyle.primary)
+        self.squad_name = squad_name
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        data = ensure_file_exists(POSTS_FILE, {})
+        post = data.get(str(view.message_id))
+        if not post or post.get("closed", False):
+            await interaction.response.send_message("Signups are closed or not found.", ephemeral=True)
+            return
+
+        user_id = interaction.user.id
+        squads = post["squads"]
+        # Remove user from all squads first
+        for sq in squads:
+            if user_id in squads[sq]:
+                squads[sq].remove(user_id)
+        # Add user to selected squad if space is available
+        if len(squads[self.squad_name]) < post["max_per_squad"]:
+            squads[self.squad_name].append(user_id)
+            await interaction.response.send_message(f"You joined {self.squad_name} squad!", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"{self.squad_name} squad is full!", ephemeral=True)
+
+        data[str(view.message_id)] = post
+        save_json(POSTS_FILE, data)
+        embed = view.bot.get_cog("SquadUp").build_embed(post)
+        await interaction.message.edit(embed=embed, view=view)
+
+class JoinButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Join", style=discord.ButtonStyle.success)
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        data = ensure_file_exists(POSTS_FILE, {})
+        post = data.get(str(view.message_id))
+        if not post or post.get("closed", False):
+            await interaction.response.send_message("Signups are closed or not found.", ephemeral=True)
+            return
+
+        user_id = interaction.user.id
+        # Remove from previous
+        if user_id not in post["joined"]:
+            post["joined"].append(user_id)
+            await interaction.response.send_message("You joined the squad!", ephemeral=True)
+        else:
+            await interaction.response.send_message("You are already in the squad!", ephemeral=True)
+
+        data[str(view.message_id)] = post
+        save_json(POSTS_FILE, data)
+        embed = view.bot.get_cog("SquadUp").build_embed(post)
+        await interaction.message.edit(embed=embed, view=view)
+
+class CloseButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="🔒 Close Signups", style=discord.ButtonStyle.danger)
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        data = ensure_file_exists(POSTS_FILE, {})
+        post = data.get(str(view.message_id))
+        if not post:
+            await interaction.response.send_message("Post not found.", ephemeral=True)
+            return
+        if interaction.user.id != post["op_id"]:
+            await interaction.response.send_message("Only the OP can close signups.", ephemeral=True)
+            return
+
+        post["closed"] = True
+        save_json(POSTS_FILE, data)
+        for child in view.children:
+            child.disabled = True
+        await interaction.message.edit(view=view)
+        await interaction.response.send_message("✅ Signups closed.", ephemeral=True)
+
 class SquadSignupView(discord.ui.View):
-    def __init__(self, bot, message_id, op_id, multi=False):
+    def __init__(self, bot, message_id, op_id, multi=False, squad_names=None):
         super().__init__(timeout=None)
         self.bot = bot
         self.message_id = message_id
         self.op_id = op_id
         self.multi = multi
+        self.squad_names = squad_names or []
 
-    @discord.ui.button(label="✅ Yes", style=discord.ButtonStyle.success)
-    async def yes_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.update_signup(interaction, "yes")
-
-    @discord.ui.button(label="🤔 Maybe", style=discord.ButtonStyle.secondary)
-    async def maybe_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.update_signup(interaction, "maybe")
-
-    @discord.ui.button(label="❌ No", style=discord.ButtonStyle.danger)
-    async def no_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.update_signup(interaction, "no")
-
-    @discord.ui.button(label="🔒 Close Signups", style=discord.ButtonStyle.danger)
-    async def close_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        data = ensure_file_exists(POSTS_FILE, {})
-        if str(self.message_id) not in data:
-            return await interaction.response.send_message("Post not found.", ephemeral=True)
-        post = data[str(self.message_id)]
-        if interaction.user.id != post["op_id"]:
-            return await interaction.response.send_message("Only the OP can close signups.", ephemeral=True)
-
-        post["closed"] = True
-        save_json(POSTS_FILE, data)
-        for child in self.children:
-            child.disabled = True
-        await interaction.message.edit(view=self)
-        await interaction.response.send_message("✅ Signups closed.", ephemeral=True)
-
-    async def update_signup(self, interaction: discord.Interaction, status):
-        data = ensure_file_exists(POSTS_FILE, {})
-        if str(self.message_id) not in data:
-            return await interaction.response.send_message("Post not found.", ephemeral=True)
-        post = data[str(self.message_id)]
-        if post.get("closed", False):
-            return await interaction.response.send_message("Signups are closed.", ephemeral=True)
-
-        user_id = interaction.user.id
-
-        if post.get("multi"):
-            squads = post["squads"]
-            # Remove from other squads
-            for sq in squads:
-                if user_id in squads[sq]:
-                    squads[sq].remove(user_id)
-            # Assign to first squad with space
-            for sq in squads:
-                if len(squads[sq]) < post["max_per_squad"]:
-                    squads[sq].append(user_id)
-                    break
+        if self.multi and self.squad_names:
+            for squad in self.squad_names:
+                self.add_item(SquadButton(squad))
         else:
-            # Remove from all previous
-            for k in ["yes", "maybe", "no"]:
-                if user_id in post.get(k, []):
-                    post[k].remove(user_id)
-            post.setdefault(status, []).append(user_id)
+            self.add_item(JoinButton())
+        self.add_item(CloseButton())
 
-        data[str(self.message_id)] = post
-        save_json(POSTS_FILE, data)
-
-        embed = self.bot.get_cog("SquadUp").build_embed(post)
-        await interaction.message.edit(embed=embed, view=self)
-        await interaction.response.send_message(f"You selected **{status}**.", ephemeral=True)
-
-# ---------- Cog ----------
 class SquadUp(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -126,10 +146,8 @@ class SquadUp(commands.Cog):
                 names = [f"<@{uid}>" for uid in members]
                 embed.add_field(name=f"{squad} ({len(members)}/{post_data['max_per_squad']})", value="\n".join(names) or "—", inline=True)
         else:
-            for status in ["yes", "maybe", "no"]:
-                members = [f"<@{uid}>" for uid in post_data.get(status, [])]
-                emoji = "✅" if status=="yes" else "🤔" if status=="maybe" else "❌"
-                embed.add_field(name=f"{emoji} {status.capitalize()} ({len(members)})", value="\n".join(members) or "—", inline=True)
+            members = [f"<@{uid}>" for uid in post_data.get("joined", [])]
+            embed.add_field(name=f"✅ Joined ({len(members)})", value="\n".join(members) or "—", inline=True)
         if post_data.get("closed"):
             embed.set_footer(text="Signups closed.")
         return embed
@@ -143,9 +161,7 @@ class SquadUp(commands.Cog):
             "title": title,
             "op_id": interaction.user.id,
             "multi": False,
-            "yes": [],
-            "maybe": [],
-            "no": [],
+            "joined": [],
             "closed": False
         }
         embed = self.build_embed(post_data)
@@ -175,7 +191,7 @@ class SquadUp(commands.Cog):
         }
 
         embed = self.build_embed(post_data)
-        view = SquadSignupView(self.bot, None, interaction.user.id, multi=True)
+        view = SquadSignupView(self.bot, None, interaction.user.id, multi=True, squad_names=squad_names)
         message = await interaction.channel.send(embed=embed, view=view)
         view.message_id = message.id
 
