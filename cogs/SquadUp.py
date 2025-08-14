@@ -35,6 +35,95 @@ def save_json(path, data):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)
 
+class JoinButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Join", style=discord.ButtonStyle.success)
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        data = ensure_file_exists(POSTS_FILE, {})
+        post = data.get(str(view.message_id))
+        if not post or post.get("closed", False):
+            await interaction.response.send_message("Signups are closed or not found.", ephemeral=True)
+            return
+
+        user_id = interaction.user.id
+        # Remove from previous
+        for k in ["yes", "maybe", "no"]:
+            if user_id in post[k]:
+                post[k].remove(user_id)
+        if user_id not in post["yes"]:
+            post["yes"].append(user_id)
+            await interaction.response.send_message("You joined the squad!", ephemeral=True)
+        else:
+            await interaction.response.send_message("You are already joined!", ephemeral=True)
+
+        data[str(view.message_id)] = post
+        save_json(POSTS_FILE, data)
+        embed = view.bot.get_cog("SquadUp").build_embed(post)
+        await interaction.message.edit(embed=embed, view=view)
+
+class MaybeButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Maybe", style=discord.ButtonStyle.secondary)
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        data = ensure_file_exists(POSTS_FILE, {})
+        post = data.get(str(view.message_id))
+        if not post or post.get("closed", False):
+            await interaction.response.send_message("Signups are closed or not found.", ephemeral=True)
+            return
+
+        user_id = interaction.user.id
+        for k in ["yes", "maybe", "no"]:
+            if user_id in post[k]:
+                post[k].remove(user_id)
+        if user_id not in post["maybe"]:
+            post["maybe"].append(user_id)
+            await interaction.response.send_message("You marked yourself as maybe!", ephemeral=True)
+        else:
+            await interaction.response.send_message("You are already marked as maybe!", ephemeral=True)
+
+        data[str(view.message_id)] = post
+        save_json(POSTS_FILE, data)
+        embed = view.bot.get_cog("SquadUp").build_embed(post)
+        await interaction.message.edit(embed=embed, view=view)
+
+class NoButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="No", style=discord.ButtonStyle.danger)
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        data = ensure_file_exists(POSTS_FILE, {})
+        post = data.get(str(view.message_id))
+        if not post or post.get("closed", False):
+            await interaction.response.send_message("Signups are closed or not found.", ephemeral=True)
+            return
+
+        user_id = interaction.user.id
+        # Remove from previous
+        if post.get("multi", False):
+            # Remove from all squads
+            for sq in post.get("squads", {}):
+                if user_id in post["squads"][sq]:
+                    post["squads"][sq].remove(user_id)
+        else:
+            for k in ["yes", "maybe", "no"]:
+                if user_id in post[k]:
+                    post[k].remove(user_id)
+        if user_id not in post["no"]:
+            post["no"].append(user_id)
+            await interaction.response.send_message("You marked yourself as not joining.", ephemeral=True)
+        else:
+            await interaction.response.send_message("You are already marked as not joining.", ephemeral=True)
+
+        data[str(view.message_id)] = post
+        save_json(POSTS_FILE, data)
+        embed = view.bot.get_cog("SquadUp").build_embed(post)
+        await interaction.message.edit(embed=embed, view=view)
+
 class SquadButton(discord.ui.Button):
     def __init__(self, squad_name):
         super().__init__(label=f"Join {squad_name}", style=discord.ButtonStyle.primary)
@@ -50,41 +139,19 @@ class SquadButton(discord.ui.Button):
 
         user_id = interaction.user.id
         squads = post["squads"]
-        # Remove user from all squads first
+        # Remove user from all squads
         for sq in squads:
             if user_id in squads[sq]:
                 squads[sq].remove(user_id)
+        # Remove from "no"
+        if user_id in post["no"]:
+            post["no"].remove(user_id)
         # Add user to selected squad if space is available
         if len(squads[self.squad_name]) < post["max_per_squad"]:
             squads[self.squad_name].append(user_id)
             await interaction.response.send_message(f"You joined {self.squad_name} squad!", ephemeral=True)
         else:
             await interaction.response.send_message(f"{self.squad_name} squad is full!", ephemeral=True)
-
-        data[str(view.message_id)] = post
-        save_json(POSTS_FILE, data)
-        embed = view.bot.get_cog("SquadUp").build_embed(post)
-        await interaction.message.edit(embed=embed, view=view)
-
-class JoinButton(discord.ui.Button):
-    def __init__(self):
-        super().__init__(label="Join", style=discord.ButtonStyle.success)
-
-    async def callback(self, interaction: discord.Interaction):
-        view = self.view
-        data = ensure_file_exists(POSTS_FILE, {})
-        post = data.get(str(view.message_id))
-        if not post or post.get("closed", False):
-            await interaction.response.send_message("Signups are closed or not found.", ephemeral=True)
-            return
-
-        user_id = interaction.user.id
-        # Remove from previous
-        if user_id not in post["joined"]:
-            post["joined"].append(user_id)
-            await interaction.response.send_message("You joined the squad!", ephemeral=True)
-        else:
-            await interaction.response.send_message("You are already in the squad!", ephemeral=True)
 
         data[str(view.message_id)] = post
         save_json(POSTS_FILE, data)
@@ -125,8 +192,12 @@ class SquadSignupView(discord.ui.View):
         if self.multi and self.squad_names:
             for squad in self.squad_names:
                 self.add_item(SquadButton(squad))
+            self.add_item(NoButton())  # Multi-squad: add No button
         else:
             self.add_item(JoinButton())
+            self.add_item(MaybeButton())
+            self.add_item(NoButton())  # Simple squadup: Join, Maybe, No
+
         self.add_item(CloseButton())
 
 class SquadUp(commands.Cog):
@@ -145,9 +216,13 @@ class SquadUp(commands.Cog):
             for squad, members in post_data["squads"].items():
                 names = [f"<@{uid}>" for uid in members]
                 embed.add_field(name=f"{squad} ({len(members)}/{post_data['max_per_squad']})", value="\n".join(names) or "—", inline=True)
+            no_names = [f"<@{uid}>" for uid in post_data.get("no",[])]
+            embed.add_field(name="❌ No", value="\n".join(no_names) or "—", inline=True)
         else:
-            members = [f"<@{uid}>" for uid in post_data.get("joined", [])]
-            embed.add_field(name=f"✅ Joined ({len(members)})", value="\n".join(members) or "—", inline=True)
+            for status in ["yes", "maybe", "no"]:
+                members = [f"<@{uid}>" for uid in post_data.get(status, [])]
+                emoji = "✅" if status=="yes" else "🤔" if status=="maybe" else "❌"
+                embed.add_field(name=f"{emoji} {status.capitalize()} ({len(members)})", value="\n".join(members) or "—", inline=True)
         if post_data.get("closed"):
             embed.set_footer(text="Signups closed.")
         return embed
@@ -161,7 +236,9 @@ class SquadUp(commands.Cog):
             "title": title,
             "op_id": interaction.user.id,
             "multi": False,
-            "joined": [],
+            "yes": [],
+            "maybe": [],
+            "no": [],
             "closed": False
         }
         embed = self.build_embed(post_data)
@@ -187,6 +264,7 @@ class SquadUp(commands.Cog):
             "multi": True,
             "squads": squads,
             "max_per_squad": players_per_squad,
+            "no": [],
             "closed": False
         }
 
