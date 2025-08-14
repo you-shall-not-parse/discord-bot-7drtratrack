@@ -37,7 +37,7 @@ def save_json(path, data):
 
 class JoinButton(discord.ui.Button):
     def __init__(self):
-        super().__init__(label="Join", style=discord.ButtonStyle.success)
+        super().__init__(label="Join", style=discord.ButtonStyle.success, custom_id="squadup_join")
 
     async def callback(self, interaction: discord.Interaction):
         view = self.view
@@ -65,7 +65,7 @@ class JoinButton(discord.ui.Button):
 
 class MaybeButton(discord.ui.Button):
     def __init__(self):
-        super().__init__(label="Maybe", style=discord.ButtonStyle.secondary)
+        super().__init__(label="Maybe", style=discord.ButtonStyle.secondary, custom_id="squadup_maybe")
 
     async def callback(self, interaction: discord.Interaction):
         view = self.view
@@ -92,7 +92,7 @@ class MaybeButton(discord.ui.Button):
 
 class RemoveMeButton(discord.ui.Button):
     def __init__(self):
-        super().__init__(label="Remove Me", style=discord.ButtonStyle.danger)
+        super().__init__(label="Remove Me", style=discord.ButtonStyle.danger, custom_id="squadup_remove")
 
     async def callback(self, interaction: discord.Interaction):
         view = self.view
@@ -123,8 +123,7 @@ class RemoveMeButton(discord.ui.Button):
 
 class SquadButton(discord.ui.Button):
     def __init__(self, squad_name):
-        super().__init__(label=f"Join {squad_name}", style=discord.ButtonStyle.primary)
-        self.squad_name = squad_name
+        super().__init__(label=f"Join {squad_name}", style=discord.ButtonStyle.primary, custom_id=f"squadup_squad_{squad_name}")
 
     async def callback(self, interaction: discord.Interaction):
         view = self.view
@@ -154,7 +153,7 @@ class SquadButton(discord.ui.Button):
 
 class CloseButton(discord.ui.Button):
     def __init__(self):
-        super().__init__(label="🔒 Close Signups", style=discord.ButtonStyle.danger)
+        super().__init__(label="🔒 Close Signups", style=discord.ButtonStyle.danger, custom_id="squadup_close")
 
     async def callback(self, interaction: discord.Interaction):
         view = self.view
@@ -200,6 +199,21 @@ class SquadUp(commands.Cog):
         self.posts_data = ensure_file_exists(POSTS_FILE, {})
         self.config_data = ensure_file_exists(CONFIG_FILE, {"allowed_roles": ["Squad Leader", "Admin"], "default_squad_size": 6})
 
+        # Register persistent views on startup
+        bot.loop.create_task(self._register_persistent_views())
+
+    async def _register_persistent_views(self):
+        await self.bot.wait_until_ready()
+        data = ensure_file_exists(POSTS_FILE, {})
+        for msg_id, post in data.items():
+            if not post.get("closed", False):
+                if post.get("multi"):
+                    squad_names = list(post["squads"].keys())
+                    view = SquadSignupView(self.bot, int(msg_id), post["op_id"], multi=True, squad_names=squad_names)
+                else:
+                    view = SquadSignupView(self.bot, int(msg_id), post["op_id"], multi=False)
+                self.bot.add_view(view, message_id=int(msg_id))
+
     def user_has_allowed_role(self, member):
         allowed_roles = self.config_data.get("allowed_roles", [])
         return any(role.name in allowed_roles for role in member.roles)
@@ -242,7 +256,7 @@ class SquadUp(commands.Cog):
         await interaction.response.send_message("✅ SquadUp post created.", ephemeral=True)
 
     @app_commands.command(name="squadupmulti", description="Create multi-squad signup")
-    async def squadupmulti(self, interaction: discord.Interaction, title: str, number_of_squads: int, players_per_squad: int = 6):
+    async def squadupmulti(self, interaction: discord.Interaction, title: str, num_squads: int, players_per_squad: int = 6):
         if not self.user_has_allowed_role(interaction.user):
             return await interaction.response.send_message("❌ You do not have permission.", ephemeral=True)
 
