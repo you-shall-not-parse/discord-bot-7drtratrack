@@ -49,7 +49,7 @@ class JoinButton(discord.ui.Button):
 
         user_id = interaction.user.id
         # Remove from previous
-        for k in ["yes", "maybe", "no"]:
+        for k in ["yes", "maybe"]:
             if user_id in post[k]:
                 post[k].remove(user_id)
         if user_id not in post["yes"]:
@@ -76,7 +76,7 @@ class MaybeButton(discord.ui.Button):
             return
 
         user_id = interaction.user.id
-        for k in ["yes", "maybe", "no"]:
+        for k in ["yes", "maybe"]:
             if user_id in post[k]:
                 post[k].remove(user_id)
         if user_id not in post["maybe"]:
@@ -90,9 +90,9 @@ class MaybeButton(discord.ui.Button):
         embed = view.bot.get_cog("SquadUp").build_embed(post)
         await interaction.message.edit(embed=embed, view=view)
 
-class NoButton(discord.ui.Button):
+class RemoveMeButton(discord.ui.Button):
     def __init__(self):
-        super().__init__(label="No", style=discord.ButtonStyle.danger)
+        super().__init__(label="Remove Me", style=discord.ButtonStyle.danger)
 
     async def callback(self, interaction: discord.Interaction):
         view = self.view
@@ -103,26 +103,23 @@ class NoButton(discord.ui.Button):
             return
 
         user_id = interaction.user.id
-        # Remove from previous
+
         if post.get("multi", False):
             # Remove from all squads
             for sq in post.get("squads", {}):
                 if user_id in post["squads"][sq]:
                     post["squads"][sq].remove(user_id)
         else:
-            for k in ["yes", "maybe", "no"]:
+            # Remove from all status lists
+            for k in ["yes", "maybe"]:
                 if user_id in post[k]:
                     post[k].remove(user_id)
-        if user_id not in post["no"]:
-            post["no"].append(user_id)
-            await interaction.response.send_message("You marked yourself as not joining.", ephemeral=True)
-        else:
-            await interaction.response.send_message("You are already marked as not joining.", ephemeral=True)
 
         data[str(view.message_id)] = post
         save_json(POSTS_FILE, data)
         embed = view.bot.get_cog("SquadUp").build_embed(post)
         await interaction.message.edit(embed=embed, view=view)
+        await interaction.response.send_message("You have been removed from the signup.", ephemeral=True)
 
 class SquadButton(discord.ui.Button):
     def __init__(self, squad_name):
@@ -143,9 +140,6 @@ class SquadButton(discord.ui.Button):
         for sq in squads:
             if user_id in squads[sq]:
                 squads[sq].remove(user_id)
-        # Remove from "no"
-        if user_id in post["no"]:
-            post["no"].remove(user_id)
         # Add user to selected squad if space is available
         if len(squads[self.squad_name]) < post["max_per_squad"]:
             squads[self.squad_name].append(user_id)
@@ -192,11 +186,11 @@ class SquadSignupView(discord.ui.View):
         if self.multi and self.squad_names:
             for squad in self.squad_names:
                 self.add_item(SquadButton(squad))
-            self.add_item(NoButton())  # Multi-squad: add No button
+            self.add_item(RemoveMeButton())  # Multi-squad: add RemoveMe button
         else:
             self.add_item(JoinButton())
             self.add_item(MaybeButton())
-            self.add_item(NoButton())  # Simple squadup: Join, Maybe, No
+            self.add_item(RemoveMeButton())  # Simple squadup: Join, Maybe, RemoveMe
 
         self.add_item(CloseButton())
 
@@ -216,12 +210,10 @@ class SquadUp(commands.Cog):
             for squad, members in post_data["squads"].items():
                 names = [f"<@{uid}>" for uid in members]
                 embed.add_field(name=f"{squad} ({len(members)}/{post_data['max_per_squad']})", value="\n".join(names) or "—", inline=True)
-            no_names = [f"<@{uid}>" for uid in post_data.get("no",[])]
-            embed.add_field(name="❌ No", value="\n".join(no_names) or "—", inline=True)
         else:
-            for status in ["yes", "maybe", "no"]:
+            for status in ["yes", "maybe"]:
                 members = [f"<@{uid}>" for uid in post_data.get(status, [])]
-                emoji = "✅" if status=="yes" else "🤔" if status=="maybe" else "❌"
+                emoji = "✅" if status=="yes" else "🤔"
                 embed.add_field(name=f"{emoji} {status.capitalize()} ({len(members)})", value="\n".join(members) or "—", inline=True)
         if post_data.get("closed"):
             embed.set_footer(text="Signups closed.")
@@ -238,7 +230,6 @@ class SquadUp(commands.Cog):
             "multi": False,
             "yes": [],
             "maybe": [],
-            "no": [],
             "closed": False
         }
         embed = self.build_embed(post_data)
@@ -251,7 +242,7 @@ class SquadUp(commands.Cog):
         await interaction.response.send_message("✅ SquadUp post created.", ephemeral=True)
 
     @app_commands.command(name="squadupmulti", description="Create multi-squad signup")
-    async def squadupmulti(self, interaction: discord.Interaction, title: str, number of squads: int, players per squad: int = 6):
+    async def squadupmulti(self, interaction: discord.Interaction, title: str, num_squads: int, players_per_squad: int = 6):
         if not self.user_has_allowed_role(interaction.user):
             return await interaction.response.send_message("❌ You do not have permission.", ephemeral=True)
 
@@ -264,7 +255,6 @@ class SquadUp(commands.Cog):
             "multi": True,
             "squads": squads,
             "max_per_squad": players_per_squad,
-            "no": [],
             "closed": False
         }
 
