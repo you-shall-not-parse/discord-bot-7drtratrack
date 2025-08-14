@@ -256,7 +256,7 @@ class SquadUp(commands.Cog):
         await interaction.response.send_message("✅ SquadUp post created.", ephemeral=True)
 
     @app_commands.command(name="squadupmulti", description="Create multi-squad signup")
-    async def squadupmulti(self, interaction: discord.Interaction, title: str, num_squads: int, players_per_squad: int = 6):
+    async def squadupmulti(self, interaction: discord.Interaction, title: str, number_of_squads: int, players_per_squad: int = 6):
         if not self.user_has_allowed_role(interaction.user):
             return await interaction.response.send_message("❌ You do not have permission.", ephemeral=True)
 
