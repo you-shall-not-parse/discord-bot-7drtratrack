@@ -260,7 +260,7 @@ class SquadUp(commands.Cog):
         if not self.user_has_allowed_role(interaction.user):
             return await interaction.response.send_message("❌ You do not have permission.", ephemeral=True)
 
-        squad_names = NATO_SQUAD_NAMES[:num_squads]
+        squad_names = NATO_SQUAD_NAMES[:number_of_squads]
         squads = {name: [] for name in squad_names}
 
         post_data = {
