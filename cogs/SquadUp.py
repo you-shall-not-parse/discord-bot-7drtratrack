@@ -4,8 +4,10 @@ from discord.ext import commands
 import json
 import os
 
-CONFIG_FILE = "squadup_config.json"
-DATA_FILE = "squadup_data.json"
+# ---------- JSON Helpers ----------
+DATA_FOLDER = "data"
+POSTS_FILE = os.path.join(DATA_FOLDER, "squadup_posts.json")
+CONFIG_FILE = os.path.join(DATA_FOLDER, "squadup_config.json")
 
 NATO_SQUAD_NAMES = [
     "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot",
@@ -15,18 +17,26 @@ NATO_SQUAD_NAMES = [
     "Yankee", "Zulu"
 ]
 
-def load_json(filename, default):
-    if not os.path.exists(filename):
-        with open(filename, "w") as f:
-            json.dump(default, f, indent=4)
-        return default
-    with open(filename, "r") as f:
-        return json.load(f)
+def ensure_file_exists(path, default_data):
+    if not os.path.exists(DATA_FOLDER):
+        os.makedirs(DATA_FOLDER)
+    if not os.path.isfile(path):
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(default_data, f, indent=4)
+        return default_data
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(default_data, f, indent=4)
+        return default_data
 
-def save_json(filename, data):
-    with open(filename, "w") as f:
+def save_json(path, data):
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)
 
+# ---------- Views & Buttons ----------
 class SquadSignupView(discord.ui.View):
     def __init__(self, bot, message_id, op_id, multi=False):
         super().__init__(timeout=None)
@@ -49,130 +59,129 @@ class SquadSignupView(discord.ui.View):
 
     @discord.ui.button(label="🔒 Close Signups", style=discord.ButtonStyle.danger)
     async def close_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.op_id:
+        data = ensure_file_exists(POSTS_FILE, {})
+        if str(self.message_id) not in data:
+            return await interaction.response.send_message("Post not found.", ephemeral=True)
+        post = data[str(self.message_id)]
+        if interaction.user.id != post["op_id"]:
             return await interaction.response.send_message("Only the OP can close signups.", ephemeral=True)
 
-        data = load_json(DATA_FILE, {})
-        if str(self.message_id) in data:
-            data[str(self.message_id)]["closed"] = True
-            save_json(DATA_FILE, data)
-
+        post["closed"] = True
+        save_json(POSTS_FILE, data)
         for child in self.children:
             child.disabled = True
         await interaction.message.edit(view=self)
-        await interaction.response.send_message("Signups closed.", ephemeral=True)
+        await interaction.response.send_message("✅ Signups closed.", ephemeral=True)
 
     async def update_signup(self, interaction: discord.Interaction, status):
-        data = load_json(DATA_FILE, {})
-
+        data = ensure_file_exists(POSTS_FILE, {})
         if str(self.message_id) not in data:
-            return await interaction.response.send_message("Signup not found.", ephemeral=True)
-
-        if data[str(self.message_id)]["closed"]:
+            return await interaction.response.send_message("Post not found.", ephemeral=True)
+        post = data[str(self.message_id)]
+        if post.get("closed", False):
             return await interaction.response.send_message("Signups are closed.", ephemeral=True)
 
-        post_data = data[str(self.message_id)]
+        user_id = interaction.user.id
 
-        if self.multi and status == "yes":
-            squads = post_data["squads"]
-            max_size = post_data["max_per_squad"]
-
-            assigned = None
-            for squad in squads:
-                if interaction.user.id in squads[squad]:
-                    assigned = squad
+        if post.get("multi"):
+            squads = post["squads"]
+            # Remove from other squads
+            for sq in squads:
+                if user_id in squads[sq]:
+                    squads[sq].remove(user_id)
+            # Assign to first squad with space
+            for sq in squads:
+                if len(squads[sq]) < post["max_per_squad"]:
+                    squads[sq].append(user_id)
                     break
-
-            if assigned:
-                squads[assigned].remove(interaction.user.id)
-
-            for squad in squads:
-                if len(squads[squad]) < max_size:
-                    squads[squad].append(interaction.user.id)
-                    assigned = squad
-                    break
-
-            post_data["squads"] = squads
         else:
-            post_data["signups"][str(interaction.user.id)] = status
+            # Remove from all previous
+            for k in ["yes", "maybe", "no"]:
+                if user_id in post.get(k, []):
+                    post[k].remove(user_id)
+            post.setdefault(status, []).append(user_id)
 
-        data[str(self.message_id)] = post_data
-        save_json(DATA_FILE, data)
+        data[str(self.message_id)] = post
+        save_json(POSTS_FILE, data)
 
-        embed = self.bot.get_cog("SquadUp").build_embed(post_data)
+        embed = self.bot.get_cog("SquadUp").build_embed(post)
         await interaction.message.edit(embed=embed, view=self)
-        await interaction.response.send_message(f"You selected {status}.", ephemeral=True)
+        await interaction.response.send_message(f"You selected **{status}**.", ephemeral=True)
 
+# ---------- Cog ----------
 class SquadUp(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.config = load_json(CONFIG_FILE, {"allowed_roles": []})
-        self.data = load_json(DATA_FILE, {})
+        self.posts_data = ensure_file_exists(POSTS_FILE, {})
+        self.config_data = ensure_file_exists(CONFIG_FILE, {"allowed_roles": ["Squad Leader", "Admin"], "default_squad_size": 6})
 
-    def has_allowed_role(self, user):
-        allowed_roles = self.config.get("allowed_roles", [])
-        return any(role.id in allowed_roles for role in user.roles)
+    def user_has_allowed_role(self, member):
+        allowed_roles = self.config_data.get("allowed_roles", [])
+        return any(role.name in allowed_roles for role in member.roles)
 
     def build_embed(self, post_data):
         embed = discord.Embed(title=post_data["title"], color=discord.Color.green())
-
         if post_data.get("multi"):
-            squads = post_data["squads"]
-            for squad, members in squads.items():
+            for squad, members in post_data["squads"].items():
                 names = [f"<@{uid}>" for uid in members]
                 embed.add_field(name=f"{squad} ({len(members)}/{post_data['max_per_squad']})", value="\n".join(names) or "—", inline=True)
         else:
-            yes = [f"<@{uid}>" for uid, s in post_data["signups"].items() if s == "yes"]
-            maybe = [f"<@{uid}>" for uid, s in post_data["signups"].items() if s == "maybe"]
-            no = [f"<@{uid}>" for uid, s in post_data["signups"].items() if s == "no"]
-
-            embed.add_field(name=f"✅ Yes ({len(yes)})", value="\n".join(yes) or "—")
-            embed.add_field(name=f"🤔 Maybe ({len(maybe)})", value="\n".join(maybe) or "—")
-            embed.add_field(name=f"❌ No ({len(no)})", value="\n".join(no) or "—")
-
+            for status in ["yes", "maybe", "no"]:
+                members = [f"<@{uid}>" for uid in post_data.get(status, [])]
+                emoji = "✅" if status=="yes" else "🤔" if status=="maybe" else "❌"
+                embed.add_field(name=f"{emoji} {status.capitalize()} ({len(members)})", value="\n".join(members) or "—", inline=True)
         if post_data.get("closed"):
             embed.set_footer(text="Signups closed.")
         return embed
 
     @app_commands.command(name="squadup", description="Create a simple one-squad signup")
     async def squadup(self, interaction: discord.Interaction, title: str):
-        if not self.has_allowed_role(interaction.user):
-            return await interaction.response.send_message("You are not allowed to use this command.", ephemeral=True)
+        if not self.user_has_allowed_role(interaction.user):
+            return await interaction.response.send_message("❌ You do not have permission.", ephemeral=True)
 
         post_data = {
             "title": title,
-            "signups": {},
+            "op_id": interaction.user.id,
             "multi": False,
+            "yes": [],
+            "maybe": [],
+            "no": [],
             "closed": False
         }
         embed = self.build_embed(post_data)
         view = SquadSignupView(self.bot, None, interaction.user.id, multi=False)
         message = await interaction.channel.send(embed=embed, view=view)
-
         view.message_id = message.id
-        self.data[str(message.id)] = post_data
-        save_json(DATA_FILE, self.data)
 
-    @app_commands.command(name="squadupmulti", description="Create multiple squad signups")
+        self.posts_data[str(message.id)] = post_data
+        save_json(POSTS_FILE, self.posts_data)
+        await interaction.response.send_message("✅ SquadUp post created.", ephemeral=True)
+
+    @app_commands.command(name="squadupmulti", description="Create multi-squad signup")
     async def squadupmulti(self, interaction: discord.Interaction, title: str, num_squads: int, players_per_squad: int = 6):
-        if not self.has_allowed_role(interaction.user):
-            return await interaction.response.send_message("You are not allowed to use this command.", ephemeral=True)
+        if not self.user_has_allowed_role(interaction.user):
+            return await interaction.response.send_message("❌ You do not have permission.", ephemeral=True)
 
-        squads = {NATO_SQUAD_NAMES[i]: [] for i in range(min(num_squads, len(NATO_SQUAD_NAMES)))}
+        squad_names = NATO_SQUAD_NAMES[:num_squads]
+        squads = {name: [] for name in squad_names}
+
         post_data = {
             "title": title,
-            "squads": squads,
+            "op_id": interaction.user.id,
             "multi": True,
+            "squads": squads,
             "max_per_squad": players_per_squad,
             "closed": False
         }
+
         embed = self.build_embed(post_data)
         view = SquadSignupView(self.bot, None, interaction.user.id, multi=True)
         message = await interaction.channel.send(embed=embed, view=view)
-
         view.message_id = message.id
-        self.data[str(message.id)] = post_data
-        save_json(DATA_FILE, self.data)
+
+        self.posts_data[str(message.id)] = post_data
+        save_json(POSTS_FILE, self.posts_data)
+        await interaction.response.send_message("✅ Multi-squad post created.", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(SquadUp(bot))
