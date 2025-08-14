@@ -1,5 +1,7 @@
 import discord
 from discord.ext import commands
+import sqlite3
+import os
 
 # === CONFIGURATION ===
 FORM_CHANNEL_ID = 1401634001248190515   # Channel where the form embed/button is posted
@@ -17,17 +19,47 @@ QUESTIONS = [
     "What do you enjoy about HLL, particular role and/or play style (offensive/defensive etc)?",
 ]
 
-# Optional: Uncomment and customize for role mapping
-# ROLE_MAPPING = {
-#    "yes": 123456789012345678,  # Example role IDs
-#    "python": 234567890123456789,
-# }
+DB_PATH = os.path.join(os.path.dirname(__file__), "nickname.db")
 
 class RecruitFormCog(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
         self.embed_message_id = None
+        self.db_setup()
+
+    def db_setup(self):
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS recruit_embeds (
+                user_id INTEGER PRIMARY KEY,
+                channel_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL
+            )
+        """)
+        conn.commit()
+        conn.close()
+
+    def save_embed_message(self, user_id, channel_id, message_id):
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("""
+            INSERT OR REPLACE INTO recruit_embeds (user_id, channel_id, message_id)
+            VALUES (?, ?, ?)
+        """, (user_id, channel_id, message_id))
+        conn.commit()
+        conn.close()
+
+    def get_embed_message(self, user_id):
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("""
+            SELECT channel_id, message_id FROM recruit_embeds WHERE user_id = ?
+        """, (user_id,))
+        result = c.fetchone()
+        conn.close()
+        return result if result else (None, None)
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -38,7 +70,7 @@ class RecruitFormCog(commands.Cog):
             return
         embed = discord.Embed(
             title="7DR Recruitment Form",
-            description="We need this info to get you all set up with a platoon. In completing this form I agree to be an active member of this unit, positively contributing to the discord server chats, taking part in training sessions 1-2 times per week and regularly attending Friday events. \n\n I understand if I don't positively contribute and stop communicating with my platoon, I will be removed from the unit. \n\n **Click the button below to start your application.**",
+            description="We need this info to get you all set up with a platoon. In completing this form I agree to be an active member of this unit, positively contributing to the discord server and following all unit/server rules.",
             color=discord.Color.blue()
         )
         view = RecruitButtonView(self)
@@ -57,9 +89,8 @@ class RecruitFormCog(commands.Cog):
                     return m.author == user and m.channel == dm
                 msg = await self.bot.wait_for('message', check=check, timeout=120)
                 answers.append(msg.content.strip())
-            await dm.send("Thank you! Your answers are now in the #recruitform-responses channel!\n\n **If you have not done so already, your next and final step of the induction process is to change your T17 in-game name on Hell Let Loose and post it in #team-17-names channel**.\n\n Your new name must include 'Pte' before your name with the # numbers that show in-game immediately after you've changed your name, e.g. Pte Mike#6869. If you're struggling check out the induction video or ask one of our officers!")
+            await dm.send("Thank you! Your answers are now in the #recruitform-responses channel!\n\n **If you have not done so already, your next and final step of the induction process is to change your Discord nickname to match your in-game name and tag (see pinned messages in #recruitform).**")
             await self.post_answers(user, answers)
-            # await self.process_roles(user, answers)  # Uncomment if using roles
         except Exception as e:
             print(f"Error in DM form: {e}")
             try:
@@ -73,7 +104,7 @@ class RecruitFormCog(commands.Cog):
         if channel:
             embed = discord.Embed(
                 title="New Recruit Form",
-                description=f"User: {user.mention}",
+                description=f"User: {user.mention}\nNickname: {user.display_name}",
                 color=discord.Color.green()
             )
             for idx, (q, a) in enumerate(zip(QUESTIONS, answers), 1):
@@ -86,27 +117,28 @@ class RecruitFormCog(commands.Cog):
                     except ValueError:
                         pass  # Non-integer answer, do not flag
                 embed.add_field(name=f"Q{idx}: {q}", value=f"A: {a}", inline=False)
-            await channel.send(embed=embed)
+            message = await channel.send(embed=embed)
+            # Save the embed message info for nickname updates
+            self.save_embed_message(user.id, channel.id, message.id)
         else:
             print(f"Answer post channel ID {ANSWER_POST_CHANNEL_ID} not found.")
 
-    # Optional: Role granting based on answers
-    # async def process_roles(self, user, answers):
-    #     for guild in self.bot.guilds:
-    #         member = guild.get_member(user.id)
-    #         if member:
-    #             roles_to_add = []
-    #             for answer in answers:
-    #                 role_id = ROLE_MAPPING.get(answer.lower())
-    #                 if role_id:
-    #                     role = guild.get_role(role_id)
-    #                     if role and role not in member.roles:
-    #                         roles_to_add.append(role)
-    #             if roles_to_add:
-    #                 await member.add_roles(*roles_to_add, reason="Recruitment form answers")
-    #                 await user.send(f"Roles granted: {', '.join(role.name for role in roles_to_add)}")
-    #             else:
-    #                 await user.send("No roles were granted based on your answers.")
+    @commands.Cog.listener()
+    async def on_member_update(self, before, after):
+        if before.nick != after.nick:
+            channel_id, message_id = self.get_embed_message(after.id)
+            if channel_id and message_id:
+                channel = self.bot.get_channel(channel_id)
+                if channel:
+                    try:
+                        message = await channel.fetch_message(message_id)
+                        if message.embeds:
+                            embed = message.embeds[0]
+                            # Update Nickname in the embed description
+                            embed.description = f"User: {after.mention}\nNickname: {after.display_name}"
+                            await message.edit(embed=embed)
+                    except Exception as e:
+                        print(f"Failed to update nickname in embed: {e}")
 
 class RecruitButtonView(discord.ui.View):
     def __init__(self, cog):
