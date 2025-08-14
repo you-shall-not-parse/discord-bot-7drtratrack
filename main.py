@@ -54,6 +54,7 @@ async def main():
         await bot.load_extension("cogs.certify")
         await bot.load_extension("cogs.LoreCog")
         await bot.load_extension("cogs.recruitform")
+        await bot.load_extension("cogs.SquadUp")
         # await bot.load_extension("cogs.rcon_tracker")
         await bot.start(TOKEN)
 
