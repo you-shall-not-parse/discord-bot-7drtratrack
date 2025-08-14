@@ -48,7 +48,6 @@ class JoinButton(discord.ui.Button):
             return
 
         user_id = interaction.user.id
-        # Remove from previous
         for k in ["yes", "maybe"]:
             if user_id in post[k]:
                 post[k].remove(user_id)
@@ -105,12 +104,10 @@ class RemoveMeButton(discord.ui.Button):
         user_id = interaction.user.id
 
         if post.get("multi", False):
-            # Remove from all squads
             for sq in post.get("squads", {}):
                 if user_id in post["squads"][sq]:
                     post["squads"][sq].remove(user_id)
         else:
-            # Remove from all status lists
             for k in ["yes", "maybe"]:
                 if user_id in post[k]:
                     post[k].remove(user_id)
@@ -124,6 +121,7 @@ class RemoveMeButton(discord.ui.Button):
 class SquadButton(discord.ui.Button):
     def __init__(self, squad_name):
         super().__init__(label=f"Join {squad_name}", style=discord.ButtonStyle.primary, custom_id=f"squadup_squad_{squad_name}")
+        self.squad_name = squad_name
 
     async def callback(self, interaction: discord.Interaction):
         view = self.view
@@ -135,11 +133,9 @@ class SquadButton(discord.ui.Button):
 
         user_id = interaction.user.id
         squads = post["squads"]
-        # Remove user from all squads
         for sq in squads:
             if user_id in squads[sq]:
                 squads[sq].remove(user_id)
-        # Add user to selected squad if space is available
         if len(squads[self.squad_name]) < post["max_per_squad"]:
             squads[self.squad_name].append(user_id)
             await interaction.response.send_message(f"You joined {self.squad_name} squad!", ephemeral=True)
@@ -185,12 +181,11 @@ class SquadSignupView(discord.ui.View):
         if self.multi and self.squad_names:
             for squad in self.squad_names:
                 self.add_item(SquadButton(squad))
-            self.add_item(RemoveMeButton())  # Multi-squad: add RemoveMe button
+            self.add_item(RemoveMeButton())
         else:
             self.add_item(JoinButton())
             self.add_item(MaybeButton())
-            self.add_item(RemoveMeButton())  # Simple squadup: Join, Maybe, RemoveMe
-
+            self.add_item(RemoveMeButton())
         self.add_item(CloseButton())
 
 class SquadUp(commands.Cog):
@@ -198,8 +193,6 @@ class SquadUp(commands.Cog):
         self.bot = bot
         self.posts_data = ensure_file_exists(POSTS_FILE, {})
         self.config_data = ensure_file_exists(CONFIG_FILE, {"allowed_roles": ["Squad Leader", "Admin"], "default_squad_size": 6})
-
-        # Register persistent views on startup
         bot.loop.create_task(self._register_persistent_views())
 
     async def _register_persistent_views(self):
@@ -212,6 +205,7 @@ class SquadUp(commands.Cog):
                     view = SquadSignupView(self.bot, int(msg_id), post["op_id"], multi=True, squad_names=squad_names)
                 else:
                     view = SquadSignupView(self.bot, int(msg_id), post["op_id"], multi=False)
+                view.message_id = int(msg_id)
                 self.bot.add_view(view, message_id=int(msg_id))
 
     def user_has_allowed_role(self, member):
