@@ -70,7 +70,7 @@ class RecruitFormCog(commands.Cog):
             return
         embed = discord.Embed(
             title="7DR Recruitment Form",
-            description="We need this info to get you all set up with a platoon. In completing this form I agree to be an active member of this unit, positively contributing to the discord server and following all unit/server rules.",
+            description="We need this info to get you all set up with a platoon. In completing this form I agree to be an active member of this unit, positively contributing to the discord server chats, taking part in training sessions 1-2 times per week and regularly attending events. \n\n I understand if I don't positively contribute and stop communicating with my platoon, I will be removed from the unit.\n\n **Click the button below to start your application**",
             color=discord.Color.blue()
         )
         view = RecruitButtonView(self)
@@ -81,7 +81,7 @@ class RecruitFormCog(commands.Cog):
         """starts the form"""
         try:
             dm = await user.create_dm()
-            await dm.send("**Welcome! Note if you're on a mobile phone you might need to click the commands button and then close the command pane in order to open the text input to this DM.**")
+            await dm.send("**Welcome! Note if you're on a mobile phone you might need to click the commands button and then close the command pane or click the speech button to the right in order to open the text input to this DM.**")
             answers = []
             for question in QUESTIONS:
                 await dm.send(question)
