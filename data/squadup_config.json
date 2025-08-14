@@ -1,0 +1,7 @@
+{
+    "allowed_roles": [
+        "Admin Core",
+        "Administration"
+    ],
+    "default_squad_size": 6
+}
