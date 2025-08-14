@@ -56,13 +56,20 @@ class LoreCog(commands.Cog):
     @discord.app_commands.command(name="addquote", description="Add your own lore quote!")
     @discord.app_commands.describe(quote="The quote to add", author="(Optional) Who said it?")
     async def addquote(self, interaction: discord.Interaction, quote: str, author: str = None):
-        add_quote(quote, author)
-        await interaction.response.send_message("Your quote has been added!", ephemeral=True)
+    # Role restriction
+    required_role = "Administration"  # Change to your desired role name
+    if not any(role.name == required_role for role in interaction.user.roles):
+        await interaction.response.send_message(
+            f"You need the '{required_role}' role to use this command.", ephemeral=True
+        )
+        return
+    add_quote(quote, author)
+    await interaction.response.send_message("Your quote has been added!", ephemeral=True)
 
     @discord.app_commands.command(name="lore", description="Get a random lore quote from the database.")
     async def lore(self, interaction: discord.Interaction):
         quote = get_random_quote()
         await interaction.response.send_message(f"**Lore Quote:**\n{quote}")
 
-async def setup(bot):
+    async def setup(bot):
     await bot.add_cog(LoreCog(bot))
