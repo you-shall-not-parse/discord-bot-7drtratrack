@@ -8,7 +8,7 @@ import os
 # Load API key from .env if needed
 from dotenv import load_dotenv
 load_dotenv()
-POKEMON_API_KEY = os.getenv("POKEMON_API_KEY")
+POKEMON_API_KEY = os.getenv("POKEMON_TCG_API_KEY")
 
 # 🔴 Replace this with your actual guild ID
 GUILD_ID = 123456789012345678
