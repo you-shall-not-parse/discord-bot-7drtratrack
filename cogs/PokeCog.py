@@ -187,14 +187,14 @@ class PersistentBattleView(View):
         self.message: Optional[discord.Message] = None
 
     async def on_attack(self, interaction: discord.Interaction, attack_index: int):
-        cog: "PokemonPersistentCog" = self.bot.get_cog("PokemonPersistentCog")
+        cog: "PokeCog" = self.bot.get_cog("PokeCog")
         if not cog:
             await interaction.response.send_message("Cog unavailable.", ephemeral=True)
             return
         await cog.resolve_attack_for_battle(interaction, self.battle_id, interaction.user.id, attack_index)
 
     async def on_forfeit(self, interaction: discord.Interaction):
-        cog: "PokemonPersistentCog" = self.bot.get_cog("PokemonPersistentCog")
+        cog: "PokeCog" = self.bot.get_cog("PokeCog")
         if not cog:
             await interaction.response.send_message("Cog unavailable.", ephemeral=True)
             return
@@ -210,7 +210,7 @@ class PersistentBattleView(View):
             pass
 
 # ---------------- The Cog ----------------
-class PokemonPersistentCog(commands.Cog, name="PokemonPersistentCog"):
+class PokeCog(commands.Cog, name="PokeCog"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.conn = sqlite3.connect(DB_PATH, check_same_thread=False)
