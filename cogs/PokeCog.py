@@ -214,7 +214,7 @@ class PersistentBattleView(View):
         self.message: Optional[discord.Message] = None
 
     async def on_attack(self, interaction: discord.Interaction, attack_index: int):
-        cog: "PokeCog" = self.bot.get_cog("PokeCog")
+        cog: "" = self.bot.get_cog("PokeCog")
         if not cog:
             await interaction.response.send_message("Cog unavailable.", ephemeral=True)
             return
