@@ -791,5 +791,6 @@ class PokemonFullCog(commands.Cog, name="PokemonFullCog"):
         )
         await interaction.response.send_message(msg, ephemeral=True)
 
-    async def setup(bot: commands.Bot):
-        await bot.add_cog(PokemonFullCog(bot))
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(PokemonFullCog(bot))
