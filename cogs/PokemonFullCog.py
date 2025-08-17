@@ -11,7 +11,7 @@ load_dotenv()
 POKEMON_API_KEY = os.getenv("POKEMON_TCG_API_KEY")
 
 # 🔴 Replace this with your actual guild ID
-GUILD_ID = 123456789012345678
+GUILD_ID = 1097913605082579024  # Set your guild/server ID here
 
 
 class PokemonFullCog(commands.Cog):
