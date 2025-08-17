@@ -3,8 +3,8 @@ from discord import app_commands
 from discord.ext import commands
 import requests
 
-POKEMON_API_KEY = "YOUR_API_KEY_HERE"  # <-- Top of file
-GUILD_ID = 1234567890  # Replace with your guild ID
+POKEMON_API_KEY = "POKEMON_TCG_API_KEY"  # <-- Top of file
+GUILD_ID = 1097913605082579024  # Replace with your guild ID
 
 # Example set list
 SETS = [
