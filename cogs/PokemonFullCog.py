@@ -16,6 +16,7 @@ from discord.ui import View, Button, Select
 from dotenv import load_dotenv
 
 # ---------------- Config ----------------
+
 load_dotenv()
 POKEMON_API_KEY = os.getenv("POKEMON_TCG_API_KEY") or os.getenv("TCG_API_KEY")
 API_HEADERS = {"X-Api-Key": POKEMON_API_KEY} if POKEMON_API_KEY else {}
