@@ -6,22 +6,18 @@ import sqlite3
 import asyncio
 import logging
 import time
-from io import BytesIO
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, Optional
 
 import aiohttp
 import discord
-from discord.ext import commands, tasks
-from discord import app_commands
-from discord.ui import View, Button, Select
-from dotenv import load_dotenv
+from discord.ext import commands
+from discord.ui import View, Button
 
 # Set up logging
 logger = logging.getLogger("PokeCog")
 logging.basicConfig(level=logging.INFO)
 
 # Config
-load_dotenv()
 POKEMON_API_KEY = os.getenv("POKEMON_TCG_API_KEY") or os.getenv("TCG_API_KEY")
 API_HEADERS = {"X-Api-Key": POKEMON_API_KEY} if POKEMON_API_KEY else {}
 API_URL = "https://api.pokemontcg.io/v2/cards"
@@ -65,70 +61,7 @@ def attack_coin_bonus(atk: Dict[str, Any]) -> int:
         return int(m.group(1))
     return 0
 
-def attack_text_has_paralysis(atk: Dict[str, Any]) -> bool:
-    text = atk.get("text") or ""
-    return bool(_paralyze_re.search(text)) and not _flip_re.search(text)
-
-def attack_text_has_burn(atk: Dict[str, Any]) -> bool:
-    text = atk.get("text") or ""
-    return bool(_burn_re.search(text)) and not _flip_re.search(text)
-
-def attack_text_has_poison(atk: Dict[str, Any]) -> bool:
-    text = atk.get("text") or ""
-    return bool(_poison_re.search(text)) and not _flip_re.search(text)
-
-def attack_text_has_confuse(atk: Dict[str, Any]) -> bool:
-    text = atk.get("text") or ""
-    return bool(_confuse_re.search(text)) and not _flip_re.search(text)
-
-def attack_may_paralyze(atk: Dict[str, Any]) -> bool:
-    text = atk.get("text") or ""
-    return bool(_paralyze_re.search(text) and _flip_re.search(text))
-
-def attack_may_burn(atk: Dict[str, Any]) -> bool:
-    text = atk.get("text") or ""
-    return bool(_burn_re.search(text) and _flip_re.search(text))
-
-def attack_may_poison(atk: Dict[str, Any]) -> bool:
-    text = atk.get("text") or ""
-    return bool(_poison_re.search(text) and _flip_re.search(text))
-
-def attack_may_confuse(atk: Dict[str, Any]) -> bool:
-    text = atk.get("text") or ""
-    return bool(_confuse_re.search(text) and _flip_re.search(text))
-
-def guess_attack_type(attacker: Dict[str, Any], atk: Dict[str, Any]) -> Optional[str]:
-    cost = atk.get("cost") or []
-    if cost:
-        first = cost[0]
-        if first and first.lower() != "colorless":
-            return first
-    types = attacker.get("types") or []
-    return types[0] if types else None
-
-def apply_weak_resist(attack_type: Optional[str], defender: Dict[str, Any], damage: int) -> int:
-    if attack_type and defender.get("weaknesses"):
-        for w in defender["weaknesses"]:
-            if w.get("type") == attack_type:
-                val = w.get("value", "×2")
-                if "×" in val or "x" in val:
-                    mult = num(val, 2)
-                    damage *= (mult if mult > 1 else 2)
-                elif "+" in val:
-                    damage += num(val, 20)
-                else:
-                    damage *= 2
-                break
-    if attack_type and defender.get("resistances"):
-        for r in defender["resistances"]:
-            if r.get("type") == attack_type:
-                val = r.get("value", "-30")
-                damage = max(0, damage - num(val, 30))
-                break
-    return max(0, damage)
-
-def trim(s: str, limit: int = 1024) -> str:
-    return s if len(s) <= limit else s[: limit - 1] + "…"
+# Add more helper functions as necessary...
 
 # Database helpers
 DB_PATH = "pokemon_tcg_persistent.db"
@@ -180,7 +113,7 @@ def init_db(conn: sqlite3.Connection):
         state_json TEXT
     )""")
 
-# In-memory battle view state restored from DB
+# Button classes for your Views
 class ForfeitButton(Button):
     def __init__(self):
         super().__init__(label="Forfeit", style=discord.ButtonStyle.danger)
@@ -214,7 +147,7 @@ class PersistentBattleView(View):
         self.message: Optional[discord.Message] = None
 
     async def on_attack(self, interaction: discord.Interaction, attack_index: int):
-        cog: "" = self.bot.get_cog("PokeCog")
+        cog: "PokeCog" = self.bot.get_cog("PokeCog")
         if not cog:
             await interaction.response.send_message("Cog unavailable.", ephemeral=True)
             return
@@ -242,8 +175,8 @@ class PersistentBattleView(View):
         except Exception as e:
             logger.exception("Error in on_timeout")
 
-# The Cog
-class PokeCog(commands.Cog, name="PokeCog"):
+# The Cog itself
+class PokeCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -251,21 +184,27 @@ class PokeCog(commands.Cog, name="PokeCog"):
         self.battle_views: Dict[int, PersistentBattleView] = {}
         self._restore_task = self.bot.loop.create_task(self._restore_battles_on_ready())
 
+    async def _restore_battles_on_ready(self):
+        # This is a stub; implement your restoration logic here if needed
+        logger.info("Restoring battles on bot ready (stub)")
+        pass
+
     # Example command using db_execute_with_retry and logging
     @commands.command(name="buy_pack")
     async def buy_pack(self, ctx, pack_type="basic"):
         user_id = ctx.author.id
         try:
-            # Use db_execute_with_retry for DB operations
             c = db_execute_with_retry(self.conn, "SELECT balance FROM users WHERE user_id = ?", (user_id,))
-            balance = c.fetchone()[0]
+            row = c.fetchone()
+            balance = row[0] if row else 0
             # ... rest of your command logic ...
+            await ctx.send(f"Buying a {pack_type} pack... (stub, balance: {balance})")
         except Exception as e:
             logger.exception("Error in buy_pack command")
             await ctx.send(f"An error occurred: {e}")
 
-    # ... Apply similar patterns for all other commands and event handlers ...
+    # Add other commands and event handlers as needed...
 
-# Setup
+# Setup function for discord.py v2.x
 async def setup(bot: commands.Bot):
     await bot.add_cog(PokeCog(bot))
