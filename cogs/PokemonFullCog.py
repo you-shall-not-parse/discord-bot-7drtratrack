@@ -1,94 +1,78 @@
 import discord
-from discord.ext import commands
 from discord import app_commands
+from discord.ext import commands
 import requests
 
-# === CONFIG ===
-GUILD_ID = 1097913605082579024  # placeholder guild ID
-POKEMON_TCG_API_KEY = "POKEMON_TCG_API_KEY"  # <-- set your API key here
+POKEMON_API_KEY = "YOUR_API_KEY_HERE"  # <-- Top of file
+GUILD_ID = 1234567890  # Replace with your guild ID
 
-# Cache
-ALL_SETS = []
-SET_CARD_NUMBERS = {}  # {set_name: [card_numbers]}
+# Example set list
+SETS = [
+    {"name": "Base Set", "size": 102},
+    {"name": "Jungle", "size": 64},
+    {"name": "Fossil", "size": 62},
+    # Add all sets here
+]
 
-# === HELPER FUNCTIONS ===
-
-def get_usd_to_gbp():
-    try:
-        resp = requests.get("https://api.exchangerate.host/latest?base=USD&symbols=GBP")
-        data = resp.json()
-        return data["rates"]["GBP"]
-    except Exception:
-        return 0.8  # fallback rate
-
-def fetch_all_sets():
-    global ALL_SETS
-    if ALL_SETS:
-        return ALL_SETS
-    try:
-        url = "https://api.pokemontcg.io/v2/sets"
-        headers = {"X-Api-Key": POKEMON_TCG_API_KEY}
-        resp = requests.get(url, headers=headers)
-        data = resp.json()
-        ALL_SETS = [s["name"] for s in data.get("data", [])]
-    except Exception:
-        ALL_SETS = []
-    return ALL_SETS
-
-# === COG ===
-
-class PokemonFullCog(commands.Cog):
-    def __init__(self, bot):
+class PokemonPriceCog(commands.Cog):
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    async def set_autocomplete(self, interaction: discord.Interaction, current: str):
-        sets = fetch_all_sets()
-        return [
-            app_commands.Choice(name=s, value=s)
-            for s in sets if current.lower() in s.lower()
-        ][:25]
+    async def get_exchange_rate(self):
+        # Get USD -> GBP conversion
+        response = requests.get("https://api.exchangerate.host/latest?base=USD&symbols=GBP")
+        data = response.json()
+        return data["rates"]["GBP"]
 
-    async def card_number_autocomplete(self, interaction: discord.Interaction, current: str):
-        set_name = interaction.namespace.set_name
-        if not set_name:
-            return []
-        if set_name not in SET_CARD_NUMBERS:
-            try:
-                url = f"https://api.pokemontcg.io/v2/cards?q=set.name:{set_name}"
-                headers = {"X-Api-Key": POKEMON_TCG_API_KEY}
-                resp = requests.get(url, headers=headers)
-                data = resp.json()
-                SET_CARD_NUMBERS[set_name] = [card["number"] for card in data.get("data", [])]
-            except:
-                SET_CARD_NUMBERS[set_name] = []
-        numbers = SET_CARD_NUMBERS[set_name]
-        return [app_commands.Choice(name=n, value=n) for n in numbers if current in n][:25]
+    async def get_card_info(self, set_name, card_number):
+        # Fetch from TCGplayer (example)
+        headers = {"Authorization": f"Bearer {POKEMON_API_KEY}"}
+        # Replace with actual endpoint
+        url = f"https://api.tcgplayer.com/cards/{set_name}/{card_number}"
+        r = requests.get(url, headers=headers)
+        return r.json()
 
-    @app_commands.command(name="price", description="Get Pokémon card price and info")
-    @app_commands.describe(set_name="Select set", card_number="Enter card number")
-    @app_commands.autocomplete(set_name=set_autocomplete)
-    @app_commands.autocomplete(card_number=card_number_autocomplete)
+    @app_commands.command(name="price", description="Get Pokémon card price")
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    @app_commands.describe(set_name="Set of the card", card_number="Card number in set")
     async def price(self, interaction: discord.Interaction, set_name: str, card_number: str):
         await interaction.response.defer()
-        try:
-            url = f"https://api.pokemontcg.io/v2/cards?q=set.name:{set_name}+number:{card_number}"
-            headers = {"X-Api-Key": POKEMON_TCG_API_KEY}
-            resp = requests.get(url, headers=headers)
-            data = resp.json()
-            card_data = data.get("data", [])[0]
+        card_info = await self.get_card_info(set_name, card_number)
+        rate = await self.get_exchange_rate()
 
-            usd_price = card_data.get("tcgplayer", {}).get("prices", {}).get("normal", {}).get("market", 0)
-            gbp_price = round(usd_price * get_usd_to_gbp(), 2)
+        usd_price = float(card_info["price_usd"])
+        gbp_price = usd_price * rate
 
-            embed = discord.Embed(title=card_data.get("name", "Card"), color=discord.Color.blue())
-            embed.set_image(url=card_data.get("images", {}).get("large"))
-            embed.add_field(name="Set", value=set_name, inline=True)
-            embed.add_field(name="Card Number", value=card_number, inline=True)
-            embed.add_field(name="Release Date", value=card_data.get("set", {}).get("releaseDate", "Unknown"), inline=True)
-            embed.add_field(name="Price", value=f"${usd_price} / £{gbp_price}", inline=True)
-            await interaction.followup.send(embed=embed)
-        except Exception as e:
-            await interaction.followup.send(f"Error fetching card info: {e}")
+        embed = discord.Embed(
+            title=f"{card_info['name']} ({set_name} {card_number})",
+            description=f"Price: ${usd_price:.2f} / £{gbp_price:.2f}\nRelease Date: {card_info['release_date']}",
+            color=discord.Color.blue()
+        )
+        embed.set_image(url=card_info["image_url"])
+        await interaction.followup.send(embed=embed)
 
-async def setup(bot):
-    await bot.add_cog(PokemonFullCog(bot), guilds=[discord.Object(id=GUILD_ID)])
+    # Autocomplete for set names
+    @price.autocomplete("set_name")
+    async def set_name_autocomplete(self, interaction: discord.Interaction, current: str):
+        return [
+            app_commands.Choice(name=s["name"], value=s["name"])
+            for s in SETS if current.lower() in s["name"].lower()
+        ][:25]
+
+    # Autocomplete for card numbers
+    @price.autocomplete("card_number")
+    async def card_number_autocomplete(self, interaction: discord.Interaction, current: str):
+        # Get selected set from options
+        options = interaction.namespace
+        selected_set = next((s for s in SETS if s["name"] == getattr(options, "set_name", "")), None)
+        if not selected_set:
+            return []
+
+        return [
+            app_commands.Choice(name=f"{i}/{selected_set['size']}", value=f"{i}/{selected_set['size']}")
+            for i in range(1, selected_set["size"] + 1)
+            if current in str(i)
+        ][:25]
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(PokemonPriceCog(bot))
