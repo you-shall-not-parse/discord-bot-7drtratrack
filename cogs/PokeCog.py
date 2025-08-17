@@ -987,4 +987,4 @@ class PokemonPersistentCog(commands.Cog, name="PokemonPersistentCog"):
 
 # ---------------- Setup ----------------
 async def setup(bot: commands.Bot):
-    await bot.add_cog(PokemonCog(bot))
+    await bot.add_cog(PokeCog(bot))
