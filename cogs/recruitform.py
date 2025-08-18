@@ -9,15 +9,15 @@ FORM_CHANNEL_ID = 1401634001248190515   # Channel where the form embed/button is
 ANSWER_POST_CHANNEL_ID = 1098331019364552845  # Channel where form responses are posted
 
 QUESTIONS = [
-    "What is your current T17 username?",
-    "What is your Age? (as a number/integer)",
-    "What is your country of residence?",
-    "What is your timezone?",
-    "What is your Hell Let Loose in-game level?",
-    "What is your Discord username?",
-    "How did you find us?",
-    "Details of any previous milsim experience (established units, not games you've played)?",
-    "What do you enjoy about HLL, particular role and/or play style (offensive/defensive etc)?",
+    "**What is your current T17 username?**",
+    "**What is your Age? (as a number/integer)**",
+    "**What is your country of residence?**",
+    "**What is your timezone?**"
+    "**What is your Hell Let Loose in-game level?**",
+    "**What is your Discord username?**",
+    "**How did you find us?**",
+    "**Details of any previous milsim experience (established units, not games you've played)?**",
+    "**What do you enjoy about HLL, particular role and/or play style (offensive/defensive etc)?**",
 ]
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "nickname.db")
@@ -137,11 +137,11 @@ class RecruitFormCog(commands.Cog):
             await dm.send(
                 "**Welcome! to 7DR HLL Console Clan**\n"
                 "- If you're on mobile, you may need to close the command panel to see the chat by clicking" 
-                "the speech button to the right in order to open the text input to this DM.\n\n"
+                " the speech button to the right in order to open the text input to this DM.\n\n"
                 "- You can type 'cancel' at any time to abort and you can restart by clicking the button again" 
-                "in #recruitform_requests channel.\n\n"
+                " in #recruitform_requests channel.\n\n"
                 "- By completing this form, you agree to be an active, positive member of the unit.\n\n"
-                "Please answer the following questions one by one:"
+                "Please answer the following questions one by one:\n\n"
             )
 
             answers = []
