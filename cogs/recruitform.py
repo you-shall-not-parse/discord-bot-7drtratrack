@@ -1,3 +1,4 @@
+import asyncio
 import discord
 from discord.ext import commands
 import sqlite3
@@ -27,39 +28,79 @@ class RecruitFormCog(commands.Cog):
         self.bot = bot
         self.embed_message_id = None
         self.db_setup()
+        # Track active per-user form sessions (user_id -> asyncio.Task)
+        self._sessions: dict[int, asyncio.Task] = {}
 
     def db_setup(self):
+        """Ensure the DB supports multiple submissions per user, migrate if needed."""
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS recruit_embeds (
-                user_id INTEGER PRIMARY KEY,
-                channel_id INTEGER NOT NULL,
-                message_id INTEGER NOT NULL
-            )
-        """)
+
+        # Detect if table exists
+        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='recruit_embeds'")
+        exists = c.fetchone() is not None
+
+        if not exists:
+            # Create new schema allowing multiple messages per user
+            c.execute("""
+                CREATE TABLE recruit_embeds (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    channel_id INTEGER NOT NULL,
+                    message_id INTEGER NOT NULL
+                )
+            """)
+            conn.commit()
+            conn.close()
+            return
+
+        # If table exists, check if it's the old schema (user_id PRIMARY KEY)
+        c.execute("PRAGMA table_info(recruit_embeds)")
+        cols = c.fetchall()  # cid, name, type, notnull, dflt_value, pk
+        pk_cols = [row[1] for row in cols if row[5] > 0]
+
+        if len(pk_cols) == 1 and pk_cols[0] == "user_id" and len(cols) == 3:
+            # Migrate old -> new schema with AUTOINCREMENT id
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS recruit_embeds_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    channel_id INTEGER NOT NULL,
+                    message_id INTEGER NOT NULL
+                )
+            """)
+            c.execute("""
+                INSERT INTO recruit_embeds_new (user_id, channel_id, message_id)
+                SELECT user_id, channel_id, message_id FROM recruit_embeds
+            """)
+            c.execute("DROP TABLE recruit_embeds")
+            c.execute("ALTER TABLE recruit_embeds_new RENAME TO recruit_embeds")
+
         conn.commit()
         conn.close()
 
-    def save_embed_message(self, user_id, channel_id, message_id):
+    def save_embed_message(self, user_id: int, channel_id: int, message_id: int):
+        """Save a new posted form reference (allows multiple per user)."""
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute("""
-            INSERT OR REPLACE INTO recruit_embeds (user_id, channel_id, message_id)
+            INSERT INTO recruit_embeds (user_id, channel_id, message_id)
             VALUES (?, ?, ?)
         """, (user_id, channel_id, message_id))
         conn.commit()
         conn.close()
 
-    def get_embed_message(self, user_id):
+    def get_embed_messages(self, user_id: int):
+        """Return all (channel_id, message_id) pairs for a user."""
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute("""
-            SELECT channel_id, message_id FROM recruit_embeds WHERE user_id = ?
+            SELECT channel_id, message_id FROM recruit_embeds
+            WHERE user_id = ?
         """, (user_id,))
-        result = c.fetchone()
+        results = c.fetchall()
         conn.close()
-        return result if result else (None, None)
+        return results or []
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -70,7 +111,14 @@ class RecruitFormCog(commands.Cog):
             return
         embed = discord.Embed(
             title="7DR Recruitment Form",
-            description="We need this info to get you all set up with a platoon. In completing this form I agree to be an active member of this unit, positively contributing to the discord server chats, taking part in training sessions 1-2 times per week and regularly attending events. \n\n I understand if I don't positively contribute and stop communicating with my platoon, I will be removed from the unit.\n\n **Click the button below to start your application**",
+            description=(
+                "We need this info to get you all set up with a platoon.\n"
+                "In completing this form I agree to be an active member of this unit," 
+                "positively contributing to the discord server chats, taking part in training"
+                "sessions 1-2 times per week and regularly attending events. \n\n I understand"
+                "if I don't positively contribute and stop communicating with my platoon," 
+                "I will be removed from the unit.\n\n **Click the button below to start your application**"
+            ),
             color=discord.Color.blue()
         )
         view = RecruitButtonView(self)
@@ -78,70 +126,129 @@ class RecruitFormCog(commands.Cog):
         self.embed_message_id = msg.id
 
     async def start_form(self, user: discord.User):
-        """starts the form"""
+        """Starts the form with the user in DMs."""
         try:
             dm = await user.create_dm()
-            await dm.send("**Welcome! Note if you're on a mobile phone you might need to click the commands button and then close the command pane or click the speech button to the right in order to open the text input to this DM.**")
+        except Exception as e:
+            print(f"Failed to open DM with {user}: {e}")
+            return
+
+        try:
+            await dm.send(
+                "**Welcome! to 7DR HLL Console Clan**\n"
+                "- If you're on mobile, you may need to close the command panel to see the chat by clicking" 
+                "the speech button to the right in order to open the text input to this DM.\n\n"
+                "- You can type 'cancel' at any time to abort and you can restart by clicking the button again" 
+                "in #recruitform_requests channel.\n\n"
+                "- By completing this form, you agree to be an active, positive member of the unit.\n\n"
+                "Please answer the following questions one by one:"
+            )
+
             answers = []
             for question in QUESTIONS:
                 await dm.send(question)
-                def check(m):
+
+                def check(m: discord.Message):
                     return m.author == user and m.channel == dm
-                msg = await self.bot.wait_for('message', check=check, timeout=120)
-                answers.append(msg.content.strip())
-            await dm.send("Thank you! Your answers are now in the #recruitform-responses channel!\n\n **If you have not done so already, your next and final step of the induction process is to change your T17 in-game name on Hell Let Loose and post it in #team-17-names channel.** \n\n Your new name must include 'Pte' at the start with the # numbers that show in-game immediately after you've changed your name, e.g. Pte Mike#6869. If you're struggling check out the induction video or ask one of our officers!")
+
+                try:
+                    msg = await self.bot.wait_for('message', check=check, timeout=120)
+                except asyncio.TimeoutError:
+                    await dm.send("Timed out waiting for a response. Please click the button again to restart the form.")
+                    return
+
+                content = msg.content.strip()
+                if content.lower() in ("cancel", "stop", "quit", "exit"):
+                    await dm.send("Form cancelled. You can restart by clicking the button again.")
+                    return
+
+                if not content:
+                    await dm.send("I didn't catch that. Please provide a non-empty answer:")
+                    try:
+                        msg = await self.bot.wait_for('message', check=check, timeout=60)
+                        content = msg.content.strip()
+                    except asyncio.TimeoutError:
+                        await dm.send("Timed out waiting for a response. Please click the button again to restart the form using the button in #recruitform_requests channel.")
+                        return
+                    if not content:
+                        await dm.send("Answer was empty again. Cancelling - please restart the form using the button in #recruitform_requests channel.")
+                        return
+
+                answers.append(content)
+
+            # Always post a NEW message; do not update prior ones
             await self.post_answers(user, answers)
+            await dm.send(
+            "Thank you! Your answers are now in the #recruitform-responses channel!\n\n"
+            "**If you have not done so already, your next and final step of the induction process is to"
+            "change your T17 in-game name on Hell Let Loose and post it in #team-17-names channel.** \n\n" 
+            "Your new name must include 'Pte' at the start with the # numbers that show in-game immediately"
+            "after you've changed your name, e.g. Pte Mike#6869. If you're struggling check out the induction"
+            "video or ask one of our officers!"
+            )
+            
         except Exception as e:
-            print(f"Error in DM form: {e}")
+            print(f"Error in DM form with {user}: {e}")
             try:
                 await dm.send("An error occurred while processing your form, please try again the same way you did previously.")
             except Exception:
                 pass
+        finally:
+            # Ensure we clear the session only if this task is the active one
+            active = self._sessions.get(user.id)
+            if active is asyncio.current_task():
+                self._sessions.pop(user.id, None)
 
     async def post_answers(self, user, answers):
-        """Posts the answers to the designated channel."""
+        """Posts the answers to the designated channel as a NEW embed every time."""
         channel = self.bot.get_channel(ANSWER_POST_CHANNEL_ID)
-        if channel:
-            embed = discord.Embed(
-                title="New Recruit Form",
-                description=f"User: {user.mention}\nNickname: {user.display_name}",
-                color=discord.Color.green()
-            )
-            for idx, (q, a) in enumerate(zip(QUESTIONS, answers), 1):
-                # If this is the age question, check if the answer is an integer between 0 and 18
-                if idx == 2:  # Age question is second in the list
-                    try:
-                        age = int(a)
-                        if 0 <= age < 18:
-                            a = f"{a} 🚩"
-                    except ValueError:
-                        pass  # Non-integer answer, do not flag
-                embed.add_field(name=f"Q{idx}: {q}", value=f"A: {a}", inline=False)
-            message = await channel.send(embed=embed)
-            # Save the embed message info for nickname updates
-            self.save_embed_message(user.id, channel.id, message.id)
-        else:
+        if not channel:
             print(f"Answer post channel ID {ANSWER_POST_CHANNEL_ID} not found.")
+            return
+
+        embed = discord.Embed(
+            title="New Recruit Form",
+            description=f"User: {user.mention}\nNickname: {user.display_name}",
+            color=discord.Color.green()
+        )
+        for idx, (q, a) in enumerate(zip(QUESTIONS, answers), 1):
+            # If this is the age question, flag < 18
+            if idx == 2:
+                try:
+                    age = int(a)
+                    if 0 <= age < 18:
+                        a = f"{a} 🚩"
+                except ValueError:
+                    pass
+            value = f"A: {a}" if a else "A: (no response)"
+            embed.add_field(name=f"Q{idx}: {q}", value=value, inline=False)
+
+        message = await channel.send(embed=embed)
+        # Record this submission so we can update nicknames across all of a user's posts later
+        self.save_embed_message(user.id, channel.id, message.id)
 
     @commands.Cog.listener()
     async def on_member_update(self, before, after):
+        # Update Nickname in ALL of the user's posted embeds
         if before.nick != after.nick:
-            channel_id, message_id = self.get_embed_message(after.id)
-            if channel_id and message_id:
-                channel = self.bot.get_channel(channel_id)
-                if channel:
-                    try:
-                        message = await channel.fetch_message(message_id)
-                        if message.embeds:
-                            embed = message.embeds[0]
-                            # Update Nickname in the embed description
-                            embed.description = f"User: {after.mention}\nNickname: {after.display_name}"
-                            await message.edit(embed=embed)
-                    except Exception as e:
-                        print(f"Failed to update nickname in embed: {e}")
+            refs = self.get_embed_messages(after.id)
+            if not refs:
+                return
+            for channel_id, message_id in refs:
+                try:
+                    channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)
+                    message = await channel.fetch_message(message_id)
+                    if not message or not message.embeds:
+                        continue
+                    embed = message.embeds[0]
+                    embed.description = f"User: {after.mention}\nNickname: {after.display_name}"
+                    await message.edit(embed=embed)
+                except Exception as e:
+                    # Skip missing/deleted messages quietly
+                    print(f"Failed to update nickname in embed {message_id} for user {after.id}: {e}")
 
 class RecruitButtonView(discord.ui.View):
-    def __init__(self, cog):
+    def __init__(self, cog: RecruitFormCog):
         super().__init__(timeout=None)
         self.cog = cog
 
@@ -153,10 +260,26 @@ class RecruitButtonView(discord.ui.View):
         ):
             await interaction.response.send_message("Wrong channel or message.", ephemeral=True)
             return
+
+        user_id = interaction.user.id
+
+        # Prevent concurrent sessions (stops double-click duplicates)
+        existing = self.cog._sessions.get(user_id)
+        if existing and not existing.done():
+            await interaction.response.send_message(
+                "You already have a form in progress in your DMs. Please complete it or wait for it to time out.",
+                ephemeral=True
+            )
+            return
+
+        # Register session BEFORE any await to avoid race conditions
+        task = asyncio.create_task(self.cog.start_form(interaction.user))
+        self.cog._sessions[user_id] = task
+
         await interaction.response.send_message(
-            "Check your DMs for the recruitment form!", ephemeral=True
+            "Check your DMs for the recruitment form!",
+            ephemeral=True
         )
-        await self.cog.start_form(interaction.user)
 
 async def setup(bot):
     await bot.add_cog(RecruitFormCog(bot))
