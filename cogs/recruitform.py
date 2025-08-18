@@ -12,7 +12,7 @@ QUESTIONS = [
     "**What is your current T17 username?**",
     "**What is your Age? (as a number/integer)**",
     "**What is your country of residence?**",
-    "**What is your timezone?**"
+    "**What is your timezone?**",
     "**What is your Hell Let Loose in-game level?**",
     "**What is your Discord username?**",
     "**How did you find us?**",
@@ -135,12 +135,12 @@ class RecruitFormCog(commands.Cog):
 
         try:
             await dm.send(
-                "**Welcome to 7DR Hell Let Loose Console Clan!**\n"
-                "Filling in this form is 1️⃣ of 3️⃣ short steps to joining us!"
+                "**Welcome to 7DR Hell Let Loose Console Clan!**\n\n"
+                "Filling in this form is one of three short steps to joining us!"
                 "- If you're on mobile, you may need to close the command panel to see the chat by clicking" 
                 " the speech button to the right in order to open the text input to this DM.\n\n"
                 "- You can type 'cancel' at any time to abort and you can restart by clicking the 'start application' button in" 
-                " in #recruitform_requests channel. The form will time-out after 5 minutes\n\n"
+                " in #recruitform_requests channel. This form will time-out after 5 minutes. \n\n"
                 "- By completing this form, you agree to follow the #rules, be apositive member of the unit and attend our events 1-2 times per week .\n\n"
                 "Please answer the following questions one by one:\n\n"
             )
