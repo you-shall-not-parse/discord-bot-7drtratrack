@@ -181,10 +181,10 @@ class RecruitFormCog(commands.Cog):
             await dm.send(
             "Thank you! Your answers are now in the #recruitform-responses channel!\n\n"
             "**If you have not done so already, your next and final step of the induction process is to"
-            "change your T17 in-game name on Hell Let Loose and post it in #team-17-names channel.** \n\n" 
+            " change your T17 in-game name on Hell Let Loose and post it in #team-17-names channel.** \n\n" 
             "Your new name must include 'Pte' at the start with the # numbers that show in-game immediately"
-            "after you've changed your name, e.g. Pte Mike#6869. If you're struggling check out the induction"
-            "video or ask one of our officers!"
+            " after you've changed your name, e.g. Pte Mike#6869. If you're struggling check out the induction"
+            " video or ask one of our officers!"
             )
             
         except Exception as e:
