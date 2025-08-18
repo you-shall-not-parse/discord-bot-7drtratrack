@@ -110,9 +110,9 @@ class RecruitFormCog(commands.Cog):
             print(f"Channel ID {FORM_CHANNEL_ID} not found.")
             return
         embed = discord.Embed(
-            title="7DR Recruitment Form",
+            title="7DR Recruit Form",
             description=(
-                "We need this info to get you all set up with a platoon.\n"
+                "We need this info to get you all set up!.\n"
                 "In completing this form I agree to be an active member of this unit," 
                 " positively contributing to the discord server chats, taking part in training"
                 "sessions 1-2 times per week and regularly attending events. \n\n I understand"
@@ -135,12 +135,13 @@ class RecruitFormCog(commands.Cog):
 
         try:
             await dm.send(
-                "**Welcome! to 7DR HLL Console Clan**\n"
+                "**Welcome to 7DR Hell Let Loose Console Clan!**\n"
+                "Filling in this form is 1️⃣ of 3️⃣ short steps to joining us!"
                 "- If you're on mobile, you may need to close the command panel to see the chat by clicking" 
                 " the speech button to the right in order to open the text input to this DM.\n\n"
-                "- You can type 'cancel' at any time to abort and you can restart by clicking the button again" 
-                " in #recruitform_requests channel.\n\n"
-                "- By completing this form, you agree to be an active, positive member of the unit.\n\n"
+                "- You can type 'cancel' at any time to abort and you can restart by clicking the 'start application' button in" 
+                " in #recruitform_requests channel. The form will time-out after 5 minutes\n\n"
+                "- By completing this form, you agree to follow the #rules, be apositive member of the unit and attend our events 1-2 times per week .\n\n"
                 "Please answer the following questions one by one:\n\n"
             )
 
@@ -152,7 +153,7 @@ class RecruitFormCog(commands.Cog):
                     return m.author == user and m.channel == dm
 
                 try:
-                    msg = await self.bot.wait_for('message', check=check, timeout=120)
+                    msg = await self.bot.wait_for('message', check=check, timeout=300)
                 except asyncio.TimeoutError:
                     await dm.send("Timed out waiting for a response. Please click the button again to restart the form.")
                     return
@@ -179,14 +180,19 @@ class RecruitFormCog(commands.Cog):
             # Always post a NEW message; do not update prior ones
             await self.post_answers(user, answers)
             await dm.send(
-            "Thank you! Your answers are now in the #recruitform-responses channel!\n\n"
-            "**If you have not done so already, your next and final step of the induction process is to"
-            " change your T17 in-game name on Hell Let Loose and post it in #team-17-names channel.** \n\n" 
-            "Your new name must include 'Pte' at the start with the # numbers that show in-game immediately"
+            "Thank you! Your answers are now in the #recruitform-responses channel! ✅\n\n"
+            "2️⃣ If you have not done so already, your next step of the induction process is to"
+            " change your T17 in-game name on Hell Let Loose and post it in <#1098665953706909848> channel.** \n\n" 
+            "Your new name must include 'Pte' at the start with the # numbers that show in-game"
             " after you've changed your name, e.g. Pte Mike#6869. If you're struggling check out the induction"
-            " video or ask one of our officers!"
+            " video or ask one of our officers! \n\n 
+            "3️⃣ Then add your 7DR clan tags on the in-game options menu and you're all set! 🥳 \n\n"
+            "🙋‍♂️We have a [video](https://discord.com/channels/1097913605082579024/1365651347415896125/1368867993118834779) which can guide you through all of the above.\n\n"
+            "Discord can be daunting... we have some [tutorial videos](https://discord.com/channels/1097913605082579024/1388800592549511269) to help!/n/n"
+            "😲 We also have <#1099248200776421406> channel for you to add your own discord roles for in game rank, etc"
             )
-            
+
+
         except Exception as e:
             print(f"Error in DM form with {user}: {e}")
             try:
