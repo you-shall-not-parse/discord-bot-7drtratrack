@@ -185,7 +185,7 @@ class RecruitFormCog(commands.Cog):
             " change your T17 in-game name on Hell Let Loose and post it in <#1098665953706909848> channel.** \n\n" 
             "Your new name must include 'Pte' at the start with the # numbers that show in-game"
             " after you've changed your name, e.g. Pte Mike#6869. If you're struggling check out the induction"
-            " video or ask one of our officers! \n\n 
+            " video or ask one of our officers! \n\n"
             "3️⃣ Then add your 7DR clan tags on the in-game options menu and you're all set! 🥳 \n\n"
             "🙋‍♂️We have a [video](https://discord.com/channels/1097913605082579024/1365651347415896125/1368867993118834779) which can guide you through all of the above.\n\n"
             "Discord can be daunting... we have some [tutorial videos](https://discord.com/channels/1097913605082579024/1388800592549511269) to help!/n/n"
