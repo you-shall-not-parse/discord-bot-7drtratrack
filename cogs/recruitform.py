@@ -114,10 +114,10 @@ class RecruitFormCog(commands.Cog):
             description=(
                 "We need this info to get you all set up with a platoon.\n"
                 "In completing this form I agree to be an active member of this unit," 
-                "positively contributing to the discord server chats, taking part in training"
+                " positively contributing to the discord server chats, taking part in training"
                 "sessions 1-2 times per week and regularly attending events. \n\n I understand"
-                "if I don't positively contribute and stop communicating with my platoon," 
-                "I will be removed from the unit.\n\n **Click the button below to start your application**"
+                " if I don't positively contribute and stop communicating with my platoon," 
+                " I will be removed from the unit.\n\n **Click the button below to start your application**"
             ),
             color=discord.Color.blue()
         )
