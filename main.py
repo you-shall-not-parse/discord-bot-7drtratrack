@@ -24,6 +24,15 @@ async def on_ready():
     logging.info(f"Logged in as {bot.user} (ID: {bot.user.id})")
     logging.info("------")
     print(f"Bot is ready! Logged in as {bot.user} (ID: {bot.user.id})")
+    
+    # Sync slash commands with Discord
+    try:
+        synced = await bot.tree.sync()
+        logging.info(f"Synced {len(synced)} slash commands")
+        print(f"Synced {len(synced)} slash commands")
+    except Exception as e:
+        logging.error(f"Failed to sync commands: {e}")
+        print(f"Failed to sync commands: {e}")
 
 # Only process commands in guild channels, NOT in DMs
 @bot.event
