@@ -3,6 +3,7 @@ from discord import app_commands
 from discord.ext import commands
 import json
 import os
+from typing import Optional
 
 DATA_FOLDER = "data"
 POSTS_FILE = os.path.join(DATA_FOLDER, "squadup_posts.json")
@@ -213,7 +214,11 @@ class SquadUp(commands.Cog):
         return any(role.name in allowed_roles for role in member.roles)
 
     def build_embed(self, post_data):
-        embed = discord.Embed(title=post_data["title"], color=discord.Color.green())
+        embed = discord.Embed(
+            title=post_data["title"],
+            description=(post_data.get("description") or None),
+            color=discord.Color.green()
+        )
         if post_data.get("multi"):
             for squad, members in post_data["squads"].items():
                 names = [f"<@{uid}>" for uid in members]
@@ -250,7 +255,10 @@ class SquadUp(commands.Cog):
         await interaction.response.send_message("✅ SquadUp post created.", ephemeral=True)
 
     @app_commands.command(name="squadupmulti", description="Create multi-squad signup")
-    async def squadupmulti(self, interaction: discord.Interaction, title: str, number_of_squads: int, players_per_squad: int = 6):
+    @app_commands.describe(
+        details="Optional text shown under the title"
+    )
+    async def squadupmulti(self, interaction: discord.Interaction, title: str, number_of_squads: int, players_per_squad: int = 6, details: Optional[str] = None):
         if not self.user_has_allowed_role(interaction.user):
             return await interaction.response.send_message("❌ You do not have permission.", ephemeral=True)
 
@@ -263,7 +271,8 @@ class SquadUp(commands.Cog):
             "multi": True,
             "squads": squads,
             "max_per_squad": players_per_squad,
-            "closed": False
+            "closed": False,
+            "description": details or ""
         }
 
         embed = self.build_embed(post_data)
@@ -275,27 +284,38 @@ class SquadUp(commands.Cog):
         save_json(POSTS_FILE, self.posts_data)
         await interaction.response.send_message("✅ Multi-squad post created.", ephemeral=True)
 
-    @app_commands.command(name="crewup", description="Create tank crew signups with 3-person crews for Light/Medium/Heavy tanks")
+    @app_commands.command(name="crewup", description="Create tank crew signups with 3-person crews for Light/Medium/Heavy/NoSize tanks")
+    @app_commands.describe(
+        anysize="Number of tanks of any size (each has 3 slots)",
+        lights="Number of light tanks (each has 3 slots)",
+        mediums="Number of medium tanks (each has 3 slots)",
+        heavies="Number of heavy tanks (each has 3 slots)",
+        details="Optional text shown under the title"
+    )
     async def crewup(
         self,
         interaction: discord.Interaction,
         title: str,
+        anysize: app_commands.Range[int, 0, 23] = 0,
         lights: app_commands.Range[int, 0, 23] = 0,
         mediums: app_commands.Range[int, 0, 23] = 0,
-        heavies: app_commands.Range[int, 0, 23] = 0
+        heavies: app_commands.Range[int, 0, 23] = 0,
+        details: Optional[str] = None
     ):
         if not self.user_has_allowed_role(interaction.user):
             return await interaction.response.send_message("❌ You do not have permission.", ephemeral=True)
 
-        total_squads = int(lights) + int(mediums) + int(heavies)
+        total_squads = int(anysize) + int(lights) + int(mediums) + int(heavies)
         if total_squads == 0:
-            return await interaction.response.send_message("Please specify at least one tank (light, medium, or heavy).", ephemeral=True)
+            return await interaction.response.send_message("Please specify at least one tank (anysize, light, medium, or heavy).", ephemeral=True)
 
         # Discord allows at most 25 components per message. We use +2 for Remove/Close buttons.
         if total_squads > 23:
             return await interaction.response.send_message("Too many tanks. Please keep the total number of tanks at 23 or fewer.", ephemeral=True)
 
         squad_names = []
+        for i in range(1, anysize + 1):
+            squad_names.append(f"anysize {i}")
         for i in range(1, lights + 1):
             squad_names.append(f"Light {i}")
         for i in range(1, mediums + 1):
@@ -311,7 +331,8 @@ class SquadUp(commands.Cog):
             "multi": True,
             "squads": squads,
             "max_per_squad": 3,  # three people max in all tanks
-            "closed": False
+            "closed": False,
+            "description": details or ""
         }
 
         embed = self.build_embed(post_data)
