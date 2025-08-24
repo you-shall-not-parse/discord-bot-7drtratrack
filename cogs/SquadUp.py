@@ -36,6 +36,11 @@ def save_json(path, data):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)
 
+def is_role_based(post: dict) -> bool:
+    return post.get("role_based", False) or (
+        post.get("multi") and post.get("squads") and isinstance(next(iter(post["squads"].values())), dict)
+    )
+
 class JoinButton(discord.ui.Button):
     def __init__(self):
         super().__init__(label="Join", style=discord.ButtonStyle.success, custom_id="squadup_join")
@@ -105,9 +110,17 @@ class RemoveMeButton(discord.ui.Button):
         user_id = interaction.user.id
 
         if post.get("multi", False):
-            for sq in post.get("squads", {}):
-                if user_id in post["squads"][sq]:
-                    post["squads"][sq].remove(user_id)
+            if is_role_based(post):
+                # Remove user from any role in any tank
+                for sq in post.get("squads", {}):
+                    roles = post["squads"][sq]
+                    for role_name, uid in list(roles.items()):
+                        if uid == user_id:
+                            roles[role_name] = None
+            else:
+                for sq in post.get("squads", {}):
+                    if user_id in post["squads"][sq]:
+                        post["squads"][sq].remove(user_id)
         else:
             for k in ["yes", "maybe"]:
                 if user_id in post[k]:
@@ -118,6 +131,72 @@ class RemoveMeButton(discord.ui.Button):
         embed = view.bot.get_cog("SquadUp").build_embed(post)
         await interaction.message.edit(embed=embed, view=view)
         await interaction.response.send_message("You have been removed from the signup.", ephemeral=True)
+
+class RoleSelect(discord.ui.Select):
+    def __init__(self, message_id: int, squad_name: str):
+        options = [
+            discord.SelectOption(label="TC", description="Tank Commander"),
+            discord.SelectOption(label="Gunner"),
+            discord.SelectOption(label="Driver"),
+        ]
+        super().__init__(placeholder=f"Select role for {squad_name}", min_values=1, max_values=1, options=options, custom_id=f"squadup_role_select_{squad_name}")
+        self.message_id = message_id
+        self.squad_name = squad_name
+
+    async def callback(self, interaction: discord.Interaction):
+        chosen_role = self.values[0]
+        data = ensure_file_exists(POSTS_FILE, {})
+        post = data.get(str(self.message_id))
+        if not post:
+            await interaction.response.send_message("Post not found.", ephemeral=True)
+            return
+        if post.get("closed", False):
+            await interaction.response.send_message("Signups are closed.", ephemeral=True)
+            return
+        if not is_role_based(post):
+            await interaction.response.send_message("This post does not support role selection.", ephemeral=True)
+            return
+
+        user_id = interaction.user.id
+        squads = post["squads"]
+
+        # Remove user from any role in any squad
+        for sq_name, roles in squads.items():
+            for role_name, uid in list(roles.items()):
+                if uid == user_id:
+                    roles[role_name] = None
+
+        # Try to claim the chosen role in the selected squad
+        target_roles = squads.get(self.squad_name)
+        if target_roles is None:
+            await interaction.response.send_message("Squad not found.", ephemeral=True)
+            return
+
+        if target_roles.get(chosen_role) in (None, user_id):
+            target_roles[chosen_role] = user_id
+            data[str(self.message_id)] = post
+            save_json(POSTS_FILE, data)
+
+            # Update the original signup message's embed
+            cog = interaction.client.get_cog("SquadUp")
+            embed = cog.build_embed(post) if cog else None
+            try:
+                original_msg = await interaction.channel.fetch_message(self.message_id)
+                if embed:
+                    await original_msg.edit(embed=embed)
+            except Exception:
+                pass
+
+            await interaction.response.send_message(f"You are now {chosen_role} in {self.squad_name}.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"{chosen_role} in {self.squad_name} is already taken.", ephemeral=True)
+
+class RoleSelectView(discord.ui.View):
+    def __init__(self, message_id: int, squad_name: str):
+        super().__init__(timeout=60)
+        self.message_id = message_id
+        self.squad_name = squad_name
+        self.add_item(RoleSelect(message_id, squad_name))
 
 class SquadButton(discord.ui.Button):
     def __init__(self, squad_name):
@@ -130,6 +209,12 @@ class SquadButton(discord.ui.Button):
         post = data.get(str(view.message_id))
         if not post or post.get("closed", False):
             await interaction.response.send_message("Signups are closed or not found.", ephemeral=True)
+            return
+
+        # If this is a role-based crewup, open role selection instead of direct join
+        if is_role_based(post):
+            sel_view = RoleSelectView(view.message_id, self.squad_name)
+            await interaction.response.send_message(f"Choose your role in {self.squad_name}:", view=sel_view, ephemeral=True)
             return
 
         user_id = interaction.user.id
@@ -220,9 +305,25 @@ class SquadUp(commands.Cog):
             color=discord.Color.green()
         )
         if post_data.get("multi"):
-            for squad, members in post_data["squads"].items():
-                names = [f"<@{uid}>" for uid in members]
-                embed.add_field(name=f"{squad} ({len(members)}/{post_data['max_per_squad']})", value="\n".join(names) or "—", inline=True)
+            # multi-mode: could be list-based or role-based
+            if is_role_based(post_data):
+                for squad, roles in post_data["squads"].items():
+                    role_lines = []
+                    filled = 0
+                    for r in ["TC", "Gunner", "Driver"]:
+                        uid = roles.get(r)
+                        if uid:
+                            filled += 1
+                        role_lines.append(f"{r}: {f'<@{uid}>' if uid else '—'}")
+                    embed.add_field(
+                        name=f"{squad} ({filled}/3)",
+                        value="\n".join(role_lines),
+                        inline=True
+                    )
+            else:
+                for squad, members in post_data["squads"].items():
+                    names = [f"<@{uid}>" for uid in members]
+                    embed.add_field(name=f"{squad} ({len(members)}/{post_data['max_per_squad']})", value="\n".join(names) or "—", inline=True)
         else:
             for status in ["yes", "maybe"]:
                 members = [f"<@{uid}>" for uid in post_data.get(status, [])]
@@ -284,7 +385,7 @@ class SquadUp(commands.Cog):
         save_json(POSTS_FILE, self.posts_data)
         await interaction.response.send_message("✅ Multi-squad post created.", ephemeral=True)
 
-    @app_commands.command(name="crewup", description="Create tank crew signups with 3-person crews for Light/Medium/Heavy/NoSize tanks")
+    @app_commands.command(name="crewup", description="Create tank crew signups where each tank has TC, Gunner, and Driver roles")
     @app_commands.describe(
         anysize="Number of tanks of any size (each has 3 slots)",
         lights="Number of light tanks (each has 3 slots)",
@@ -323,16 +424,18 @@ class SquadUp(commands.Cog):
         for i in range(1, heavies + 1):
             squad_names.append(f"Heavy {i}")
 
-        squads = {name: [] for name in squad_names}
+        # Initialize role-based squads
+        squads = {name: {"TC": None, "Gunner": None, "Driver": None} for name in squad_names}
 
         post_data = {
             "title": title,
             "op_id": interaction.user.id,
             "multi": True,
-            "squads": squads,
-            "max_per_squad": 3,  # three people max in all tanks
+            "squads": squads,  # role-based structure
+            "max_per_squad": 3,  # still useful for display/back-compat
             "closed": False,
-            "description": details or ""
+            "description": details or "",
+            "role_based": True
         }
 
         embed = self.build_embed(post_data)
