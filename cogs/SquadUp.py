@@ -387,7 +387,7 @@ class SquadUp(commands.Cog):
 
     @app_commands.command(name="crewup", description="Create tank crew signups where each tank has TC, Gunner, and Driver roles")
     @app_commands.describe(
-        Anysize="Number of tanks of any size (each has 3 slots)",
+        anysize="Number of tanks of any size (each has 3 slots)",
         lights="Number of light tanks (each has 3 slots)",
         mediums="Number of medium tanks (each has 3 slots)",
         heavies="Number of heavy tanks (each has 3 slots)",
@@ -397,7 +397,7 @@ class SquadUp(commands.Cog):
         self,
         interaction: discord.Interaction,
         title: str,
-        Anysize: app_commands.Range[int, 0, 23] = 0,
+        anysize: app_commands.Range[int, 0, 23] = 0,
         lights: app_commands.Range[int, 0, 23] = 0,
         mediums: app_commands.Range[int, 0, 23] = 0,
         heavies: app_commands.Range[int, 0, 23] = 0,
@@ -406,17 +406,17 @@ class SquadUp(commands.Cog):
         if not self.user_has_allowed_role(interaction.user):
             return await interaction.response.send_message("❌ You do not have permission.", ephemeral=True)
 
-        total_squads = int(Anysize) + int(lights) + int(mediums) + int(heavies)
+        total_squads = int(anysize) + int(lights) + int(mediums) + int(heavies)
         if total_squads == 0:
-            return await interaction.response.send_message("Please specify at least one tank (Anysize, light, medium, or heavy).", ephemeral=True)
+            return await interaction.response.send_message("Please specify at least one tank (anysize, light, medium, or heavy).", ephemeral=True)
 
         # Discord allows at most 25 components per message. We use +2 for Remove/Close buttons.
         if total_squads > 23:
             return await interaction.response.send_message("Too many tanks. Please keep the total number of tanks at 23 or fewer.", ephemeral=True)
 
         squad_names = []
-        for i in range(1, Anysize + 1):
-            squad_names.append(f"Anysize {i}")
+        for i in range(1, anysize + 1):
+            squad_names.append(f"Any Size {i}")
         for i in range(1, lights + 1):
             squad_names.append(f"Light {i}")
         for i in range(1, mediums + 1):
