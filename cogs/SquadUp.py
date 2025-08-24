@@ -193,7 +193,10 @@ class SquadUp(commands.Cog):
         self.bot = bot
         self.posts_data = ensure_file_exists(POSTS_FILE, {})
         self.config_data = ensure_file_exists(CONFIG_FILE, {"allowed_roles": ["Squad Leader", "Admin"], "default_squad_size": 6})
-        bot.loop.create_task(self._register_persistent_views())
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        await self._register_persistent_views()
 
     async def _register_persistent_views(self):
         await self.bot.wait_until_ready()

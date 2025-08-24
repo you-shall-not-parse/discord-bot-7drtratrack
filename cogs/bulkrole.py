@@ -169,15 +169,6 @@ class BulkRole(commands.Cog):
                     await send_embed(message.channel, "Confirm", "Please type `confirm` to save, or `cancel` to abort.", discord.Color.orange())
                 return
 
-    @commands.Cog.listener()
-    async def on_ready(self):
-        await self.bot.wait_until_ready()
-        try:
-            synced = await self.bot.tree.sync()
-            logging.info(f"Synced {len(synced)} commands")
-        except Exception as e:
-            logging.error(f"Failed to sync commands: {e}")
-
     async def preset_autocomplete(self, interaction: discord.Interaction, current: str):
         presets = load_presets()
         return [
