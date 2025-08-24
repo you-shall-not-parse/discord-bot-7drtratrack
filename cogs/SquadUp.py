@@ -275,5 +275,53 @@ class SquadUp(commands.Cog):
         save_json(POSTS_FILE, self.posts_data)
         await interaction.response.send_message("✅ Multi-squad post created.", ephemeral=True)
 
+    @app_commands.command(name="crewup", description="Create tank crew signups with 3-person crews for Light/Medium/Heavy tanks")
+    async def crewup(
+        self,
+        interaction: discord.Interaction,
+        title: str,
+        lights: app_commands.Range[int, 0, 23] = 0,
+        mediums: app_commands.Range[int, 0, 23] = 0,
+        heavies: app_commands.Range[int, 0, 23] = 0
+    ):
+        if not self.user_has_allowed_role(interaction.user):
+            return await interaction.response.send_message("❌ You do not have permission.", ephemeral=True)
+
+        total_squads = int(lights) + int(mediums) + int(heavies)
+        if total_squads == 0:
+            return await interaction.response.send_message("Please specify at least one tank (light, medium, or heavy).", ephemeral=True)
+
+        # Discord allows at most 25 components per message. We use +2 for Remove/Close buttons.
+        if total_squads > 23:
+            return await interaction.response.send_message("Too many tanks. Please keep the total number of tanks at 23 or fewer.", ephemeral=True)
+
+        squad_names = []
+        for i in range(1, lights + 1):
+            squad_names.append(f"Light {i}")
+        for i in range(1, mediums + 1):
+            squad_names.append(f"Medium {i}")
+        for i in range(1, heavies + 1):
+            squad_names.append(f"Heavy {i}")
+
+        squads = {name: [] for name in squad_names}
+
+        post_data = {
+            "title": title,
+            "op_id": interaction.user.id,
+            "multi": True,
+            "squads": squads,
+            "max_per_squad": 3,  # three people max in all tanks
+            "closed": False
+        }
+
+        embed = self.build_embed(post_data)
+        view = SquadSignupView(self.bot, None, interaction.user.id, multi=True, squad_names=squad_names)
+        message = await interaction.channel.send(embed=embed, view=view)
+        view.message_id = message.id
+
+        self.posts_data[str(message.id)] = post_data
+        save_json(POSTS_FILE, self.posts_data)
+        await interaction.response.send_message("✅ CrewUp post created.", ephemeral=True)
+
 async def setup(bot):
     await bot.add_cog(SquadUp(bot))
