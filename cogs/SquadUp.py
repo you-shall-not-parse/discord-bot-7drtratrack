@@ -17,6 +17,14 @@ NATO_SQUAD_NAMES = [
     "Yankee", "Zulu"
 ]
 
+# Creative base names for "Any Size" tanks. We append an index (e.g., "Big Boi 1", "Zoomer 3").
+ANYSIZE_CREATIVE_NAMES = [
+    "Big Boi", "Keith", "Big Chonker", "Autism Box", "Box of Mysteries", "Fuck Box",
+    "Royston", "Badger", "Bandit", "Maverick", "Kevin", "Rogue",
+    "Vanguard", "Warthog", "Coyote", "Mickey the Sticky", "Brawler", "Ghost",
+    "Rascal", "Goblin", "Mongoose", "Thumper", "Spitfire", "Bulldog", "Viper"
+]
+
 def ensure_file_exists(path, default_data):
     if not os.path.exists(DATA_FOLDER):
         os.makedirs(DATA_FOLDER)
@@ -415,8 +423,12 @@ class SquadUp(commands.Cog):
             return await interaction.response.send_message("Too many tanks. Please keep the total number of tanks at 23 or fewer.", ephemeral=True)
 
         squad_names = []
-        for i in range(1, anysize + 1):
-            squad_names.append(f"Any Size {i}")
+        # Use creative names for "Any Size" tanks, cycling through the list and incrementing an index as needed.
+        for idx in range(anysize):
+            base = ANYSIZE_CREATIVE_NAMES[idx % len(ANYSIZE_CREATIVE_NAMES)]
+            number = (idx // len(ANYSIZE_CREATIVE_NAMES)) + 1
+            squad_names.append(f"{base} {number}")
+
         for i in range(1, lights + 1):
             squad_names.append(f"Light {i}")
         for i in range(1, mediums + 1):
