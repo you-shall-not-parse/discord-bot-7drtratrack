@@ -10,8 +10,8 @@ import os
 EVENTS_FILE = "events.json"
 TIMEZONE = pytz.timezone("Europe/London")
 CALENDAR_MANAGER_ROLES = ["Admininstration", "7DR-SNCO", "Fight Arrangeer"]
-CALENDAR_CHANNEL_ID = 123456789012345678  # Your calendar channel ID
-GUILD_ID = 987654321098765432  # Your guild/server ID
+CALENDAR_CHANNEL_ID = 1332736267485708419  # Your calendar channel ID
+GUILD_ID = 1097913605082579024  # Your guild/server ID
 
 # ---------------- Utility ----------------
 def has_calendar_permission(member: discord.Member) -> bool:
