@@ -530,4 +530,4 @@ class Calendar(commands.GroupCog, name="calendar"):
 
 # ---------------- Extension setup ----------------
 def setup(bot: commands.Bot):
-    bot.add_cog(Calendar(bot))
+    bot.add_cog(CalendarCog(bot))
