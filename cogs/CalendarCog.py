@@ -110,7 +110,7 @@ def event_to_str(event: dict) -> str:
     
     # Add recurring indicator if applicable
     if event.get("recurring", False):
-        msg += " _(2 week rolling/recurring)_"
+        msg += " (2 week rolling recurring event!)"
     
     msg += "\n"
     
