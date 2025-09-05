@@ -22,6 +22,7 @@ QUESTIONS = [
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "nickname.db")
 
+
 class RecruitFormCog(commands.Cog):
 
     def __init__(self, bot):
@@ -30,6 +31,8 @@ class RecruitFormCog(commands.Cog):
         self.db_setup()
         # Track active per-user form sessions (user_id -> asyncio.Task)
         self._sessions: dict[int, asyncio.Task] = {}
+        # Prevent posting duplicate embed on reconnects
+        self._startup_done = False
 
     def db_setup(self):
         """Ensure the DB supports multiple submissions per user, migrate if needed."""
@@ -103,73 +106,85 @@ class RecruitFormCog(commands.Cog):
         return results or []
 
     async def delete_previous_form_embeds(self):
-        """Delete previous recruitment form embeds posted by the bot in FORM_CHANNEL_ID."""
-        channel = self.bot.get_channel(FORM_CHANNEL_ID)
-        if not channel:
-            print(f"Channel ID {FORM_CHANNEL_ID} not found for deletion.")
+        """
+        Delete previous recruitment form embeds posted by the bot in FORM_CHANNEL_ID.
+        This runs at startup so the channel only contains the single current recruitment embed.
+        """
+        try:
+            channel = self.bot.get_channel(FORM_CHANNEL_ID)
+            if channel is None:
+                # Try fetching if not in cache
+                channel = await self.bot.fetch_channel(FORM_CHANNEL_ID)
+        except Exception as e:
+            print(f"Could not access form channel {FORM_CHANNEL_ID}: {e}")
             return
 
-        # Fetch recent messages in the channel (limit can be adjusted)
-        async for message in channel.history(limit=20):
-            # Only delete messages sent by the bot that have an embed with the expected title
-            if (
-                message.author.id == self.bot.user.id and
-                message.embeds and
-                message.embeds[0].title == "7DR Recruit Form"
-            ):
-                try:
-                    await message.delete()
-                    print(f"Deleted previous recruit form embed: {message.id}")
-                except Exception as e:
-                    print(f"Failed to delete message {message.id}: {e}")
+        try:
+            # Inspect recent history and remove older bot-posted form embeds.
+            # Increase limit if your channel is busy; adjust as needed.
+            async for message in channel.history(limit=200):
+                if message.author.id != (self.bot.user.id if self.bot.user else None):
+                    continue
+                if not message.embeds:
+                    continue
+                embed = message.embeds[0]
+                # Only delete embed messages that match the form title
+                if embed.title == "7DR Recruit Form":
+                    try:
+                        await message.delete()
+                        print(f"Deleted previous recruit form embed: {message.id}")
+                    except Exception as e:
+                        print(f"Failed to delete message {message.id}: {e}")
+        except Exception as e:
+            print(f"Failed to iterate history in channel {FORM_CHANNEL_ID}: {e}")
 
     @commands.Cog.listener()
     async def on_ready(self):
-        """Posts the recruitment embed with button when bot starts."""
-        await self.delete_previous_form_embeds()  # <--- Call deletion here
-
-        channel = self.bot.get_channel(FORM_CHANNEL_ID)
-        if not channel:
-            print(f"Channel ID {FORM_CHANNEL_ID} not found.")
+        """Posts the recruitment embed with button when bot starts. Runs once per session."""
+        # Avoid running multiple times on reconnects
+        if self._startup_done:
             return
+
+        # Remove prior form embeds so we only have a single current form message.
+        await self.delete_previous_form_embeds()
+
+        try:
+            channel = self.bot.get_channel(FORM_CHANNEL_ID)
+            if channel is None:
+                channel = await self.bot.fetch_channel(FORM_CHANNEL_ID)
+        except Exception as e:
+            print(f"Channel ID {FORM_CHANNEL_ID} not found: {e}")
+            return
+
         embed = discord.Embed(
             title="7DR Recruit Form",
             description=(
                 "We need this info to get you all set up! \n"
-                "In completing this form I agree to be an active member of this unit," 
+                "In completing this form I agree to be an active member of this unit,"
                 " positively contributing to the discord server chats, taking part in training"
-                "sessions 1-2 times per week and regularly attending events. \n\n I understand"
-                " if I don't positively contribute and stop communicating with my platoon," 
+                " sessions 1-2 times per week and regularly attending events. \n\n I understand"
+                " if I don't positively contribute and stop communicating with my platoon,"
                 " I will be removed from the unit.\n\n **Click the button below to start your application**"
             ),
             color=discord.Color.blue()
         )
+
         view = RecruitButtonView(self)
-        msg = await channel.send(embed=embed, view=view)
-        self.embed_message_id = msg.id
-    
-    @commands.Cog.listener()
-    async def on_ready(self):
-        """Posts the recruitment embed with button when bot starts."""
-        channel = self.bot.get_channel(FORM_CHANNEL_ID)
-        if not channel:
-            print(f"Channel ID {FORM_CHANNEL_ID} not found.")
-            return
-        embed = discord.Embed(
-            title="7DR Recruit Form",
-            description=(
-                "We need this info to get you all set up! \n"
-                "In completing this form I agree to be an active member of this unit," 
-                " positively contributing to the discord server chats, taking part in training"
-                "sessions 1-2 times per week and regularly attending events. \n\n I understand"
-                " if I don't positively contribute and stop communicating with my platoon," 
-                " I will be removed from the unit.\n\n **Click the button below to start your application**"
-            ),
-            color=discord.Color.blue()
-        )
-        view = RecruitButtonView(self)
-        msg = await channel.send(embed=embed, view=view)
-        self.embed_message_id = msg.id
+        # Register the view so interactions are handled even if the message is persistent
+        try:
+            # bot.add_view is synchronous
+            self.bot.add_view(view)
+        except Exception:
+            # Some older discord.py forks may not support add_view; ignore if not available
+            pass
+
+        try:
+            msg = await channel.send(embed=embed, view=view)
+            self.embed_message_id = msg.id
+            self._startup_done = True
+            print(f"Posted recruit form embed: {msg.id}")
+        except Exception as e:
+            print(f"Failed to send recruit form embed to channel {FORM_CHANNEL_ID}: {e}")
 
     async def start_form(self, user: discord.User):
         """Starts the form with the user in DMs."""
@@ -183,9 +198,9 @@ class RecruitFormCog(commands.Cog):
             await dm.send(
                 "**Welcome to 7DR Hell Let Loose Console Clan!**\n\n"
                 "Filling in this form is one of three short steps to joining us!"
-                "- If you're on mobile, you may need to close the command panel to see the chat by clicking" 
+                "- If you're on mobile, you may need to close the command panel to see the chat by clicking"
                 " the speech button to the right in order to open the text input to this DM.\n\n"
-                "- You can type 'cancel' at any time to abort and you can restart by clicking the 'start application' button" 
+                "- You can type 'cancel' at any time to abort and you can restart by clicking the 'start application' button"
                 " in <#1401634001248190515> channel. This form will time-out after 5 minutes. \n\n"
                 "- By completing this form, you agree to follow the rules, be a positive member of the unit and attend our events 1-2 times per week .\n\n"
                 "Please answer the following questions one by one:\n\n"
@@ -226,18 +241,17 @@ class RecruitFormCog(commands.Cog):
             # Always post a NEW message; do not update prior ones
             await self.post_answers(user, answers)
             await dm.send(
-            "Thank you! Your answers are now in the <#1098331019364552845> channel! ✅\n\n"
-            "2️⃣ If you have not done so already, your next step of the induction process is to"
-            " change your T17 in-game name on Hell Let Loose and post it in <#1098665953706909848> channel. \n\n" 
-            "Your new name must include 'Pte' at the start with the # numbers that show in-game"
-            " after you've changed your name, e.g. Pte Mike#6869. If you're struggling check out the induction"
-            " video or ask one of our officers! \n\n"
-            "3️⃣ Then add your 7DR clan tags on the in-game options menu and you're all set! 🥳 \n\n"
-            "🙋‍♂️We have a [video](https://discord.com/channels/1097913605082579024/1365651347415896125/1368867993118834779) which can guide you through all of the above.\n\n"
-            "Discord can be daunting... we have some [tutorial videos](https://discord.com/channels/1097913605082579024/1388800592549511269) to help! \n\n"
-            "😲 We also have <#1099248200776421406> channel for you to add your own discord roles for in game rank, etc"
+                "Thank you! Your answers are now in the <#1098331019364552845> channel! ✅\n\n"
+                "2️⃣ If you have not done so already, your next step of the induction process is to"
+                " change your T17 in-game name on Hell Let Loose and post it in <#1098665953706909848> channel. \n\n"
+                "Your new name must include 'Pte' at the start with the # numbers that show in-game"
+                " after you've changed your name, e.g. Pte Mike#6869. If you're struggling check out the induction"
+                " video or ask one of our officers! \n\n"
+                "3️⃣ Then add your 7DR clan tags on the in-game options menu and you're all set! 🥳 \n\n"
+                "🙋‍♂️We have a [video](https://discord.com/channels/1097913605082579024/1365651347415896125/1368867993118834779) which can guide you through all of the above.\n\n"
+                "Discord can be daunting... we have some [tutorial videos](https://discord.com/channels/1097913605082579024/1388800592549511269) to help! \n\n"
+                "😲 We also have <#1099248200776421406> channel for you to add your own discord roles for in game rank, etc"
             )
-
 
         except Exception as e:
             print(f"Error in DM form with {user}: {e}")
@@ -299,6 +313,7 @@ class RecruitFormCog(commands.Cog):
                     # Skip missing/deleted messages quietly
                     print(f"Failed to update nickname in embed {message_id} for user {after.id}: {e}")
 
+
 class RecruitButtonView(discord.ui.View):
     def __init__(self, cog: RecruitFormCog):
         super().__init__(timeout=None)
@@ -332,6 +347,7 @@ class RecruitButtonView(discord.ui.View):
             "Check your DMs for the recruitment form!",
             ephemeral=True
         )
+
 
 async def setup(bot):
     await bot.add_cog(RecruitFormCog(bot))
