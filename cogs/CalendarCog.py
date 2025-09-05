@@ -221,7 +221,7 @@ def build_calendar_embed(events: list) -> discord.Embed:
     # Add events with dates first
     for i, (year, month) in enumerate(sorted_months):
         # Add a blank line separator before each month header (except the first one)
-        if i > 0:
+    if i > 0:
         embed.add_field(name="\u200b", value="\u200b", inline=False)
         
         # Fancy decorated month header
