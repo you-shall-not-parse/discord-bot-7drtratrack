@@ -219,7 +219,7 @@ def build_calendar_embed(events: list) -> discord.Embed:
     # Add events with dates first
     for i, (year, month) in enumerate(sorted_months):
         # Fancy decorated month header
-        month_name = f"🗓️ **{calendar.month_name[month].upper()} {year}** 🗓️"
+        month_name = f"🗓️ **{calendar.month_name[month]} {year}** 🗓️"
         
         body = "\n\n".join(event_to_str(e) for e in month_groups[(year, month)])
         body = "\u200b\n" + body  # Add invisible character + newline for extra space
