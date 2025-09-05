@@ -6,8 +6,8 @@ from datetime import datetime, timedelta
 import pytz
 
 # ===== CONFIG =====
-CALENDAR_CHANNEL_ID = 123456789012345678  # <-- replace with your calendar channel ID
-ALLOWED_ROLES = ["Admin", "Event Manager"]  # roles that can add/edit/remove events
+CALENDAR_CHANNEL_ID = 1332736267485708419  # <-- replace with your calendar channel ID
+ALLOWED_ROLES = ["Administration", "Fight Arrangeer", "7DR-SNCO"]  # roles that can add/edit/remove events
 DATA_FILE = "events.json"
 TIMEZONE = pytz.timezone("Europe/London")  # UK time
 
