@@ -109,6 +109,18 @@ class RecruitFormCog(commands.Cog):
         if not channel:
             print(f"Channel ID {FORM_CHANNEL_ID} not found.")
             return
+        
+        # Delete any existing recruitment embeds posted by this bot
+        try:
+            async for message in channel.history(limit=50):
+                if (message.author == self.bot.user and 
+                    message.embeds and 
+                    message.embeds[0].title == "7DR Recruit Form"):
+                    await message.delete()
+                    print(f"Deleted previous recruitment embed (ID: {message.id})")
+        except Exception as e:
+            print(f"Error deleting previous recruitment embeds: {e}")
+        
         embed = discord.Embed(
             title="7DR Recruit Form",
             description=(
