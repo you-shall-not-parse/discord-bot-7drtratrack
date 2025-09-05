@@ -95,7 +95,6 @@ def set_message_id_for_guild(guild_id: int, message_id: Optional[int]) -> None:
 
 
 def event_to_str(event: dict) -> str:
-    dt = datetime.fromisoformat(event["date"]).astimezone(TIMEZONE)
     organiser = f"<@{event['organiser']}>" if event.get("organiser") else "Unknown"
     squad_maker = f"<@{event['squad_maker']}>" if event.get("squad_maker") else "None"
     description = event.get("description", "")
@@ -106,15 +105,19 @@ def event_to_str(event: dict) -> str:
         else "None"
     )
     
-    # Format date with DD/MM/YYYY
-    msg = (
-        f"📌 **{event['title']}**\n"
-        f"🗓️ {dt.strftime('%d/%m/%Y')}"
-    )
+    # Start building the message
+    msg = f"📌 **{event['title']}**\n"
     
-    # Add time if it exists (and is not midnight)
-    if dt.time() != time(0, 0):
-        msg += f", {dt.strftime('%H:%M %Z')}"
+    # Handle date display - show TBC if no date
+    if event.get("date") is None:
+        msg += "🗓️ TBC"
+    else:
+        dt = datetime.fromisoformat(event["date"]).astimezone(TIMEZONE)
+        msg += f"🗓️ {dt.strftime('%d/%m/%Y')}"
+        
+        # Add time if it exists (and is not midnight)
+        if dt.time() != time(0, 0):
+            msg += f", {dt.strftime('%H:%M %Z')}"
     
     msg += f"\n👤 Organiser: {organiser}"
     
@@ -135,7 +138,14 @@ def build_calendar_embed(events: list) -> discord.Embed:
 
     # Group upcoming events by (year, month) and sort
     month_groups: Dict[tuple[int, int], list] = {}
+    tbc_events = []  # Special group for events without dates
+    
     for e in events:
+        # Handle events with no date separately
+        if e.get("date") is None:
+            tbc_events.append(e)
+            continue
+            
         dt = datetime.fromisoformat(e["date"]).astimezone(TIMEZONE)
         if dt < now:
             continue
@@ -156,14 +166,20 @@ def build_calendar_embed(events: list) -> discord.Embed:
         timestamp=datetime.now(TIMEZONE),
     )
 
-    if not sorted_months:
+    if not sorted_months and not tbc_events:
         embed.description = "No events scheduled."
         return embed
 
+    # Add events with dates first
     for (year, month) in sorted_months:
         month_name = f"{calendar.month_name[month]} {year}"
         body = "\n\n".join(event_to_str(e) for e in month_groups[(year, month)])
         embed.add_field(name=month_name, value=body, inline=False)
+    
+    # Add TBC events last (at the bottom) if there are any
+    if tbc_events:
+        body = "\n\n".join(event_to_str(e) for e in tbc_events)
+        embed.add_field(name="Date TBC", value=body, inline=False)
 
     return embed
 
@@ -308,7 +324,7 @@ class CalendarCog(commands.Cog):
     @app_commands.describe(
         title="Event title",
         description="Optional description of the event",
-        date="Date in DD/MM/YYYY format",
+        date="Date in DD/MM/YYYY format (optional, 'TBC' if not provided)",
         time="Time in HH:MM format (24-hour, optional)",
         organiser="The event organiser",
         squad_maker="Squad maker (optional)",
@@ -318,8 +334,8 @@ class CalendarCog(commands.Cog):
         self,
         interaction: discord.Interaction,
         title: str,
-        date: str,
         organiser: discord.Member,
+        date: Optional[str] = None,
         description: Optional[str] = None,
         time: Optional[str] = None,
         squad_maker: Optional[discord.Member] = None,
@@ -331,33 +347,37 @@ class CalendarCog(commands.Cog):
             )
             return
 
-        # Parse date
-        event_date = parse_date(date)
-        if not event_date:
-            await interaction.response.send_message(
-                "❌ Invalid date format. Use DD/MM/YYYY.", ephemeral=True
-            )
-            return
-
-        # Parse time if provided
-        if time:
-            event_time = parse_time(time)
-            if not event_time:
+        # Initialize event with date as None (TBC)
+        event_date = None
+            
+        # Parse date if provided
+        if date:
+            event_date = parse_date(date)
+            if not event_date:
                 await interaction.response.send_message(
-                    "❌ Invalid time format. Use HH:MM (24-hour).", ephemeral=True
+                    "❌ Invalid date format. Use DD/MM/YYYY.", ephemeral=True
                 )
                 return
-            # Combine date and time
-            event_date = event_date.replace(
-                hour=event_time.hour,
-                minute=event_time.minute
-            )
+
+            # Parse time if provided and date exists
+            if time:
+                event_time = parse_time(time)
+                if not event_time:
+                    await interaction.response.send_message(
+                        "❌ Invalid time format. Use HH:MM (24-hour).", ephemeral=True
+                    )
+                    return
+                # Combine date and time
+                event_date = event_date.replace(
+                    hour=event_time.hour,
+                    minute=event_time.minute
+                )
             
         events = load_events()
         new_event = {
             "title": title,
             "description": description,
-            "date": event_date.isoformat(),
+            "date": event_date.isoformat() if event_date else None,
             "organiser": organiser.id,
             "squad_maker": squad_maker.id if squad_maker else None,
             "guild_id": interaction.guild_id,
@@ -398,7 +418,7 @@ class CalendarCog(commands.Cog):
         title="Title of the event to edit",
         new_title="New event title (optional)",
         description="New description (optional)",
-        date="New date in DD/MM/YYYY format (optional)",
+        date="New date in DD/MM/YYYY format (use 'clear' to set as TBC)",
         time="New time in HH:MM format (24-hour, optional)",
         organiser="New event organiser (optional)",
         squad_maker="New squad maker (optional)",
@@ -430,7 +450,7 @@ class CalendarCog(commands.Cog):
             return
 
         # Store the original event date
-        current_date = datetime.fromisoformat(event["date"])
+        current_date = datetime.fromisoformat(event["date"]) if event.get("date") else None
         
         if new_title:
             event["title"] = new_title
@@ -440,23 +460,27 @@ class CalendarCog(commands.Cog):
             
         # Handle date changes
         if date:
-            event_date = parse_date(date)
-            if not event_date:
-                await interaction.response.send_message(
-                    "❌ Invalid date format. Use DD/MM/YYYY.", ephemeral=True
-                )
-                return
-                
-            # If only date is provided, keep the current time
-            if not time:
-                event_date = event_date.replace(
-                    hour=current_date.hour,
-                    minute=current_date.minute
-                )
-            event["date"] = event_date.isoformat()
+            # Check if user wants to clear the date
+            if date.lower() == 'clear':
+                event["date"] = None
+            else:
+                event_date = parse_date(date)
+                if not event_date:
+                    await interaction.response.send_message(
+                        "❌ Invalid date format. Use DD/MM/YYYY or 'clear' to set as TBC.", ephemeral=True
+                    )
+                    return
+                    
+                # If only date is provided and there was a previous time, keep it
+                if not time and current_date and event["date"]:
+                    event_date = event_date.replace(
+                        hour=current_date.hour,
+                        minute=current_date.minute
+                    )
+                event["date"] = event_date.isoformat()
             
-        # Handle time changes separately
-        if time:
+        # Handle time changes separately (only if there's a date)
+        if time and event["date"]:
             event_time = parse_time(time)
             if not event_time:
                 await interaction.response.send_message(
