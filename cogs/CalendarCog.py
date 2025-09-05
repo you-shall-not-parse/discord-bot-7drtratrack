@@ -222,6 +222,7 @@ def build_calendar_embed(events: list) -> discord.Embed:
         month_name = f"🗓️ **{calendar.month_name[month].upper()} {year}** 🗓️"
         
         body = "\n\n".join(event_to_str(e) for e in month_groups[(year, month)])
+        body = "\u200b\n" + body  # Add invisible character + newline for extra space
         embed.add_field(name=month_name, value=body, inline=False)
         
         # Add separator between months (not after the last month)
@@ -235,6 +236,7 @@ def build_calendar_embed(events: list) -> discord.Embed:
     # Add TBC events last (at the bottom) if there are any
     if tbc_events:
         body = "\n\n".join(event_to_str(e) for e in tbc_events)
+        body = "\u200b\n" + body  # Add invisible character + newline for extra space
         embed.add_field(name=":15emoji: **DATE TBC** :15emoji: ", value=body, inline=False)
 
     return embed
