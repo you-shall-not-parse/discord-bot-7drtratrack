@@ -138,13 +138,13 @@ class CalendarCog(commands.Cog):
             pass
 
     async def cog_load(self):
-        # Register the app command on the tree and sync to guild if provided
+        # Register the app command on the tree and sync to guild if provided.
+        # Use the new command name "7drcalendar" to avoid collisions with other bots.
         try:
-            try:
+            cmd_name = "7drcalendar"
+            # only add if not already present
+            if self.bot.tree.get_command(cmd_name) is None:
                 self.bot.tree.add_command(self.calendar_app)
-            except Exception:
-                # may already be added
-                pass
             if isinstance(GUILD_ID, int) and GUILD_ID:
                 await self.bot.tree.sync(guild=discord.Object(id=GUILD_ID))
             else:
@@ -187,7 +187,7 @@ class CalendarCog(commands.Cog):
             logging.exception("Failed to refresh calendar on_ready")
 
     # --- App (slash) command only (no UI/buttons) ---
-    @app_commands.command(name="calendar", description="Show or update the unit calendar")
+    @app_commands.command(name="7drcalendar", description="Show or update the unit calendar")
     async def calendar_app(self, interaction: discord.Interaction):
         # permission check
         if not has_calendar_permission(interaction.user):
@@ -198,7 +198,7 @@ class CalendarCog(commands.Cog):
         try:
             await interaction.response.send_message(embed=embed)
         except Exception:
-            logging.exception("Failed to send /calendar response")
+            logging.exception("Failed to send /7drcalendar response")
             try:
                 await interaction.response.send_message("✅ Calendar generated (failed to embed).", ephemeral=True)
             except Exception:
