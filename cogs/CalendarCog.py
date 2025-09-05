@@ -17,6 +17,11 @@ CALENDAR_MANAGER_ROLES = ["Administration", "7DR-SNCO", "Fight Arrangeer"]
 CALENDAR_GUILD_ID = 1097913605082579024
 CALENDAR_CHANNEL_ID = 1332736267485708419  # The channel where the calendar will be posted
 
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True  # Required for member-related parameters
+bot = commands.Bot(command_prefix="!", intents=intents)
+
 # Auto (re)publish the calendar on startup. It will delete the previous embed and post a new one.
 AUTO_PUBLISH_ON_START = True
 
@@ -475,9 +480,9 @@ class CalendarCog(commands.Cog):
         # Ensure commands are synced to the target guild only
         try:
             await self.bot.tree.sync(guild=discord.Object(id=CALENDAR_GUILD_ID))
-        except Exception:
-            pass
-
+        except Exception as e:
+            print(f"Failed to sync commands: {e}")
+        
         if AUTO_PUBLISH_ON_START:
             try:
                 guild = self.bot.get_guild(CALENDAR_GUILD_ID)
