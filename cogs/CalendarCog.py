@@ -242,7 +242,7 @@ class CalendarCog(commands.GroupCog, name="calendar"):
     async def show(self, interaction: discord.Interaction):
         if not has_calendar_permission(interaction.user):
             await interaction.response.send_message(
-                "❌ You don’t have permission to manage the calendar.", ephemeral=True
+                "❌ You don't have permission to manage the calendar.", ephemeral=True
             )
             return
 
@@ -255,7 +255,7 @@ class CalendarCog(commands.GroupCog, name="calendar"):
     async def publish(self, interaction: discord.Interaction):
         if not has_calendar_permission(interaction.user):
             await interaction.response.send_message(
-                "❌ You don’t have permission to manage the calendar.", ephemeral=True
+                "❌ You don't have permission to manage the calendar.", ephemeral=True
             )
             return
 
@@ -278,7 +278,7 @@ class CalendarCog(commands.GroupCog, name="calendar"):
     async def setchannel(self, interaction: discord.Interaction, channel: discord.TextChannel):
         if not has_calendar_permission(interaction.user):
             await interaction.response.send_message(
-                "❌ You don’t have permission to manage the calendar.", ephemeral=True
+                "❌ You don't have permission to manage the calendar.", ephemeral=True
             )
             return
 
@@ -316,7 +316,7 @@ class CalendarCog(commands.GroupCog, name="calendar"):
     ):
         if not has_calendar_permission(interaction.user):
             await interaction.response.send_message(
-                "❌ You don’t have permission to manage events.", ephemeral=True
+                "❌ You don't have permission to manage events.", ephemeral=True
             )
             return
 
@@ -387,7 +387,7 @@ class CalendarCog(commands.GroupCog, name="calendar"):
     ):
         if not has_calendar_permission(interaction.user):
             await interaction.response.send_message(
-                "❌ You don’t have permission to manage events.", ephemeral=True
+                "❌ You don't have permission to manage events.", ephemeral=True
             )
             return
 
@@ -447,7 +447,7 @@ class CalendarCog(commands.GroupCog, name="calendar"):
     async def remove(self, interaction: discord.Interaction, title: str):
         if not has_calendar_permission(interaction.user):
             await interaction.response.send_message(
-                "❌ You don’t have permission to manage events.", ephemeral=True
+                "❌ You don't have permission to manage events.", ephemeral=True
             )
             return
 
@@ -529,5 +529,5 @@ class CalendarCog(commands.GroupCog, name="calendar"):
 
 
 # ---------------- Extension setup ----------------
-def setup(bot: commands.Bot):
-    bot.add_cog(CalendarCog(bot))
+async def setup(bot: commands.Bot):
+    await bot.add_cog(CalendarCog(bot))
