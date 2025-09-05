@@ -2,21 +2,20 @@ import json
 import pytz
 import calendar
 import discord
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from typing import Optional, List, Dict, Any
 from discord import app_commands
 from discord.ext import commands, tasks
 
 # ---------------- Config ----------------
 EVENTS_FILE = "events.json"
-STATE_FILE = "calendar_state.json"  # stores per-guild channel_id and last message_id
+STATE_FILE = "calendar_state.json"  # stores message_id
 TIMEZONE = pytz.timezone("Europe/London")
 CALENDAR_MANAGER_ROLES = ["Administration", "7DR-SNCO", "Fight Arrangeer"]
 
-# Set your target guild and (optionally) a default calendar channel here.
-# You can also configure the channel via the /calendar setchannel command and it will be saved in STATE_FILE.
-CALENDAR_GUILD_ID = 1097913605082579024  # <-- replace with your guild ID
-DEFAULT_CALENDAR_CHANNEL_ID = 1332736267485708419  # <-- set to a channel ID or leave 0 to require /calendar setchannel
+# Set your target guild and calendar channel here.
+CALENDAR_GUILD_ID = 1097913605082579024
+CALENDAR_CHANNEL_ID = 1332736267485708419  # The channel where the calendar will be posted
 
 # Auto (re)publish the calendar on startup. It will delete the previous embed and post a new one.
 AUTO_PUBLISH_ON_START = True
@@ -55,60 +54,57 @@ def save_state(state: Dict[str, Any]) -> None:
         json.dump(state, f, indent=4)
 
 
-def get_guild_state(guild_id: int) -> Dict[str, Any]:
+def get_message_id_for_guild(guild_id: int) -> Optional[int]:
     state = load_state()
-    return state.get(str(guild_id), {})
-
-
-def set_guild_state(guild_id: int, data: Dict[str, Any]) -> None:
-    state = load_state()
-    state[str(guild_id)] = data
-    save_state(state)
-
-
-def set_channel_for_guild(guild_id: int, channel_id: int) -> None:
-    gs = get_guild_state(guild_id)
-    gs["channel_id"] = channel_id
-    set_guild_state(guild_id, gs)
-
-
-def get_channel_id_for_guild(guild_id: int) -> Optional[int]:
-    gs = get_guild_state(guild_id)
-    return gs.get("channel_id") or (DEFAULT_CALENDAR_CHANNEL_ID if DEFAULT_CALENDAR_CHANNEL_ID else None)
+    return state.get(str(guild_id), {}).get("message_id")
 
 
 def set_message_id_for_guild(guild_id: int, message_id: Optional[int]) -> None:
-    gs = get_guild_state(guild_id)
+    state = load_state()
+    guild_state = state.get(str(guild_id), {})
+    
     if message_id is None:
-        gs.pop("message_id", None)
+        guild_state.pop("message_id", None)
     else:
-        gs["message_id"] = message_id
-    set_guild_state(guild_id, gs)
-
-
-def get_message_id_for_guild(guild_id: int) -> Optional[int]:
-    gs = get_guild_state(guild_id)
-    return gs.get("message_id")
+        guild_state["message_id"] = message_id
+    
+    state[str(guild_id)] = guild_state
+    save_state(state)
 
 
 def event_to_str(event: dict) -> str:
     dt = datetime.fromisoformat(event["date"]).astimezone(TIMEZONE)
     organiser = f"<@{event['organiser']}>" if event.get("organiser") else "Unknown"
     squad_maker = f"<@{event['squad_maker']}>" if event.get("squad_maker") else "None"
-    reminder = f"{event['reminder_hours']}h before" if event.get("reminder_hours") else "None"
+    description = event.get("description", "")
+    
     thread = (
         f"[Link](https://discord.com/channels/{event['guild_id']}/{event['thread_id']})"
         if event.get("thread_id")
         else "None"
     )
-    return (
+    
+    msg = (
         f"📌 **{event['title']}**\n"
-        f"🗓️ {dt.strftime('%d %b %Y, %H:%M %Z')}\n"
-        f"👤 Organiser: {organiser}\n"
-        f"⚔️ Squad Maker: {squad_maker}\n"
-        f"⏰ Reminder: {reminder}\n"
-        f"🧵 Thread: {thread}"
+        f"🗓️ {dt.strftime('%d %b %Y')}"
     )
+    
+    # Add time if it exists
+    if dt.time() != time(0, 0):
+        msg += f", {dt.strftime('%H:%M %Z')}"
+    
+    msg += f"\n👤 Organiser: {organiser}"
+    
+    if event.get("squad_maker"):
+        msg += f"\n⚔️ Squad Maker: {squad_maker}"
+    
+    if description:
+        msg += f"\n📝 Description: {description}"
+    
+    if event.get("thread_id"):
+        msg += f"\n🧵 Thread: {thread}"
+    
+    return msg
 
 
 def build_calendar_embed(events: list) -> discord.Embed:
@@ -149,22 +145,25 @@ def build_calendar_embed(events: list) -> discord.Embed:
     return embed
 
 
-def parse_datetime_local(date_time_str: str) -> Optional[datetime]:
-    """
-    Parse 'YYYY-MM-DD HH:MM' into a timezone-aware datetime in TIMEZONE.
-    Returns None if invalid.
-    """
+def parse_date(date_str: str) -> Optional[datetime]:
+    """Parse 'DD-MM-YYYY' into a date."""
     try:
-        dt = datetime.strptime(date_time_str, "%Y-%m-%d %H:%M")
-        return TIMEZONE.localize(dt)
+        return datetime.strptime(date_str, "%d-%m-%Y").replace(tzinfo=TIMEZONE)
+    except Exception:
+        return None
+
+
+def parse_time(time_str: str) -> Optional[time]:
+    """Parse 'HH:MM' into a time."""
+    try:
+        t = datetime.strptime(time_str, "%H:%M").time()
+        return t
     except Exception:
         return None
 
 
 def find_sendable_channel(guild: discord.Guild) -> Optional[discord.TextChannel]:
-    """
-    Fallback channel for reminders if no calendar channel is set.
-    """
+    """Fallback channel for messages if calendar channel is not accessible."""
     if not guild:
         return None
     me = guild.me
@@ -176,29 +175,23 @@ def find_sendable_channel(guild: discord.Guild) -> Optional[discord.TextChannel]
     return None
 
 
-# ---------------- Slash Commands (discord.py 2.3.2 via app_commands) ----------------
-class CalendarCog(commands.GroupCog, name="calendar"):
-    """Manage the unit calendar"""
+# ---------------- Calendar Cog ----------------
+class CalendarCog(commands.Cog):
+    """Calendar management for the unit"""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.reminder_task.start()
-
-    def cog_unload(self):
-        self.reminder_task.cancel()
 
     # ---------- Helpers ----------
     def get_calendar_channel(self, guild: discord.Guild) -> Optional[discord.TextChannel]:
-        channel_id = get_channel_id_for_guild(guild.id)
-        if channel_id:
-            ch = guild.get_channel(channel_id)
-            if isinstance(ch, discord.TextChannel):
-                me = guild.me
-                if ch and ch.permissions_for(me).send_messages:
-                    return ch
+        channel = guild.get_channel(CALENDAR_CHANNEL_ID)
+        if isinstance(channel, discord.TextChannel):
+            me = guild.me
+            if channel and channel.permissions_for(me).send_messages:
+                return channel
         return None
 
-    async def publish_to_channel(self, guild: discord.Guild) -> Optional[discord.Message]:
+    async def publish_calendar(self, guild: discord.Guild) -> Optional[discord.Message]:
         """
         Delete the previous calendar embed (if any) and post a new one to the configured channel.
         Stores the new message ID in STATE_FILE.
@@ -227,6 +220,21 @@ class CalendarCog(commands.GroupCog, name="calendar"):
         except Exception:
             return None
 
+    async def update_thread_message(self, guild: discord.Guild, event: dict) -> None:
+        """Update the message in an event's thread with current event details."""
+        if not event.get("thread_id"):
+            return
+            
+        try:
+            thread = guild.get_thread(event["thread_id"])
+            if thread:
+                # Get the first message in the thread
+                async for message in thread.history(limit=1, oldest_first=True):
+                    await message.edit(content=event_to_str(event))
+                    break
+        except Exception:
+            pass
+
     # ---------- Autocomplete ----------
     async def autocomplete_event_titles(
         self, interaction: discord.Interaction, current: str
@@ -238,80 +246,25 @@ class CalendarCog(commands.GroupCog, name="calendar"):
 
     # ---------- Commands ----------
     @app_commands.guilds(TARGET_GUILD)
-    @app_commands.command(name="show", description="Preview the unit calendar (ephemeral).")
-    async def show(self, interaction: discord.Interaction):
-        if not has_calendar_permission(interaction.user):
-            await interaction.response.send_message(
-                "❌ You don't have permission to manage the calendar.", ephemeral=True
-            )
-            return
-
-        events = load_events()
-        embed = build_calendar_embed(events)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    @app_commands.guilds(TARGET_GUILD)
-    @app_commands.command(name="publish", description="Post the calendar embed to the configured channel and delete the previous one.")
-    async def publish(self, interaction: discord.Interaction):
-        if not has_calendar_permission(interaction.user):
-            await interaction.response.send_message(
-                "❌ You don't have permission to manage the calendar.", ephemeral=True
-            )
-            return
-
-        if not self.get_calendar_channel(interaction.guild):
-            await interaction.response.send_message(
-                "⚠️ No calendar channel is configured. Use /calendar setchannel first.", ephemeral=True
-            )
-            return
-
-        await interaction.response.defer(ephemeral=True)
-        msg = await self.publish_to_channel(interaction.guild)
-        if msg:
-            await interaction.followup.send(f"✅ Published calendar to <#{msg.channel.id}> (message ID {msg.id}).", ephemeral=True)
-        else:
-            await interaction.followup.send("❌ Failed to publish calendar (check channel permissions).", ephemeral=True)
-
-    @app_commands.guilds(TARGET_GUILD)
-    @app_commands.command(name="setchannel", description="Set the channel to post the calendar embed.")
-    @app_commands.describe(channel="Text channel where the calendar embed will be posted")
-    async def setchannel(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        if not has_calendar_permission(interaction.user):
-            await interaction.response.send_message(
-                "❌ You don't have permission to manage the calendar.", ephemeral=True
-            )
-            return
-
-        me = interaction.guild.me
-        if not channel.permissions_for(me).send_messages:
-            await interaction.response.send_message(
-                "❌ I don't have permission to send messages in that channel.", ephemeral=True
-            )
-            return
-
-        set_channel_for_guild(interaction.guild_id, channel.id)
-        await interaction.response.send_message(f"✅ Calendar channel set to {channel.mention}.", ephemeral=True)
-
-    @app_commands.guilds(TARGET_GUILD)
-    @app_commands.command(name="add", description="Add a new event.")
+    @app_commands.command(name="addtocalendar", description="Add a new event to the unit calendar.")
     @app_commands.describe(
         title="Event title",
-        date_time="Date & time in 'YYYY-MM-DD HH:MM' (local UK time)",
-        recurring="Whether the event is recurring (limits far-future display)",
-        organiser="Organiser (mention)",
-        squad_maker="Squad maker (mention)",
-        reminder_hours="Hours before the event to send a reminder",
-        thread_channel="Channel to create a public thread with the event details",
+        description="Optional description of the event",
+        date="Date in DD-MM-YYYY format",
+        time="Time in HH:MM format (24-hour, optional)",
+        organiser="The event organiser",
+        squad_maker="Squad maker (optional)",
+        thread_channel="Channel to create a thread for this event (optional)"
     )
-    async def add(
+    async def addtocalendar(
         self,
         interaction: discord.Interaction,
         title: str,
-        date_time: str,
-        recurring: Optional[bool] = False,
-        organiser: Optional[discord.Member] = None,
+        date: str,
+        organiser: discord.Member,
+        description: Optional[str] = None,
+        time: Optional[str] = None,
         squad_maker: Optional[discord.Member] = None,
-        reminder_hours: Optional[int] = None,
         thread_channel: Optional[discord.TextChannel] = None,
     ):
         if not has_calendar_permission(interaction.user):
@@ -320,25 +273,37 @@ class CalendarCog(commands.GroupCog, name="calendar"):
             )
             return
 
-        dt = parse_datetime_local(date_time)
-        if not dt:
+        # Parse date
+        event_date = parse_date(date)
+        if not event_date:
             await interaction.response.send_message(
-                "❌ Invalid date format. Use YYYY-MM-DD HH:MM.", ephemeral=True
+                "❌ Invalid date format. Use DD-MM-YYYY.", ephemeral=True
             )
             return
 
+        # Parse time if provided
+        if time:
+            event_time = parse_time(time)
+            if not event_time:
+                await interaction.response.send_message(
+                    "❌ Invalid time format. Use HH:MM (24-hour).", ephemeral=True
+                )
+                return
+            # Combine date and time
+            event_date = event_date.replace(
+                hour=event_time.hour,
+                minute=event_time.minute
+            )
+            
         events = load_events()
         new_event = {
             "title": title,
-            "date": dt.isoformat(),
-            "recurring": bool(recurring),
-            "organiser": organiser.id if organiser else interaction.user.id,
+            "description": description,
+            "date": event_date.isoformat(),
+            "organiser": organiser.id,
             "squad_maker": squad_maker.id if squad_maker else None,
-            "reminder_hours": reminder_hours if (isinstance(reminder_hours, int) and reminder_hours > 0) else None,
             "guild_id": interaction.guild_id,
-            "thread_channel": thread_channel.id if thread_channel else None,
             "thread_id": None,
-            "reminded": False,
         }
 
         # Create thread if requested
@@ -350,39 +315,42 @@ class CalendarCog(commands.GroupCog, name="calendar"):
                 await thread.send(event_to_str(new_event))
                 new_event["thread_id"] = thread.id
             except Exception:
-                pass
+                await interaction.response.send_message(
+                    "⚠️ Event added but failed to create thread.", ephemeral=True
+                )
+                return
 
         events.append(new_event)
         save_events(events)
 
-        # Publish updated calendar to the configured channel (delete previous then post)
+        # Publish updated calendar
         await interaction.response.defer(ephemeral=True)
-        await self.publish_to_channel(interaction.guild)
+        await self.publish_calendar(interaction.guild)
         await interaction.followup.send("✅ Event added and calendar updated.", ephemeral=True)
 
     @app_commands.guilds(TARGET_GUILD)
-    @app_commands.command(name="edit", description="Edit an existing event (selected by title).")
+    @app_commands.command(name="editcalendar", description="Edit an event on the calendar.")
     @app_commands.autocomplete(title=autocomplete_event_titles)
     @app_commands.describe(
-        title="Existing event title to edit",
-        new_title="New title (optional)",
-        new_date_time="New date & time in 'YYYY-MM-DD HH:MM' (optional)",
-        recurring="Set recurring on/off (optional)",
-        organiser="New organiser (optional)",
+        title="Title of the event to edit",
+        new_title="New event title (optional)",
+        description="New description (optional)",
+        date="New date in DD-MM-YYYY format (optional)",
+        time="New time in HH:MM format (24-hour, optional)",
+        organiser="New event organiser (optional)",
         squad_maker="New squad maker (optional)",
-        reminder_hours="New reminder hours (optional)",
-        thread_channel="Create a new public thread in this channel (optional)",
+        thread_channel="Create a new thread in this channel (optional)"
     )
-    async def edit(
+    async def editcalendar(
         self,
         interaction: discord.Interaction,
         title: str,
         new_title: Optional[str] = None,
-        new_date_time: Optional[str] = None,
-        recurring: Optional[bool] = None,
+        description: Optional[str] = None,
+        date: Optional[str] = None,
+        time: Optional[str] = None,
         organiser: Optional[discord.Member] = None,
         squad_maker: Optional[discord.Member] = None,
-        reminder_hours: Optional[int] = None,
         thread_channel: Optional[discord.TextChannel] = None,
     ):
         if not has_calendar_permission(interaction.user):
@@ -398,32 +366,56 @@ class CalendarCog(commands.GroupCog, name="calendar"):
             await interaction.response.send_message("❌ Event not found.", ephemeral=True)
             return
 
+        # Store the original event date
+        current_date = datetime.fromisoformat(event["date"])
+        
         if new_title:
             event["title"] = new_title
 
-        if new_date_time:
-            dt = parse_datetime_local(new_date_time)
-            if not dt:
+        if description is not None:  # Allow empty string to clear description
+            event["description"] = description
+            
+        # Handle date changes
+        if date:
+            event_date = parse_date(date)
+            if not event_date:
                 await interaction.response.send_message(
-                    "❌ Invalid date format. Use YYYY-MM-DD HH:MM.", ephemeral=True
+                    "❌ Invalid date format. Use DD-MM-YYYY.", ephemeral=True
                 )
                 return
-            event["date"] = dt.isoformat()
-            event["reminded"] = False  # reset reminder if date changed
-
-        if recurring is not None:
-            event["recurring"] = bool(recurring)
+                
+            # If only date is provided, keep the current time
+            if not time:
+                event_date = event_date.replace(
+                    hour=current_date.hour,
+                    minute=current_date.minute
+                )
+            event["date"] = event_date.isoformat()
+            
+        # Handle time changes separately
+        if time:
+            event_time = parse_time(time)
+            if not event_time:
+                await interaction.response.send_message(
+                    "❌ Invalid time format. Use HH:MM (24-hour).", ephemeral=True
+                )
+                return
+                
+            # Update just the time component
+            current_date = datetime.fromisoformat(event["date"])
+            updated_date = current_date.replace(
+                hour=event_time.hour,
+                minute=event_time.minute
+            )
+            event["date"] = updated_date.isoformat()
 
         if organiser is not None:
             event["organiser"] = organiser.id
 
         if squad_maker is not None:
-            event["squad_maker"] = squad_maker.id
+            event["squad_maker"] = squad_maker.id if squad_maker else None
 
-        if reminder_hours is not None:
-            event["reminder_hours"] = reminder_hours if (isinstance(reminder_hours, int) and reminder_hours > 0) else None
-            event["reminded"] = False
-
+        # Create new thread if requested
         if thread_channel:
             try:
                 thread = await thread_channel.create_thread(
@@ -434,17 +426,20 @@ class CalendarCog(commands.GroupCog, name="calendar"):
             except Exception:
                 pass
 
+        # Update existing thread if it exists
+        await self.update_thread_message(interaction.guild, event)
+                
         save_events(events)
 
         await interaction.response.defer(ephemeral=True)
-        await self.publish_to_channel(interaction.guild)
+        await self.publish_calendar(interaction.guild)
         await interaction.followup.send("✅ Event updated and calendar refreshed.", ephemeral=True)
 
     @app_commands.guilds(TARGET_GUILD)
-    @app_commands.command(name="remove", description="Remove an event by title.")
+    @app_commands.command(name="removefromcalendar", description="Remove an event from the calendar.")
     @app_commands.autocomplete(title=autocomplete_event_titles)
-    @app_commands.describe(title="Event title to remove")
-    async def remove(self, interaction: discord.Interaction, title: str):
+    @app_commands.describe(title="Title of the event to remove")
+    async def removefromcalendar(self, interaction: discord.Interaction, title: str):
         if not has_calendar_permission(interaction.user):
             await interaction.response.send_message(
                 "❌ You don't have permission to manage events.", ephemeral=True
@@ -471,46 +466,10 @@ class CalendarCog(commands.GroupCog, name="calendar"):
         save_events(events)
 
         await interaction.response.defer(ephemeral=True)
-        await self.publish_to_channel(interaction.guild)
+        await self.publish_calendar(interaction.guild)
         await interaction.followup.send("🗑️ Event removed and calendar updated.", ephemeral=True)
 
-    # ---------- Background tasks ----------
-    @tasks.loop(minutes=10)
-    async def reminder_task(self):
-        events = load_events()
-        now = datetime.now(TIMEZONE)
-        updated = False
-        for event in events:
-            if not event.get("reminder_hours") or event.get("reminded"):
-                continue
-            dt = datetime.fromisoformat(event["date"]).astimezone(TIMEZONE)
-            if now + timedelta(hours=event["reminder_hours"]) >= dt > now:
-                guild = self.bot.get_guild(event["guild_id"])
-                if guild:
-                    # Prefer the calendar channel for reminders if set
-                    channel = self.get_calendar_channel(guild) or find_sendable_channel(guild)
-                    if channel:
-                        mentions = []
-                        if event.get("organiser"):
-                            mentions.append(f"<@{event['organiser']}>")
-                        if event.get("squad_maker"):
-                            mentions.append(f"<@{event['squad_maker']}>")
-                        try:
-                            await channel.send(
-                                f"⏰ Reminder: {event['title']} starts at {dt.strftime('%d %b %Y, %H:%M %Z')}!\n{' '.join(mentions)}"
-                            )
-                            event["reminded"] = True
-                            updated = True
-                        except Exception:
-                            pass
-        if updated:
-            save_events(events)
-
-    @reminder_task.before_loop
-    async def before_reminder_task(self):
-        await self.bot.wait_until_ready()
-
-    # ---------- Sync and optional autopublish ----------
+    # ---------- Startup ----------
     @commands.Cog.listener()
     async def on_ready(self):
         # Ensure commands are synced to the target guild only
@@ -522,8 +481,8 @@ class CalendarCog(commands.GroupCog, name="calendar"):
         if AUTO_PUBLISH_ON_START:
             try:
                 guild = self.bot.get_guild(CALENDAR_GUILD_ID)
-                if guild and self.get_calendar_channel(guild):
-                    await self.publish_to_channel(guild)
+                if guild:
+                    await self.publish_calendar(guild)
             except Exception:
                 pass
 
