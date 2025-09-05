@@ -1,196 +1,270 @@
 import discord
-from discord.ext import commands, tasks
-from discord import app_commands
+from discord.ext import commands
 import json
 import os
 from datetime import datetime, timedelta
 import pytz
 
-# ---------------- CONFIG ----------------
-TIMEZONE = pytz.timezone("Europe/London")
-EVENTS_FILE = "events.json"
-ALLOWED_ROLES = ["Administration", "Fight Arrangeer", "7DR-SNCO"]  # Roles allowed to add/edit/remove
-# ----------------------------------------
+# ===== CONFIG =====
+CALENDAR_CHANNEL_ID = 1332736267485708419  # <-- replace with your calendar channel ID
+ALLOWED_ROLES = ["Administration", "Fight Arrangeer", "7DR-SNCO"]  # roles that can add/edit/remove events
+DATA_FILE = "events.json"
+TIMEZONE = pytz.timezone("Europe/London")  # UK time
 
-class CalendarCog(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
-        self.events = self.load_events()
-        self.reminder_loop.start()
+# ===== STORAGE =====
+if not os.path.exists(DATA_FILE):
+    with open(DATA_FILE, "w") as f:
+        json.dump({"events": [], "calendar_channel_id": None, "calendar_message_id": None}, f)
 
-    # ----------------- Storage -----------------
-    def load_events(self):
-        if os.path.exists(EVENTS_FILE):
-            with open(EVENTS_FILE, "r") as f:
-                return json.load(f)
-        return []
+with open(DATA_FILE, "r") as f:
+    data = json.load(f)
 
-    def save_events(self):
-        with open(EVENTS_FILE, "w") as f:
-            json.dump(self.events, f, indent=2)
 
-    # ----------------- Helpers -----------------
-    def has_permission(self, interaction: discord.Interaction):
-        return any(r.name in ALLOWED_ROLES for r in interaction.user.roles)
+def save_data():
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f, indent=4)
 
-    def event_to_str(self, event):
-        dt = datetime.fromisoformat(event["date"]).astimezone(TIMEZONE)
-        desc = f"**{event['title']}**\n🗓️ {dt.strftime('%a %d %b %Y %H:%M')}"
-        desc += f"\n👤 Organiser: <@{event['organiser']}>"
-        if event.get("squad_maker"):
-            desc += f"\n🛡️ Squad Maker: <@{event['squad_maker']}>"
-        if event.get("thread_id"):
-            desc += f"\n💬 [Event Thread](https://discord.com/channels/{event['guild_id']}/{event['thread_id']})"
-        return desc
 
-    def group_events_by_month(self):
-        month_dict = {}
-        now = datetime.now(TIMEZONE)
-        for event in self.events:
-            dt = datetime.fromisoformat(event["date"]).astimezone(TIMEZONE)
-            if event.get("recurring") and dt > now + timedelta(weeks=2):
-                continue
-            month_name = dt.strftime("%b %Y")
-            month_dict.setdefault(month_name, []).append(event)
-        return month_dict
+# ===== EMBED BUILDER =====
+def build_calendar_embed():
+    now = datetime.now(TIMEZONE)
+    current_month = now.month
+    next_month = (now.month % 12) + 1
 
-    def build_calendar_embed(self):
-        month_dict = self.group_events_by_month()
-        embed = discord.Embed(
-            title="📅 Unit Calendar",
-            description="Upcoming scheduled events",
-            colour=discord.Colour.blue(),
-            timestamp=datetime.now(TIMEZONE)
+    events = data["events"]
+    dated_events = [e for e in events if e["date"] != "TBD"]
+    tbd_events = [e for e in events if e["date"] == "TBD"]
+
+    # sort by date
+    dated_events = sorted(dated_events, key=lambda e: datetime.fromisoformat(e["date"]))
+
+    grouped = {"this_month": [], "next_month": [], "other": {}, "tbd": []}
+
+    for e in dated_events:
+        dt = datetime.fromisoformat(e["date"])
+        month = dt.month
+        entry = f"**{e['title']}** — <t:{int(dt.timestamp())}:F>\nOrganiser: <@{e['organiser']}>"
+
+        if e.get("squad_maker"):
+            entry += f"\nSquad Maker: <@{e['squad_maker']}>"
+        if e.get("reminder_hours"):
+            entry += f"\nReminder: {e['reminder_hours']}h before"
+
+        if month == current_month:
+            grouped["this_month"].append(entry)
+        elif month == next_month:
+            grouped["next_month"].append(entry)
+        else:
+            grouped["other"].setdefault(month, []).append(entry)
+
+    for e in tbd_events:
+        entry = f"**{e['title']}** — 📌 TBD\nOrganiser: <@{e['organiser']}>"
+        if e.get("squad_maker"):
+            entry += f"\nSquad Maker: <@{e['squad_maker']}>"
+        grouped["tbd"].append(entry)
+
+    embed = discord.Embed(title="📅 Server Events", color=discord.Color.blue())
+    embed.timestamp = datetime.now(TIMEZONE)
+
+    if grouped["this_month"]:
+        embed.add_field(
+            name=now.strftime("%B"),
+            value="\n\n".join(grouped["this_month"]),
+            inline=False,
         )
-        for month, ev_list in sorted(month_dict.items(), key=lambda x: datetime.strptime(x[0], "%b %Y")):
-            embed.add_field(
-                name=month,
-                value="\n\n".join(self.event_to_str(e) for e in ev_list),
-                inline=False
-            )
-        if not month_dict:
-            embed.description = "No events scheduled."
-        return embed
+    if grouped["next_month"]:
+        next_dt = (now.replace(day=1) + timedelta(days=32)).replace(day=1)
+        embed.add_field(
+            name=next_dt.strftime("%B"),
+            value="\n\n".join(grouped["next_month"]),
+            inline=False,
+        )
+    for m, items in grouped["other"].items():
+        embed.add_field(
+            name=datetime(2000, m, 1).strftime("%B"),
+            value="\n\n".join(items),
+            inline=False,
+        )
+    if grouped["tbd"]:
+        embed.add_field(
+            name="📌 TBD",
+            value="\n\n".join(grouped["tbd"]),
+            inline=False,
+        )
 
-    async def update_calendar_message(self, interaction: discord.Interaction):
-        embed = self.build_calendar_embed()
-        view = CalendarButtons(self)
-        await interaction.response.edit_message(embed=embed, view=view)
+    if not events:
+        embed.description = "No events scheduled."
 
-    # ----------------- Slash Commands -----------------
-    @app_commands.command(name="addevent", description="Add an event to the calendar")
-    async def addevent(self, interaction: discord.Interaction,
-                       title: str,
-                       date: str,  # format: YYYY-MM-DD HH:MM
-                       recurring: bool = False,
-                       organiser: discord.Member = None,
-                       squad_maker: discord.Member = None,
-                       reminder_hours: int = None,
-                       create_thread: bool = False,
-                       thread_channel: discord.TextChannel = None):
-        if not self.has_permission(interaction):
-            return await interaction.response.send_message("❌ You do not have permission.", ephemeral=True)
+    return embed
 
-        dt = TIMEZONE.localize(datetime.strptime(date, "%Y-%m-%d %H:%M"))
 
-        event = {
-            "title": title,
-            "date": dt.isoformat(),
-            "recurring": recurring,
-            "organiser": organiser.id if organiser else interaction.user.id,
-            "squad_maker": squad_maker.id if squad_maker else None,
-            "reminder_hours": reminder_hours,
-            "guild_id": interaction.guild.id
-        }
-
-        if create_thread and thread_channel:
-            thread = await thread_channel.create_thread(
-                name=title,
-                type=discord.ChannelType.public_thread
-            )
-            msg = await thread.send(self.event_to_str(event))
-            event["thread_id"] = thread.id
-            event["thread_msg_id"] = msg.id
-
-        self.events.append(event)
-        self.save_events()
-        await interaction.response.send_message("✅ Event added!", ephemeral=True)
-
-    @app_commands.command(name="editevent", description="Edit an existing event")
-    async def editevent(self, interaction: discord.Interaction, title: str, new_date: str = None):
-        if not self.has_permission(interaction):
-            return await interaction.response.send_message("❌ You do not have permission.", ephemeral=True)
-
-        for event in self.events:
-            if event["title"] == title:
-                if new_date:
-                    dt = TIMEZONE.localize(datetime.strptime(new_date, "%Y-%m-%d %H:%M"))
-                    event["date"] = dt.isoformat()
-                # update thread message if exists
-                if event.get("thread_id"):
-                    thread = interaction.guild.get_thread(event["thread_id"])
-                    if thread:
-                        try:
-                            msg = await thread.fetch_message(event["thread_msg_id"])
-                            await msg.edit(content=self.event_to_str(event))
-                        except Exception:
-                            pass
-                self.save_events()
-                return await interaction.response.send_message("✏️ Event updated.", ephemeral=True)
-
-        await interaction.response.send_message("❌ Event not found.", ephemeral=True)
-
-    @app_commands.command(name="deleteevent", description="Delete an event")
-    async def deleteevent(self, interaction: discord.Interaction, title: str):
-        if not self.has_permission(interaction):
-            return await interaction.response.send_message("❌ You do not have permission.", ephemeral=True)
-
-        for event in self.events:
-            if event["title"] == title:
-                if event.get("thread_id"):
-                    thread = interaction.guild.get_thread(event["thread_id"])
-                    if thread:
-                        await thread.edit(archived=True)
-                self.events.remove(event)
-                self.save_events()
-                return await interaction.response.send_message("🗑️ Event deleted.", ephemeral=True)
-
-        await interaction.response.send_message("❌ Event not found.", ephemeral=True)
-
-    # ----------------- Reminders -----------------
-    @tasks.loop(minutes=1)
-    async def reminder_loop(self):
-        now = datetime.now(TIMEZONE)
-        for event in self.events:
-            if not event.get("reminder_hours"):
-                continue
-            dt = datetime.fromisoformat(event["date"]).astimezone(TIMEZONE)
-            reminder_time = dt - timedelta(hours=event["reminder_hours"])
-            if reminder_time <= now < reminder_time + timedelta(minutes=1):
-                guild = self.bot.get_guild(event["guild_id"])
-                if guild:
-                    channel = guild.system_channel or guild.text_channels[0]
-                    mentions = [f"<@{event['organiser']}"]
-                    if event.get("squad_maker"):
-                        mentions.append(f"<@{event['squad_maker']}>")
-                    await channel.send(f"⏰ Reminder for **{event['title']}** in {event['reminder_hours']}h!\n{' '.join(mentions)}")
-
+# ===== BUTTON VIEW =====
 class CalendarButtons(discord.ui.View):
     def __init__(self, cog):
         super().__init__(timeout=None)
         self.cog = cog
 
-    @discord.ui.button(label="➕ Add Event", style=discord.ButtonStyle.success)
-    async def add_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("Use `/addevent` to add an event.", ephemeral=True)
+    @discord.ui.button(label="➕ Add Event", style=discord.ButtonStyle.green)
+    async def add_event(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.add_event(interaction)
 
-    @discord.ui.button(label="✏️ Edit Event", style=discord.ButtonStyle.primary)
-    async def edit_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("Use `/editevent` to edit an event.", ephemeral=True)
+    @discord.ui.button(label="✏️ Edit Event", style=discord.ButtonStyle.blurple)
+    async def edit_event(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.edit_event(interaction)
 
-    @discord.ui.button(label="🗑️ Remove Event", style=discord.ButtonStyle.danger)
-    async def remove_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("Use `/deleteevent` to remove an event.", ephemeral=True)
+    @discord.ui.button(label="🗑️ Remove Event", style=discord.ButtonStyle.red)
+    async def remove_event(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.remove_event(interaction)
 
-async def setup(bot):
-    await bot.add_cog(CalendarCog(bot))
+
+# ===== MAIN COG =====
+class CalendarCog(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+        self.data = data
+
+    def has_permission(self, interaction: discord.Interaction):
+        return any(r.name in ALLOWED_ROLES for r in interaction.user.roles)
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        channel = self.bot.get_channel(CALENDAR_CHANNEL_ID)
+        if not channel:
+            print("Calendar channel not found")
+            return
+
+        message_id = self.data.get("calendar_message_id")
+        message = None
+
+        # Check if message still exists
+        if message_id:
+            try:
+                message = await channel.fetch_message(message_id)
+            except discord.NotFound:
+                message = None
+
+        # If missing, post new one
+        if not message:
+            embed = build_calendar_embed()
+            view = CalendarButtons(self)
+            new_message = await channel.send(embed=embed, view=view)
+            self.data["calendar_channel_id"] = channel.id
+            self.data["calendar_message_id"] = new_message.id
+            save_data()
+
+        print("✅ Calendar ready")
+
+    # ===== COMMANDS =====
+    @commands.slash_command(name="addevent", description="Add a new event")
+    async def add_event(self, ctx: discord.ApplicationContext):
+        if not self.has_permission(ctx):
+            await ctx.respond("❌ You don’t have permission.", ephemeral=True)
+            return
+
+        modal = EventModal(self, "Add Event")
+        await ctx.send_modal(modal)
+
+    @commands.slash_command(name="editevent", description="Edit an event")
+    async def edit_event(self, ctx: discord.ApplicationContext):
+        if not self.has_permission(ctx):
+            await ctx.respond("❌ You don’t have permission.", ephemeral=True)
+            return
+
+        options = [
+            discord.SelectOption(label=e["title"], value=str(i))
+            for i, e in enumerate(self.data["events"][-25:][::-1])
+        ]
+        if not options:
+            await ctx.respond("No events to edit.", ephemeral=True)
+            return
+
+        select = discord.ui.Select(placeholder="Choose event to edit", options=options)
+
+        async def select_callback(interaction: discord.Interaction):
+            idx = int(select.values[0])
+            modal = EventModal(self, "Edit Event", idx)
+            await interaction.response.send_modal(modal)
+
+        select.callback = select_callback
+        view = discord.ui.View()
+        view.add_item(select)
+        await ctx.respond("Select event to edit:", view=view, ephemeral=True)
+
+    @commands.slash_command(name="deleteevent", description="Delete an event")
+    async def remove_event(self, ctx: discord.ApplicationContext):
+        if not self.has_permission(ctx):
+            await ctx.respond("❌ You don’t have permission.", ephemeral=True)
+            return
+
+        options = [
+            discord.SelectOption(label=e["title"], value=str(i))
+            for i, e in enumerate(self.data["events"][-25:][::-1])
+        ]
+        if not options:
+            await ctx.respond("No events to delete.", ephemeral=True)
+            return
+
+        select = discord.ui.Select(placeholder="Choose event to delete", options=options)
+
+        async def select_callback(interaction: discord.Interaction):
+            idx = int(select.values[0])
+            removed = self.data["events"].pop(idx)
+            save_data()
+            await self.update_calendar_message()
+            await interaction.response.send_message(
+                f"🗑️ Deleted **{removed['title']}**", ephemeral=True
+            )
+
+        select.callback = select_callback
+        view = discord.ui.View()
+        view.add_item(select)
+        await ctx.respond("Select event to delete:", view=view, ephemeral=True)
+
+    async def update_calendar_message(self):
+        channel = self.bot.get_channel(self.data["calendar_channel_id"])
+        message = await channel.fetch_message(self.data["calendar_message_id"])
+        await message.edit(embed=build_calendar_embed(), view=CalendarButtons(self))
+
+
+# ===== MODAL FOR ADD/EDIT =====
+class EventModal(discord.ui.Modal):
+    def __init__(self, cog, title, index=None):
+        super().__init__(title=title)
+        self.cog = cog
+        self.index = index
+
+        self.add_item(discord.ui.InputText(label="Event Title"))
+        self.add_item(discord.ui.InputText(label="Event Date (YYYY-MM-DD HH:MM or TBD)", required=False))
+        self.add_item(discord.ui.InputText(label="Optional Squad Maker (mention ID)", required=False))
+        self.add_item(discord.ui.InputText(label="Reminder Hours (optional)", required=False))
+
+    async def callback(self, interaction: discord.Interaction):
+        title = self.children[0].value.strip()
+        date_value = self.children[1].value.strip()
+        squad_maker = self.children[2].value.strip() or None
+        reminder = int(self.children[3].value) if self.children[3].value else None
+
+        if not date_value or date_value.lower() == "tbd":
+            date_str = "TBD"
+        else:
+            dt = TIMEZONE.localize(datetime.strptime(date_value, "%Y-%m-%d %H:%M"))
+            date_str = dt.isoformat()
+
+        event = {
+            "title": title,
+            "date": date_str,
+            "organiser": interaction.user.id,
+            "squad_maker": int(squad_maker) if squad_maker else None,
+            "reminder_hours": reminder,
+        }
+
+        if self.index is not None:
+            self.cog.data["events"][self.index] = event
+            action = "Edited"
+        else:
+            self.cog.data["events"].append(event)
+            action = "Added"
+
+        save_data()
+        await self.cog.update_calendar_message()
+        await interaction.response.send_message(f"✅ {action} event **{title}**", ephemeral=True)
