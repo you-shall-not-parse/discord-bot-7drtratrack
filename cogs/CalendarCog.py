@@ -217,29 +217,31 @@ def build_calendar_embed(events: list) -> discord.Embed:
     if not sorted_months and not tbc_events:
         embed.description = "No events scheduled."
         return embed
-    
+
     # Add events with dates first
     for i, (year, month) in enumerate(sorted_months):
         # Add a blank line separator before each month header (except the first one)
-    if i > 0:
-        embed.add_field(name="\u200b", value="\u200b", inline=False)
-        
+        if i > 0:
+            embed.add_field(name="\u200b", value="\u200b", inline=False)
+            
         # Fancy decorated month header
         month_name = f"┏━━━━━━ **{calendar.month_name[month]} {year}** ━━━━━━┓"
-    
+        
         body = "\n\n".join(event_to_str(e) for e in month_groups[(year, month)])
         body = "\u200b\n" + body  # Add invisible character + newline for extra space
         embed.add_field(name=month_name, value=body, inline=False)
     
     # Add TBC events last (at the bottom) if there are any
     if tbc_events:
-    # Add a blank line before TBC section if there are other events
-    if sorted_months:
-        embed.add_field(name="\u200b", value="\u200b", inline=False)
-        
+        # Add a blank line before TBC section if there are other events
+        if sorted_months:
+            embed.add_field(name="\u200b", value="\u200b", inline=False)
+            
         body = "\n\n".join(event_to_str(e) for e in tbc_events)
         body = "\u200b\n" + body  # Add invisible character + newline for extra space
         embed.add_field(name="┏━━━━━━ 🔧 **Date TBC** 🔧 ━━━━━━┓", value=body, inline=False)
+
+    return embed
     
     return embed
 
