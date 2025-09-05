@@ -2,6 +2,7 @@ import json
 import pytz
 import calendar
 import discord
+import os
 from datetime import datetime, timedelta, time
 from typing import Optional, List, Dict, Any
 from discord import app_commands
@@ -17,11 +18,6 @@ CALENDAR_MANAGER_ROLES = ["Administration", "7DR-SNCO", "Fight Arrangeer"]
 CALENDAR_GUILD_ID = 1097913605082579024
 CALENDAR_CHANNEL_ID = 1332736267485708419  # The channel where the calendar will be posted
 
-intents = discord.Intents.default()
-intents.message_content = True
-intents.members = True  # Required for member-related parameters
-bot = commands.Bot(command_prefix="!", intents=intents)
-
 # Auto (re)publish the calendar on startup. It will delete the previous embed and post a new one.
 AUTO_PUBLISH_ON_START = True
 
@@ -29,34 +25,54 @@ TARGET_GUILD = discord.Object(id=CALENDAR_GUILD_ID)
 
 
 # ---------------- Utility ----------------
+def initialize_files():
+    """Ensure the events and state files exist"""
+    if not os.path.exists(EVENTS_FILE):
+        print(f"Creating new {EVENTS_FILE} file")
+        with open(EVENTS_FILE, "w") as f:
+            json.dump([], f)
+
+    if not os.path.exists(STATE_FILE):
+        print(f"Creating new {STATE_FILE} file")
+        with open(STATE_FILE, "w") as f:
+            json.dump({}, f)
+
 def has_calendar_permission(member: discord.Member) -> bool:
     return any(role.name in CALENDAR_MANAGER_ROLES for role in member.roles)
 
 
 def load_events() -> list:
+    initialize_files()
     try:
         with open(EVENTS_FILE, "r") as f:
             return json.load(f)
-    except FileNotFoundError:
+    except json.JSONDecodeError:
+        print(f"Error decoding {EVENTS_FILE}, creating empty list")
+        save_events([])
         return []
 
 
 def save_events(events: list) -> None:
     with open(EVENTS_FILE, "w") as f:
         json.dump(events, f, indent=4)
+    print(f"Saved {len(events)} events to {EVENTS_FILE}")
 
 
 def load_state() -> Dict[str, Any]:
+    initialize_files()
     try:
         with open(STATE_FILE, "r") as f:
             return json.load(f)
-    except FileNotFoundError:
+    except json.JSONDecodeError:
+        print(f"Error decoding {STATE_FILE}, creating empty dict")
+        save_state({})
         return {}
 
 
 def save_state(state: Dict[str, Any]) -> None:
     with open(STATE_FILE, "w") as f:
         json.dump(state, f, indent=4)
+    print(f"Saved state to {STATE_FILE}")
 
 
 def get_message_id_for_guild(guild_id: int) -> Optional[int]:
@@ -75,6 +91,7 @@ def set_message_id_for_guild(guild_id: int, message_id: Optional[int]) -> None:
     
     state[str(guild_id)] = guild_state
     save_state(state)
+    print(f"Updated message ID for guild {guild_id} to {message_id}")
 
 
 def event_to_str(event: dict) -> str:
@@ -186,6 +203,9 @@ class CalendarCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        # Initialize files on cog load
+        initialize_files()
+        print("Calendar cog initialized")
 
     # ---------- Helpers ----------
     def get_calendar_channel(self, guild: discord.Guild) -> Optional[discord.TextChannel]:
@@ -193,36 +213,67 @@ class CalendarCog(commands.Cog):
         if isinstance(channel, discord.TextChannel):
             me = guild.me
             if channel and channel.permissions_for(me).send_messages:
+                print(f"Found calendar channel: {channel.name} (ID: {channel.id})")
                 return channel
+        print(f"❌ Could not find or access channel with ID {CALENDAR_CHANNEL_ID}")
         return None
 
-    async def publish_calendar(self, guild: discord.Guild) -> Optional[discord.Message]:
-        """
-        Delete the previous calendar embed (if any) and post a new one to the configured channel.
-        Stores the new message ID in STATE_FILE.
-        """
+    async def get_calendar_message(self, guild: discord.Guild) -> Optional[discord.Message]:
+        """Get the existing calendar message if it exists"""
         channel = self.get_calendar_channel(guild)
         if not channel:
             return None
-
-        # Delete previous message if exists
-        prev_id = get_message_id_for_guild(guild.id)
-        if prev_id:
-            try:
-                msg = await channel.fetch_message(prev_id)
-                await msg.delete()
-            except Exception:
-                # Message might have been deleted or inaccessible
-                pass
-
-        # Build and send new embed
-        events = load_events()
-        embed = build_calendar_embed(events)
+            
+        message_id = get_message_id_for_guild(guild.id)
+        if not message_id:
+            return None
+            
         try:
+            return await channel.fetch_message(message_id)
+        except Exception as e:
+            print(f"Failed to fetch calendar message: {e}")
+            return None
+
+    async def update_calendar(self, guild: discord.Guild) -> Optional[discord.Message]:
+        """
+        Update the existing calendar message or create a new one if it doesn't exist.
+        Only creates a new message if no message ID is found.
+        """
+        print(f"Updating calendar for guild {guild.id} ({guild.name})")
+        
+        channel = self.get_calendar_channel(guild)
+        if not channel:
+            print("❌ Calendar channel not found or not accessible")
+            return None
+
+        # Build the embed
+        events = load_events()
+        print(f"Loaded {len(events)} events from file")
+        embed = build_calendar_embed(events)
+        
+        # Try to get the existing message
+        message = await self.get_calendar_message(guild)
+        
+        if message:
+            # Update existing message
+            try:
+                print(f"Updating existing calendar message {message.id}")
+                await message.edit(embed=embed)
+                print(f"✅ Successfully updated calendar message {message.id}")
+                return message
+            except Exception as e:
+                print(f"❌ Failed to update calendar message: {e}")
+                # If editing fails, we'll fall through to creating a new message
+        
+        # Create a new message if there wasn't one or editing failed
+        try:
+            print(f"Creating new calendar message in channel {channel.name}")
             new_msg = await channel.send(embed=embed)
             set_message_id_for_guild(guild.id, new_msg.id)
+            print(f"✅ Successfully created new calendar message (ID: {new_msg.id})")
             return new_msg
-        except Exception:
+        except Exception as e:
+            print(f"❌ Failed to create new calendar message: {e}")
             return None
 
     async def update_thread_message(self, guild: discord.Guild, event: dict) -> None:
@@ -236,9 +287,10 @@ class CalendarCog(commands.Cog):
                 # Get the first message in the thread
                 async for message in thread.history(limit=1, oldest_first=True):
                     await message.edit(content=event_to_str(event))
+                    print(f"Updated thread message for event '{event['title']}'")
                     break
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Failed to update thread message: {e}")
 
     # ---------- Autocomplete ----------
     async def autocomplete_event_titles(
@@ -319,7 +371,9 @@ class CalendarCog(commands.Cog):
                 )
                 await thread.send(event_to_str(new_event))
                 new_event["thread_id"] = thread.id
-            except Exception:
+                print(f"Created thread for event '{title}' in channel {thread_channel.name}")
+            except Exception as e:
+                print(f"Failed to create thread: {e}")
                 await interaction.response.send_message(
                     "⚠️ Event added but failed to create thread.", ephemeral=True
                 )
@@ -328,10 +382,13 @@ class CalendarCog(commands.Cog):
         events.append(new_event)
         save_events(events)
 
-        # Publish updated calendar
+        # Update the calendar embed
         await interaction.response.defer(ephemeral=True)
-        await self.publish_calendar(interaction.guild)
-        await interaction.followup.send("✅ Event added and calendar updated.", ephemeral=True)
+        result = await self.update_calendar(interaction.guild)
+        if result:
+            await interaction.followup.send("✅ Event added and calendar updated.", ephemeral=True)
+        else:
+            await interaction.followup.send("⚠️ Event added but failed to update calendar display.", ephemeral=True)
 
     @app_commands.guilds(TARGET_GUILD)
     @app_commands.command(name="editcalendar", description="Edit an event on the calendar.")
@@ -428,8 +485,9 @@ class CalendarCog(commands.Cog):
                 )
                 await thread.send(event_to_str(event))
                 event["thread_id"] = thread.id
-            except Exception:
-                pass
+                print(f"Created new thread for edited event '{event['title']}' in channel {thread_channel.name}")
+            except Exception as e:
+                print(f"Failed to create thread for edited event: {e}")
 
         # Update existing thread if it exists
         await self.update_thread_message(interaction.guild, event)
@@ -437,8 +495,11 @@ class CalendarCog(commands.Cog):
         save_events(events)
 
         await interaction.response.defer(ephemeral=True)
-        await self.publish_calendar(interaction.guild)
-        await interaction.followup.send("✅ Event updated and calendar refreshed.", ephemeral=True)
+        result = await self.update_calendar(interaction.guild)
+        if result:
+            await interaction.followup.send("✅ Event updated and calendar refreshed.", ephemeral=True)
+        else:
+            await interaction.followup.send("⚠️ Event updated but failed to refresh calendar display.", ephemeral=True)
 
     @app_commands.guilds(TARGET_GUILD)
     @app_commands.command(name="removefromcalendar", description="Remove an event from the calendar.")
@@ -464,34 +525,69 @@ class CalendarCog(commands.Cog):
                 thread = interaction.guild.get_thread(event["thread_id"])
                 if thread:
                     await thread.edit(archived=True)
-            except Exception:
-                pass
+                    print(f"Archived thread for event '{title}'")
+            except Exception as e:
+                print(f"Failed to archive thread: {e}")
 
         events = [e for e in events if e["title"] != title]
         save_events(events)
 
         await interaction.response.defer(ephemeral=True)
-        await self.publish_calendar(interaction.guild)
-        await interaction.followup.send("🗑️ Event removed and calendar updated.", ephemeral=True)
+        result = await self.update_calendar(interaction.guild)
+        if result:
+            await interaction.followup.send("🗑️ Event removed and calendar updated.", ephemeral=True)
+        else:
+            await interaction.followup.send("⚠️ Event removed but failed to update calendar display.", ephemeral=True)
 
     # ---------- Startup ----------
     @commands.Cog.listener()
     async def on_ready(self):
+        print(f"Bot is ready! Logged in as {self.bot.user}")
+        
         # Ensure commands are synced to the target guild only
         try:
-            await self.bot.tree.sync(guild=discord.Object(id=CALENDAR_GUILD_ID))
+            synced = await self.bot.tree.sync(guild=discord.Object(id=CALENDAR_GUILD_ID))
+            print(f"Synced {len(synced)} commands to guild {CALENDAR_GUILD_ID}")
         except Exception as e:
             print(f"Failed to sync commands: {e}")
-        
+
+        # Always try to publish the calendar on startup
         if AUTO_PUBLISH_ON_START:
             try:
                 guild = self.bot.get_guild(CALENDAR_GUILD_ID)
                 if guild:
-                    await self.publish_calendar(guild)
-            except Exception:
-                pass
+                    print(f"Found guild: {guild.name} (ID: {guild.id})")
+                    # On startup, we'll create a new message regardless of existing ones
+                    channel = self.get_calendar_channel(guild)
+                    if channel:
+                        # Delete previous message if exists
+                        prev_id = get_message_id_for_guild(guild.id)
+                        if prev_id:
+                            try:
+                                msg = await channel.fetch_message(prev_id)
+                                await msg.delete()
+                                print(f"Deleted previous calendar message {prev_id}")
+                            except Exception as e:
+                                print(f"Could not delete previous message: {e}")
+                        
+                        # Create a new message
+                        events = load_events()
+                        embed = build_calendar_embed(events)
+                        try:
+                            new_msg = await channel.send(embed=embed)
+                            set_message_id_for_guild(guild.id, new_msg.id)
+                            print(f"Created new calendar message on startup (ID: {new_msg.id})")
+                        except Exception as e:
+                            print(f"Failed to create calendar message on startup: {e}")
+                    else:
+                        print("Could not find calendar channel")
+                else:
+                    print(f"❌ Could not find guild with ID {CALENDAR_GUILD_ID}")
+            except Exception as e:
+                print(f"❌ Error publishing calendar on startup: {e}")
 
 
 # ---------------- Extension setup ----------------
 async def setup(bot: commands.Bot):
     await bot.add_cog(CalendarCog(bot))
+    print("Calendar cog loaded")
