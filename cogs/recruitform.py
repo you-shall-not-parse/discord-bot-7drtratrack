@@ -102,6 +102,52 @@ class RecruitFormCog(commands.Cog):
         conn.close()
         return results or []
 
+    async def delete_previous_form_embeds(self):
+        """Delete previous recruitment form embeds posted by the bot in FORM_CHANNEL_ID."""
+        channel = self.bot.get_channel(FORM_CHANNEL_ID)
+        if not channel:
+            print(f"Channel ID {FORM_CHANNEL_ID} not found for deletion.")
+            return
+
+        # Fetch recent messages in the channel (limit can be adjusted)
+        async for message in channel.history(limit=20):
+            # Only delete messages sent by the bot that have an embed with the expected title
+            if (
+                message.author.id == self.bot.user.id and
+                message.embeds and
+                message.embeds[0].title == "7DR Recruit Form"
+            ):
+                try:
+                    await message.delete()
+                    print(f"Deleted previous recruit form embed: {message.id}")
+                except Exception as e:
+                    print(f"Failed to delete message {message.id}: {e}")
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        """Posts the recruitment embed with button when bot starts."""
+        await self.delete_previous_form_embeds()  # <--- Call deletion here
+
+        channel = self.bot.get_channel(FORM_CHANNEL_ID)
+        if not channel:
+            print(f"Channel ID {FORM_CHANNEL_ID} not found.")
+            return
+        embed = discord.Embed(
+            title="7DR Recruit Form",
+            description=(
+                "We need this info to get you all set up! \n"
+                "In completing this form I agree to be an active member of this unit," 
+                " positively contributing to the discord server chats, taking part in training"
+                "sessions 1-2 times per week and regularly attending events. \n\n I understand"
+                " if I don't positively contribute and stop communicating with my platoon," 
+                " I will be removed from the unit.\n\n **Click the button below to start your application**"
+            ),
+            color=discord.Color.blue()
+        )
+        view = RecruitButtonView(self)
+        msg = await channel.send(embed=embed, view=view)
+        self.embed_message_id = msg.id
+    
     @commands.Cog.listener()
     async def on_ready(self):
         """Posts the recruitment embed with button when bot starts."""
