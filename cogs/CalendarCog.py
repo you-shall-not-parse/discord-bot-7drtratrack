@@ -12,7 +12,7 @@ EVENTS_FILE = "events.json"
 TIMEZONE = pytz.timezone("Europe/London")
 CALENDAR_MANAGER_ROLES = ["Administration", "7DR-SNCO", "Fight Arrangeer"]
 # Required: set these to your guild & channel IDs (integers)
-GUILD_ID = 0  # <-- REPLACE with your guild id (int)
+GUILD_ID = 1097913605082579024  # <-- REPLACE with your guild id (int)
 CALENDAR_CHANNEL_ID = 1332736267485708419  # <-- REPLACE with your calendar channel id (int)
 
 # ===== LOGGING =====
