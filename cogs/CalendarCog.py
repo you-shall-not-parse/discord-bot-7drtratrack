@@ -11,7 +11,7 @@ from discord.ext import commands, tasks
 EVENTS_FILE = "events.json"
 STATE_FILE = "calendar_state.json"  # stores per-guild channel_id and last message_id
 TIMEZONE = pytz.timezone("Europe/London")
-CALENDAR_MANAGER_ROLES = ["Admininstration", "7DR-SNCO", "Fight Arrangeer"]
+CALENDAR_MANAGER_ROLES = ["Administration", "7DR-SNCO", "Fight Arrangeer"]
 
 # Set your target guild and (optionally) a default calendar channel here.
 # You can also configure the channel via the /calendar setchannel command and it will be saved in STATE_FILE.
