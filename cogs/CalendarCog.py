@@ -1,6 +1,6 @@
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
-from discord.ui import View, Button, Select, Modal, TextInput
 from datetime import datetime, timedelta
 import pytz
 import json
@@ -12,12 +12,16 @@ EVENTS_FILE = "events.json"
 TIMEZONE = pytz.timezone("Europe/London")
 CALENDAR_MANAGER_ROLES = ["Administration", "7DR-SNCO", "Fight Arrangeer"]
 # Required: set these to your guild & channel IDs (integers)
-GUILD_ID = 1097913605082579024  # <-- REPLACE with your guild id (int)
-CALENDAR_CHANNEL_ID = 1332736267485708419  # <-- REPLACE with your calendar channel id (int)
+GUILD_ID = 0  # <-- REPLACE with your guild id (int) for fast command sync (optional)
+CALENDAR_CHANNEL_ID = 0  # <-- REPLACE with your calendar channel id (int)
 
 # ===== LOGGING =====
-logging.basicConfig(level=logging.INFO, filename="calendar_debug.log", filemode="a",
-                    format="%(asctime)s %(levelname)s %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    filename="calendar_debug.log",
+    filemode="a",
+    format="%(asctime)s %(levelname)s %(message)s",
+)
 console = logging.StreamHandler()
 console.setLevel(logging.INFO)
 logging.getLogger().addHandler(console)
@@ -25,6 +29,7 @@ logging.getLogger().addHandler(console)
 # ---------------- Utility ----------------
 def has_calendar_permission(member: discord.Member) -> bool:
     return any(role.name in CALENDAR_MANAGER_ROLES for role in member.roles)
+
 
 def load_events():
     try:
@@ -36,15 +41,17 @@ def load_events():
         logging.exception("Failed to load events file")
         return []
 
+
 def save_events(events):
     try:
-        # atomic-ish write: write to tmp file then replace
+        # atomic-ish write
         tmp_path = EVENTS_FILE + ".tmp"
         with open(tmp_path, "w") as f:
             json.dump(events, f, indent=4)
         os.replace(tmp_path, EVENTS_FILE)
     except Exception:
         logging.exception("Failed to save events to file")
+
 
 def event_to_str(event):
     # Safely format date; support TBD and malformed dates
@@ -59,7 +66,11 @@ def event_to_str(event):
     organiser = f"<@{event['organiser']}>" if event.get("organiser") else "Unknown"
     squad_maker = f"<@{event['squad_maker']}>" if event.get("squad_maker") else "None"
     reminder = f"{event['reminder_hours']}h before" if event.get("reminder_hours") else "None"
-    thread = f"[Link](https://discord.com/channels/{event.get('guild_id')}/{event.get('thread_id')})" if event.get("thread_id") else "None"
+    thread = (
+        f"[Link](https://discord.com/channels/{event.get('guild_id')}/{event.get('thread_id')})"
+        if event.get("thread_id")
+        else "None"
+    )
     return (
         f"📌 **{event.get('title','Untitled')}**\n"
         f"🗓️ {date_str}\n"
@@ -68,6 +79,7 @@ def event_to_str(event):
         f"⏰ Reminder: {reminder}\n"
         f"🧵 Thread: {thread}"
     )
+
 
 def group_events(events):
     now = datetime.now(TIMEZONE)
@@ -84,6 +96,7 @@ def group_events(events):
             future.append(event)
             continue
         if event.get("recurring"):
+            # if recurring and far in the future, skip
             if dt > now + timedelta(weeks=2):
                 continue
         if dt.month == now.month and dt.year == now.year:
@@ -94,13 +107,14 @@ def group_events(events):
             future.append(event)
     return this_month, next_month, future
 
+
 def build_calendar_embed(events):
     this_month, next_month, future = group_events(events)
     embed = discord.Embed(
         title="📅 Unit Calendar",
         description="Upcoming scheduled events",
         colour=discord.Colour.blue(),
-        timestamp=datetime.now(TIMEZONE)
+        timestamp=datetime.now(TIMEZONE),
     )
     if this_month:
         embed.add_field(name="This Month", value="\n\n".join(event_to_str(e) for e in this_month), inline=False)
@@ -112,188 +126,8 @@ def build_calendar_embed(events):
         embed.description = "No events scheduled."
     return embed
 
-# ---------------- Modal ----------------
-class EventModal(Modal, title="Add/Edit Event"):
-    def __init__(self, interaction, event=None):
-        super().__init__()
-        self.interaction = interaction
-        self.event = event
-        # defaults are safe-guarded for missing or TBD dates
-        title_default = event.get("title", "") if event else ""
-        date_default = ""
-        if event and event.get("date") and event.get("date") != "TBD":
-            try:
-                date_default = datetime.fromisoformat(event["date"]).strftime("%Y-%m-%d %H:%M")
-            except Exception:
-                date_default = ""
-        recurring_default = "yes" if event and event.get("recurring") else "no"
-        organiser_default = f"<@{event.get('organiser')}>" if event and event.get("organiser") else ""
-        squad_default = f"<@{event.get('squad_maker')}>" if event and event.get("squad_maker") else ""
-        reminder_default = str(event.get("reminder_hours")) if event and event.get("reminder_hours") is not None else ""
-        thread_default = str(event.get("thread_channel")) if event and event.get("thread_channel") else ""
 
-        self.add_item(TextInput(label="Title", default=title_default, required=True))
-        # allow blank = TBD
-        self.add_item(TextInput(label="Date & Time (YYYY-MM-DD HH:MM)", default=date_default, required=False))
-        self.add_item(TextInput(label="Recurring? (yes/no)", default=recurring_default, required=False))
-        self.add_item(TextInput(label="Organiser (mention @user or ID, optional)", default=organiser_default, required=False))
-        self.add_item(TextInput(label="Squad Maker (mention @user or ID, optional)", default=squad_default, required=False))
-        self.add_item(TextInput(label="Reminder (hours before, optional)", default=reminder_default, required=False))
-        self.add_item(TextInput(label="Thread Channel ID (optional)", default=thread_default, required=False))
-
-    async def on_submit(self, interaction: discord.Interaction):
-        if not has_calendar_permission(interaction.user):
-            await interaction.response.send_message("❌ You don’t have permission to manage events.", ephemeral=True)
-            return
-
-        events = load_events()
-        title = self.children[0].value.strip() or "Untitled"
-        date_raw = self.children[1].value.strip()
-        if not date_raw:
-            date_iso = "TBD"
-        else:
-            try:
-                dt = datetime.strptime(date_raw, "%Y-%m-%d %H:%M")
-                dt = TIMEZONE.localize(dt)
-                date_iso = dt.isoformat()
-            except Exception:
-                await interaction.response.send_message("❌ Date must be in format YYYY-MM-DD HH:MM or blank for TBD.", ephemeral=True)
-                return
-
-        recurring = self.children[2].value.strip().lower() == "yes"
-
-        organiser_override = None
-        squad_maker = None
-
-        def parse_mention_or_id(s: str):
-            s = s.strip()
-            if not s:
-                return None
-            # allow <@!123>, <@123>, plain 123 — extract digits
-            digits = ''.join(ch for ch in s if ch.isdigit())
-            try:
-                return int(digits) if digits else None
-            except Exception:
-                return None
-
-        organiser_override = parse_mention_or_id(self.children[3].value)
-        squad_maker = parse_mention_or_id(self.children[4].value)
-
-        reminder_hours = None
-        if self.children[5].value.strip().isdigit():
-            reminder_hours = int(self.children[5].value.strip())
-        thread_channel = None
-        if self.children[6].value.strip().isdigit():
-            thread_channel = int(self.children[6].value.strip())
-
-        new_event = {
-            "title": title,
-            "date": date_iso,
-            "recurring": recurring,
-            "organiser": organiser_override or interaction.user.id,
-            "squad_maker": squad_maker,
-            "reminder_hours": reminder_hours,
-            "guild_id": interaction.guild_id,
-            "thread_channel": thread_channel,
-            "thread_id": None,
-            "reminded": False
-        }
-
-        if self.event:
-            # remove previous event(s) with the same title that we're editing
-            events = [e for e in events if e.get("title") != self.event.get("title")]
-        events.append(new_event)
-        save_events(events)
-
-        # Create thread if requested
-        if thread_channel:
-            channel = interaction.guild.get_channel(thread_channel)
-            if channel and isinstance(channel, discord.TextChannel):
-                try:
-                    thread = await channel.create_thread(name=title, type=discord.ChannelType.public_thread)
-                    msg = await thread.send(event_to_str(new_event))
-                    new_event["thread_id"] = thread.id
-                    save_events(events)
-                except Exception:
-                    logging.exception("Failed to create thread for event")
-
-        embed = build_calendar_embed(events)
-        # Edit the original interactive message that opened the modal (no buttons attached), fallback to ephemeral
-        try:
-            await interaction.response.edit_message(embed=embed)
-        except Exception:
-            try:
-                await interaction.followup.send("✅ Event saved — calendar updated.", ephemeral=True)
-            except Exception:
-                logging.exception("Failed to notify user after saving event")
-
-# ---------------- Buttons & View ----------------
-class CalendarView(View):
-    def __init__(self):
-        super().__init__(timeout=None)
-        # Buttons are created via the decorator methods below; do not add duplicate Button instances here.
-
-    @discord.ui.button(label="➕ Add Event", style=discord.ButtonStyle.green, custom_id="addevent")
-    async def add_event(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.send_modal(EventModal(interaction))
-
-    @discord.ui.button(label="✏️ Edit Event", style=discord.ButtonStyle.blurple, custom_id="editevent")
-    async def edit_event(self, interaction: discord.Interaction, button: Button):
-        events = sorted(load_events(), key=lambda e: e.get("date") or "", reverse=True)[:25]
-        if not events:
-            await interaction.response.send_message("No events to edit.", ephemeral=True)
-            return
-        # KEEP USING TITLES as requested (may be ambiguous if duplicates exist)
-        options = [discord.SelectOption(label=e.get("title", "Untitled"), value=e.get("title", "Untitled")) for e in events]
-        select = Select(placeholder="Choose an event to edit", options=options)
-
-        async def select_callback(inter: discord.Interaction):
-            chosen = next((e for e in events if e.get("title") == select.values[0]), None)
-            if not chosen:
-                await inter.response.send_message("❌ Selected event not found (titles may be duplicated).", ephemeral=True)
-                return
-            await inter.response.send_modal(EventModal(inter, chosen))
-        select.callback = select_callback
-        view = View()
-        view.add_item(select)
-        await interaction.response.send_message("Select an event to edit:", view=view, ephemeral=True)
-
-    @discord.ui.button(label="❌ Remove Event", style=discord.ButtonStyle.red, custom_id="removeevent")
-    async def remove_event(self, interaction: discord.Interaction, button: Button):
-        events = sorted(load_events(), key=lambda e: e.get("date") or "", reverse=True)[:25]
-        if not events:
-            await interaction.response.send_message("No events to remove.", ephemeral=True)
-            return
-        options = [discord.SelectOption(label=e.get("title", "Untitled"), value=e.get("title", "Untitled")) for e in events]
-        select = Select(placeholder="Choose an event to remove", options=options)
-
-        async def select_callback(inter: discord.Interaction):
-            title = select.values[0]
-            events_all = load_events()
-            event = next((e for e in events_all if e.get("title") == title), None)
-            if not event:
-                await inter.response.send_message("❌ Selected event not found (titles may be duplicated).", ephemeral=True)
-                return
-            if event.get("thread_id"):
-                thread = interaction.guild.get_thread(event.get("thread_id"))
-                if thread:
-                    try:
-                        await thread.edit(archived=True)
-                    except Exception:
-                        logging.exception("Failed to archive thread for event %s", title)
-            events_all = [e for e in events_all if e.get("title") != title]
-            save_events(events_all)
-            embed = build_calendar_embed(events_all)
-            try:
-                await inter.response.edit_message(embed=embed)
-            except Exception:
-                await inter.response.send_message("✅ Event removed — calendar updated.", ephemeral=True)
-        select.callback = select_callback
-        view = View()
-        view.add_item(select)
-        await interaction.response.send_message("Select an event to remove:", view=view, ephemeral=True)
-
-# ---------------- Cog ----------------
+# ---------------- Cog (no buttons / no UI) ----------------
 class CalendarCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -302,6 +136,21 @@ class CalendarCog(commands.Cog):
         except RuntimeError:
             # already running (hot-reload)
             pass
+
+    async def cog_load(self):
+        # Register the app command on the tree and sync to guild if provided
+        try:
+            try:
+                self.bot.tree.add_command(self.calendar_app)
+            except Exception:
+                # may already be added
+                pass
+            if isinstance(GUILD_ID, int) and GUILD_ID:
+                await self.bot.tree.sync(guild=discord.Object(id=GUILD_ID))
+            else:
+                await self.bot.tree.sync()
+        except Exception:
+            logging.exception("Failed to sync app commands in cog_load")
 
     def cog_unload(self):
         try:
@@ -330,22 +179,30 @@ class CalendarCog(commands.Cog):
                                 logging.info("Deleted previous calendar embed message id=%s", msg.id)
                             except Exception:
                                 logging.exception("Failed to delete previous calendar embed id=%s", msg.id)
-            # post fresh calendar embed without buttons
+            # post fresh calendar embed without interactive buttons
             events = load_events()
             embed = build_calendar_embed(events)
             await channel.send(embed=embed)
         except Exception:
             logging.exception("Failed to refresh calendar on_ready")
 
-    @commands.slash_command(name="calendar", description="Show or update the unit calendar")
-    async def calendar(self, ctx: discord.ApplicationContext):
-        if not has_calendar_permission(ctx.user):
-            await ctx.respond("❌ You don’t have permission to manage the calendar.", ephemeral=True)
+    # --- App (slash) command only (no UI/buttons) ---
+    @app_commands.command(name="calendar", description="Show or update the unit calendar")
+    async def calendar_app(self, interaction: discord.Interaction):
+        # permission check
+        if not has_calendar_permission(interaction.user):
+            await interaction.response.send_message("❌ You don’t have permission to manage the calendar.", ephemeral=True)
             return
         events = load_events()
         embed = build_calendar_embed(events)
-        # Do not attach the CalendarView/buttons anymore
-        await ctx.respond(embed=embed)
+        try:
+            await interaction.response.send_message(embed=embed)
+        except Exception:
+            logging.exception("Failed to send /calendar response")
+            try:
+                await interaction.response.send_message("✅ Calendar generated (failed to embed).", ephemeral=True)
+            except Exception:
+                pass
 
     @tasks.loop(minutes=10)
     async def reminder_task(self):
@@ -365,8 +222,10 @@ class CalendarCog(commands.Cog):
                     channel = guild.system_channel or discord.utils.get(guild.text_channels, permissions__send_messages=True)
                     if channel:
                         mentions = []
-                        if event.get("organiser"): mentions.append(f"<@{event['organiser']}>")
-                        if event.get("squad_maker"): mentions.append(f"<@{event['squad_maker']}>")
+                        if event.get("organiser"):
+                            mentions.append(f"<@{event['organiser']}>")
+                        if event.get("squad_maker"):
+                            mentions.append(f"<@{event['squad_maker']}>")
                         try:
                             await channel.send(f"⏰ Reminder: {event['title']} starts at {dt.strftime('%d %b %Y, %H:%M %Z')}!\n{' '.join(mentions)}")
                         except Exception:
@@ -376,5 +235,6 @@ class CalendarCog(commands.Cog):
         if updated:
             save_events(events)
 
-def setup(bot):
-    bot.add_cog(CalendarCog(bot))
+
+async def setup(bot):
+    await bot.add_cog(CalendarCog(bot))
