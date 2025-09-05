@@ -110,7 +110,7 @@ def event_to_str(event: dict) -> str:
     
     # Add recurring indicator if applicable
     if event.get("recurring", False):
-        msg += " (2 week rolling recurring event!)"
+        msg += " _(2 week rolling/recurring)_"
     
     msg += "\n"
     
@@ -120,13 +120,15 @@ def event_to_str(event: dict) -> str:
     else:
         # Use display_date if available (for recurring events), otherwise use date
         date_field = event.get("display_date", event.get("date"))
-        dt = datetime.fromisoformat(date_field).astimezone(TIMEZONE)
-        msg += f"🗓️ {dt.strftime('%d/%m/%Y')}"
+        dt = datetime.fromisoformat(date_field)
+        
+        # Convert to timezone WITHOUT adjusting the time
+        # This prevents the extra minute issue by just using the time components directly
+        msg += f"🗓️ {dt.day:02d}/{dt.month:02d}/{dt.year}"
         
         # Only show time if it was explicitly set (has_time flag is True)
-        # Removed "UK time" reference as requested
         if event.get("has_time", False):
-            msg += f", {dt.strftime('%H:%M')}"
+            msg += f", {dt.hour:02d}:{dt.minute:02d}"
     
     msg += f"\n👤 Organiser: {organiser}"
     
