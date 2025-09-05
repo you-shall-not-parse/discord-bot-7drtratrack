@@ -324,7 +324,7 @@ class CalendarCog(commands.Cog):
     @app_commands.describe(
         title="Event title",
         description="Optional description of the event",
-        date="Date in DD/MM/YYYY format (optional, 'TBC' if not provided)",
+        date="Date in DD/MM/YYYY format (optional, use 'TBC' or leave empty if unknown)",
         time="Time in HH:MM format (24-hour, optional)",
         organiser="The event organiser",
         squad_maker="Squad maker (optional)",
@@ -350,12 +350,12 @@ class CalendarCog(commands.Cog):
         # Initialize event with date as None (TBC)
         event_date = None
             
-        # Parse date if provided
-        if date:
+        # Parse date if provided and not "TBC"
+        if date and date.lower() != "tbc":
             event_date = parse_date(date)
             if not event_date:
                 await interaction.response.send_message(
-                    "❌ Invalid date format. Use DD/MM/YYYY.", ephemeral=True
+                    "❌ Invalid date format. Use DD/MM/YYYY or 'TBC'.", ephemeral=True
                 )
                 return
 
@@ -372,7 +372,7 @@ class CalendarCog(commands.Cog):
                     hour=event_time.hour,
                     minute=event_time.minute
                 )
-            
+        
         events = load_events()
         new_event = {
             "title": title,
@@ -418,7 +418,7 @@ class CalendarCog(commands.Cog):
         title="Title of the event to edit",
         new_title="New event title (optional)",
         description="New description (optional)",
-        date="New date in DD/MM/YYYY format (use 'clear' to set as TBC)",
+        date="New date in DD/MM/YYYY format (use 'clear' or 'TBC' to set as TBC)",
         time="New time in HH:MM format (24-hour, optional)",
         organiser="New event organiser (optional)",
         squad_maker="New squad maker (optional)",
@@ -461,13 +461,13 @@ class CalendarCog(commands.Cog):
         # Handle date changes
         if date:
             # Check if user wants to clear the date
-            if date.lower() == 'clear':
+            if date.lower() in ['clear', 'tbc']:
                 event["date"] = None
             else:
                 event_date = parse_date(date)
                 if not event_date:
                     await interaction.response.send_message(
-                        "❌ Invalid date format. Use DD/MM/YYYY or 'clear' to set as TBC.", ephemeral=True
+                        "❌ Invalid date format. Use DD/MM/YYYY or 'clear'/'TBC' to set as TBC.", ephemeral=True
                     )
                     return
                     
