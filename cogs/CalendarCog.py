@@ -215,6 +215,12 @@ def find_sendable_channel(guild: discord.Guild) -> Optional[discord.TextChannel]
     return None
 
 
+def is_date_in_past(dt: datetime) -> bool:
+    """Check if a date is in the past."""
+    now = datetime.now(TIMEZONE)
+    return dt < now
+
+
 # ---------------- Calendar Cog ----------------
 class CalendarCog(commands.Cog):
     """Calendar management for the unit"""
@@ -224,6 +230,12 @@ class CalendarCog(commands.Cog):
         # Initialize files on cog load
         initialize_files()
         print("Calendar cog initialized")
+        # Start the cleanup task
+        self.cleanup_expired_events.start()
+
+    def cog_unload(self):
+        # Stop the task when the cog is unloaded
+        self.cleanup_expired_events.cancel()
 
     # ---------- Helpers ----------
     def get_calendar_channel(self, guild: discord.Guild) -> Optional[discord.TextChannel]:
@@ -310,6 +322,73 @@ class CalendarCog(commands.Cog):
         except Exception as e:
             print(f"Failed to update thread message: {e}")
 
+    async def archive_thread(self, guild: discord.Guild, event: dict) -> None:
+        """Archive the thread associated with an event."""
+        if not event.get("thread_id"):
+            return
+            
+        try:
+            thread = guild.get_thread(event["thread_id"])
+            if thread:
+                await thread.edit(archived=True, locked=True)
+                print(f"Archived and locked thread for expired event '{event['title']}'")
+        except Exception as e:
+            print(f"Failed to archive thread: {e}")
+
+    # ---------- Periodic Tasks ----------
+    @tasks.loop(hours=12)  # Run twice a day
+    async def cleanup_expired_events(self):
+        """Check for and remove expired events, archive their threads."""
+        print("Running cleanup for expired events...")
+        
+        now = datetime.now(TIMEZONE)
+        events = load_events()
+        expired_events = []
+        active_events = []
+        
+        for event in events:
+            # Skip events with no date (TBC)
+            if event.get("date") is None:
+                active_events.append(event)
+                continue
+                
+            event_date = datetime.fromisoformat(event["date"]).astimezone(TIMEZONE)
+            if event_date < now:
+                expired_events.append(event)
+            else:
+                active_events.append(event)
+        
+        # If there are expired events, archive threads and update the events list
+        if expired_events:
+            print(f"Found {len(expired_events)} expired events to clean up")
+            
+            for guild_id in {int(event["guild_id"]) for event in expired_events}:
+                guild = self.bot.get_guild(guild_id)
+                if guild:
+                    # Archive threads for all expired events
+                    for event in expired_events:
+                        if int(event["guild_id"]) == guild_id:
+                            await self.archive_thread(guild, event)
+            
+            # Save the active events only
+            save_events(active_events)
+            
+            # Update the calendar display for all guilds
+            for guild_id in {int(event["guild_id"]) for event in events}:
+                guild = self.bot.get_guild(guild_id)
+                if guild:
+                    await self.update_calendar(guild)
+            
+            print(f"Cleanup complete - removed {len(expired_events)} expired events")
+        else:
+            print("No expired events found")
+
+    @cleanup_expired_events.before_loop
+    async def before_cleanup(self):
+        """Wait for the bot to be ready before starting the cleanup task."""
+        await self.bot.wait_until_ready()
+        print("Starting expired events cleanup task")
+
     # ---------- Autocomplete ----------
     async def autocomplete_event_titles(
         self, interaction: discord.Interaction, current: str
@@ -360,6 +439,13 @@ class CalendarCog(commands.Cog):
                     "❌ Invalid date format. Use DD/MM/YYYY or 'TBC'.", ephemeral=True
                 )
                 return
+                
+            # Check if date is in the past
+            if is_date_in_past(event_date):
+                await interaction.response.send_message(
+                    "❌ Cannot add events in the past. Please use a future date.", ephemeral=True
+                )
+                return
 
             # Parse time if provided and date exists
             if time:
@@ -375,6 +461,13 @@ class CalendarCog(commands.Cog):
                     minute=event_time.minute
                 )
                 has_time_flag = True
+                
+                # Check again with time component if date is in the past
+                if is_date_in_past(event_date):
+                    await interaction.response.send_message(
+                        "❌ Cannot add events in the past. Please use a future date and time.", ephemeral=True
+                    )
+                    return
         
         events = load_events()
         new_event = {
@@ -475,6 +568,13 @@ class CalendarCog(commands.Cog):
                         "❌ Invalid date format. Use DD/MM/YYYY or 'clear'/'TBC' to set as TBC.", ephemeral=True
                     )
                     return
+                
+                # Check if new date is in the past
+                if is_date_in_past(event_date):
+                    await interaction.response.send_message(
+                        "❌ Cannot set event date to the past. Please use a future date.", ephemeral=True
+                    )
+                    return
                     
                 # If only date is provided and there was a previous time, keep it
                 if not time and current_date and event["date"] and event.get("has_time", False):
@@ -504,6 +604,14 @@ class CalendarCog(commands.Cog):
                 hour=event_time.hour,
                 minute=event_time.minute
             )
+            
+            # Check if the new datetime is in the past
+            if is_date_in_past(updated_date):
+                await interaction.response.send_message(
+                    "❌ Cannot set event time to the past. Please use a future time.", ephemeral=True
+                )
+                return
+                
             event["date"] = updated_date.isoformat()
             event["has_time"] = True
 
@@ -560,8 +668,8 @@ class CalendarCog(commands.Cog):
             try:
                 thread = interaction.guild.get_thread(event["thread_id"])
                 if thread:
-                    await thread.edit(archived=True)
-                    print(f"Archived thread for event '{title}'")
+                    await thread.edit(archived=True, locked=True)
+                    print(f"Archived and locked thread for event '{title}'")
             except Exception as e:
                 print(f"Failed to archive thread: {e}")
 
@@ -579,6 +687,9 @@ class CalendarCog(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         print(f"Bot is ready! Logged in as {self.bot.user}")
+        
+        # Run initial cleanup of expired events
+        await self.cleanup_expired_events()
         
         # Ensure commands are synced to the target guild only
         try:
