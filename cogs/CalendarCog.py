@@ -11,7 +11,7 @@ from discord.ext import commands, tasks
 EVENTS_FILE = "events.json"
 STATE_FILE = "calendar_state.json"  # stores per-guild channel_id and last message_id
 TIMEZONE = pytz.timezone("Europe/London")
-CALENDAR_MANAGER_ROLES = ["Admin", "EventManager"]
+CALENDAR_MANAGER_ROLES = ["Admininstration", "7DR-SNCO", "Fight Arrangeer"]
 
 # Set your target guild and (optionally) a default calendar channel here.
 # You can also configure the channel via the /calendar setchannel command and it will be saved in STATE_FILE.
@@ -177,7 +177,7 @@ def find_sendable_channel(guild: discord.Guild) -> Optional[discord.TextChannel]
 
 
 # ---------------- Slash Commands (discord.py 2.3.2 via app_commands) ----------------
-class Calendar(commands.GroupCog, name="calendar"):
+class CalendarCog(commands.GroupCog, name="calendar"):
     """Manage the unit calendar"""
 
     def __init__(self, bot: commands.Bot):
