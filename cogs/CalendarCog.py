@@ -35,7 +35,6 @@ def build_calendar_embed():
     dated_events = [e for e in events if e["date"] != "TBD"]
     tbd_events = [e for e in events if e["date"] == "TBD"]
 
-    # Convert ISO strings to datetimes safely (they should be ISO produced by this cog)
     dated_events = sorted(dated_events, key=lambda e: datetime.fromisoformat(e["date"]))
 
     grouped = {"this_month": [], "next_month": [], "other": {}, "tbd": []}
@@ -120,7 +119,7 @@ class CalendarButtons(discord.ui.View):
 # ===== MODAL FOR ADD/EDIT =====
 class EventModal(discord.ui.Modal):
     def __init__(self, cog, title, index=None):
-        # Using discord.py v2+ TextInput
+        # discord.py 2.x uses TextInput
         super().__init__(title=title)
         self.cog = cog
         self.index = index
@@ -160,58 +159,65 @@ class EventModal(discord.ui.Modal):
         )
 
     async def callback(self, interaction: discord.Interaction):
-        title = self.children[0].value.strip()
-        date_value = self.children[1].value.strip()
-        squad_maker = self.children[2].value.strip() or None
-        reminder_raw = self.children[3].value.strip()
+        import logging, traceback
+        try:
+            title = self.children[0].value.strip()
+            date_value = self.children[1].value.strip()
+            squad_maker = self.children[2].value.strip() or None
+            reminder_raw = self.children[3].value.strip()
 
-        # Parse reminder safely
-        reminder = None
-        if reminder_raw:
-            try:
-                reminder = int(reminder_raw)
-            except ValueError:
-                await interaction.response.send_message("❌ Reminder must be an integer number of hours.", ephemeral=True)
-                return
+            # Parse reminder safely
+            reminder = None
+            if reminder_raw:
+                try:
+                    reminder = int(reminder_raw)
+                except ValueError:
+                    await interaction.response.send_message("❌ Reminder must be an integer number of hours.", ephemeral=True)
+                    return
 
-        # Parse date safely
-        if not date_value or date_value.lower() == "tbd":
-            date_str = "TBD"
-        else:
-            try:
-                dt_naive = datetime.strptime(date_value, "%Y-%m-%d %H:%M")
-                dt = TIMEZONE.localize(dt_naive)
-                date_str = dt.isoformat()
-            except Exception:
-                await interaction.response.send_message("❌ Date must be in format YYYY-MM-DD HH:MM, or 'TBD'.", ephemeral=True)
-                return
-
-        # Build event object
-        event = {
-            "title": title,
-            "date": date_str,
-            "organiser": interaction.user.id,
-            "squad_maker": int(squad_maker) if squad_maker else None,
-            "reminder_hours": reminder,
-            "reminded": False
-        }
-
-        # Add or edit
-        if self.index is not None:
-            # validate index
-            if 0 <= self.index < len(self.cog.data["events"]):
-                self.cog.data["events"][self.index] = event
-                action = "Edited"
+            # Parse date safely
+            if not date_value or date_value.lower() == "tbd":
+                date_str = "TBD"
             else:
-                await interaction.response.send_message("❌ Invalid event index.", ephemeral=True)
-                return
-        else:
-            self.cog.data["events"].append(event)
-            action = "Added"
+                try:
+                    dt_naive = datetime.strptime(date_value, "%Y-%m-%d %H:%M")
+                    dt = TIMEZONE.localize(dt_naive)
+                    date_str = dt.isoformat()
+                except Exception:
+                    await interaction.response.send_message("❌ Date must be in format YYYY-MM-DD HH:MM, or 'TBD'.", ephemeral=True)
+                    return
 
-        save_data()
-        await self.cog.update_calendar_message()
-        await interaction.response.send_message(f"✅ {action} event **{title}**", ephemeral=True)
+            event = {
+                "title": title,
+                "date": date_str,
+                "organiser": interaction.user.id,
+                "squad_maker": int(squad_maker) if squad_maker else None,
+                "reminder_hours": reminder,
+                "reminded": False
+            }
+
+            if self.index is not None:
+                # validate index
+                if 0 <= self.index < len(self.cog.data["events"]):
+                    self.cog.data["events"][self.index] = event
+                    action = "Edited"
+                else:
+                    await interaction.response.send_message("❌ Invalid event index.", ephemeral=True)
+                    return
+            else:
+                self.cog.data["events"].append(event)
+                action = "Added"
+
+            save_data()
+            await self.cog.update_calendar_message()
+            await interaction.response.send_message(f"✅ {action} event **{title}**", ephemeral=True)
+
+        except Exception as e:
+            logging.exception("Exception in EventModal.callback")
+            try:
+                await interaction.response.send_message(f"❌ Something went wrong: {e}", ephemeral=True)
+            except Exception:
+                traceback.print_exc()
 
 
 # ===== MAIN COG =====
@@ -219,11 +225,9 @@ class CalendarCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.data = data
-        # start reminders after initialization
         self.reminder_task.start()
 
     def has_permission(self, interaction: discord.Interaction):
-        # Ensure we have a Member object (roles only exist on Member)
         user = interaction.user
         roles = getattr(user, "roles", None)
         if roles is None:
@@ -278,7 +282,6 @@ class CalendarCog(commands.Cog):
         reversed_recent = list(recent)[::-1]  # most recent first
         options = []
         for j, e in enumerate(reversed_recent):
-            # map to real index in the full events list
             real_idx = len(events) - 1 - j
             options.append(discord.SelectOption(label=e.get("title", "Untitled"), value=str(real_idx)))
 
@@ -337,7 +340,6 @@ class CalendarCog(commands.Cog):
             message = await channel.fetch_message(self.data["calendar_message_id"])
             await message.edit(embed=build_calendar_embed(), view=CalendarButtons(self))
         except Exception:
-            # If message not found or other issue, send a fresh one and store id
             embed = build_calendar_embed()
             view = CalendarButtons(self)
             new_message = await channel.send(embed=embed, view=view)
@@ -360,12 +362,11 @@ class CalendarCog(commands.Cog):
             except Exception:
                 continue
             reminder_time = event_dt - timedelta(hours=e["reminder_hours"])
-            # if reminder_time match current minute
             if reminder_time <= now < reminder_time + timedelta(minutes=1):
                 users_to_notify = [e['organiser']]
                 if e.get("squad_maker"):
                     users_to_notify.append(e['squad_maker'])
-
+                
                 for user_id in users_to_notify:
                     user = self.bot.get_user(user_id)
                     if user:
