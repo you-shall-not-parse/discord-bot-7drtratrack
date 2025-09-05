@@ -237,7 +237,7 @@ def build_calendar_embed(events: list) -> discord.Embed:
     if tbc_events:
         body = "\n\n".join(event_to_str(e) for e in tbc_events)
         body = "\u200b\n" + body  # Add invisible character + newline for extra space
-        embed.add_field(name="🔧 **DATE TBC** 🔧", value=body, inline=False)
+        embed.add_field(name="🔧 **Date TBC** 🔧", value=body, inline=False)
 
     return embed
 
