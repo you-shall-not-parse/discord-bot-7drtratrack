@@ -118,7 +118,9 @@ def event_to_str(event: dict) -> str:
     if event.get("date") is None:
         msg += "🗓️ TBC"
     else:
-        dt = datetime.fromisoformat(event["date"]).astimezone(TIMEZONE)
+        # Use display_date if available (for recurring events), otherwise use date
+        date_field = event.get("display_date", event.get("date"))
+        dt = datetime.fromisoformat(date_field).astimezone(TIMEZONE)
         msg += f"🗓️ {dt.strftime('%d/%m/%Y')}"
         
         # Only show time if it was explicitly set (has_time flag is True)
@@ -147,29 +149,21 @@ def build_calendar_embed(events: list) -> discord.Embed:
     month_groups: Dict[tuple[int, int], list] = {}
     tbc_events = []  # Special group for events without dates
     
+    processed_events = []  # This will hold all events including recurring occurrences
+    
     for e in events:
         # Handle events with no date separately
         if e.get("date") is None:
-            tbc_events.append(e)
+            tbc_events.append(e.copy())
             continue
             
         dt = datetime.fromisoformat(e["date"]).astimezone(TIMEZONE)
         
-        # Skip past events
-        if dt < now:
-            # For recurring events, we'll show them if they're within the next 2 weeks
-            # regardless of the original date
-            if not e.get("recurring", False):
-                continue
-        
-        # For recurring events, only include if within next 2 weeks
+        # For recurring events, generate all occurrences within the 2-week window
         if e.get("recurring", False):
-            # Find the next occurrence of this event
-            # For simplicity, we're just using the weekday to determine recurrence
+            # Calculate first occurrence after now
             days_diff = (dt.weekday() - now.weekday()) % 7
             next_occurrence = now + timedelta(days=days_diff)
-            
-            # Adjust to match the original time
             next_occurrence = next_occurrence.replace(
                 hour=dt.hour, 
                 minute=dt.minute,
@@ -180,16 +174,27 @@ def build_calendar_embed(events: list) -> discord.Embed:
             if next_occurrence < now:
                 next_occurrence += timedelta(days=7)
                 
-            # Only include if within the 2-week window
-            if next_occurrence > two_weeks_later:
+            # Add all occurrences within the 2-week window
+            current_occurrence = next_occurrence
+            while current_occurrence <= two_weeks_later:
+                event_copy = e.copy()
+                event_copy["display_date"] = current_occurrence.isoformat()
+                processed_events.append(event_copy)
+                
+                # Add 7 days for the next weekly occurrence
+                current_occurrence += timedelta(days=7)
+        else:
+            # Skip past events that aren't recurring
+            if dt < now:
                 continue
                 
-            # Use the next occurrence date for display purposes
-            e["display_date"] = next_occurrence.isoformat()
-        else:
-            e["display_date"] = e["date"]
+            # For regular events, just add them once
+            event_copy = e.copy()
+            event_copy["display_date"] = e["date"]
+            processed_events.append(event_copy)
 
-        # Use the display date for grouping
+    # Group the processed events by month
+    for e in processed_events:
         display_dt = datetime.fromisoformat(e["display_date"]).astimezone(TIMEZONE)
         key = (display_dt.year, display_dt.month)
         month_groups.setdefault(key, []).append(e)
