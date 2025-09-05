@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import json
 import os
 from datetime import datetime, timedelta
@@ -105,15 +105,15 @@ class CalendarButtons(discord.ui.View):
 
     @discord.ui.button(label="➕ Add Event", style=discord.ButtonStyle.green)
     async def add_event(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.cog.add_event(interaction)
+        await self.cog.open_event_modal(interaction, "add")
 
     @discord.ui.button(label="✏️ Edit Event", style=discord.ButtonStyle.blurple)
     async def edit_event(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.cog.edit_event(interaction)
+        await self.cog.edit_event_selection(interaction)
 
     @discord.ui.button(label="🗑️ Remove Event", style=discord.ButtonStyle.red)
     async def remove_event(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.cog.remove_event(interaction)
+        await self.cog.remove_event_selection(interaction)
 
 
 # ===== MODAL FOR ADD/EDIT =====
@@ -146,6 +146,7 @@ class EventModal(discord.ui.Modal):
             "organiser": interaction.user.id,
             "squad_maker": int(squad_maker) if squad_maker else None,
             "reminder_hours": reminder,
+            "reminded": False
         }
 
         if self.index is not None:
@@ -165,6 +166,7 @@ class CalendarCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.data = data
+        self.reminder_task.start()
 
     def has_permission(self, interaction: discord.Interaction):
         return any(r.name in ALLOWED_ROLES for r in interaction.user.roles)
@@ -179,14 +181,12 @@ class CalendarCog(commands.Cog):
         message_id = self.data.get("calendar_message_id")
         message = None
 
-        # Check if message still exists
         if message_id:
             try:
                 message = await channel.fetch_message(message_id)
             except discord.NotFound:
                 message = None
 
-        # If missing, post new one
         if not message:
             embed = build_calendar_embed()
             view = CalendarButtons(self)
@@ -197,21 +197,18 @@ class CalendarCog(commands.Cog):
 
         print("✅ Calendar ready")
 
-    # ===== SLASH COMMANDS =====
-    @discord.app_commands.command(name="addevent", description="Add a new event")
-    async def add_event(self, interaction: discord.Interaction):
+    # ===== BUTTON HELPERS =====
+    async def open_event_modal(self, interaction: discord.Interaction, mode="add", index=None):
         if not self.has_permission(interaction):
             await interaction.response.send_message("❌ You don’t have permission.", ephemeral=True)
             return
-        modal = EventModal(self, "Add Event")
+        modal = EventModal(self, f"{mode.title()} Event", index)
         await interaction.response.send_modal(modal)
 
-    @discord.app_commands.command(name="editevent", description="Edit an event")
-    async def edit_event(self, interaction: discord.Interaction):
+    async def edit_event_selection(self, interaction: discord.Interaction):
         if not self.has_permission(interaction):
             await interaction.response.send_message("❌ You don’t have permission.", ephemeral=True)
             return
-
         options = [
             discord.SelectOption(label=e["title"], value=str(i))
             for i, e in enumerate(self.data["events"][-25:][::-1])
@@ -224,20 +221,17 @@ class CalendarCog(commands.Cog):
 
         async def select_callback(inter: discord.Interaction):
             idx = int(select.values[0])
-            modal = EventModal(self, "Edit Event", idx)
-            await inter.response.send_modal(modal)
+            await self.open_event_modal(inter, "edit", idx)
 
         select.callback = select_callback
         view = discord.ui.View()
         view.add_item(select)
         await interaction.response.send_message("Select event to edit:", view=view, ephemeral=True)
 
-    @discord.app_commands.command(name="deleteevent", description="Delete an event")
-    async def remove_event(self, interaction: discord.Interaction):
+    async def remove_event_selection(self, interaction: discord.Interaction):
         if not self.has_permission(interaction):
             await interaction.response.send_message("❌ You don’t have permission.", ephemeral=True)
             return
-
         options = [
             discord.SelectOption(label=e["title"], value=str(i))
             for i, e in enumerate(self.data["events"][-25:][::-1])
@@ -269,11 +263,40 @@ class CalendarCog(commands.Cog):
             message = await channel.fetch_message(self.data["calendar_message_id"])
             await message.edit(embed=build_calendar_embed(), view=CalendarButtons(self))
         except discord.NotFound:
-            # Recreate if missing
             embed = build_calendar_embed()
             view = CalendarButtons(self)
             new_message = await channel.send(embed=embed, view=view)
             self.data["calendar_message_id"] = new_message.id
+            save_data()
+
+    # ===== REMINDERS TASK =====
+    @tasks.loop(minutes=1)
+    async def reminder_task(self):
+        now = datetime.now(TIMEZONE)
+        updated = False
+        for e in self.data["events"]:
+            if e.get("date") == "TBD" or not e.get("reminder_hours"):
+                continue
+            if e.get("reminded"):
+                continue
+            event_dt = datetime.fromisoformat(e["date"])
+            reminder_time = event_dt - timedelta(hours=e["reminder_hours"])
+            if reminder_time <= now < reminder_time + timedelta(minutes=1):
+                users_to_notify = [e['organiser']]
+                if e.get("squad_maker"):
+                    users_to_notify.append(e['squad_maker'])
+                
+                for user_id in users_to_notify:
+                    user = self.bot.get_user(user_id)
+                    if user:
+                        try:
+                            await user.send(f"⏰ Reminder: Event **{e['title']}** starts at <t:{int(event_dt.timestamp())}:F>!")
+                        except discord.Forbidden:
+                            print(f"Cannot DM user {user_id}")
+
+                e["reminded"] = True
+                updated = True
+        if updated:
             save_data()
 
 
