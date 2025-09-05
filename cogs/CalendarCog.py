@@ -115,9 +115,10 @@ def event_to_str(event: dict) -> str:
         dt = datetime.fromisoformat(event["date"]).astimezone(TIMEZONE)
         msg += f"🗓️ {dt.strftime('%d/%m/%Y')}"
         
-        # Add time if it exists (and is not midnight)
-        if dt.time() != time(0, 0):
-            msg += f", {dt.strftime('%H:%M %Z')}"
+        # Only add time if it was explicitly set
+        # This checks if the event has a 'has_time' flag or if time is not midnight
+        if event.get("has_time", False) or dt.time() != time(0, 0):
+            msg += f", {dt.strftime('%H:%M')} UK time"
     
     msg += f"\n👤 Organiser: {organiser}"
     
@@ -349,6 +350,7 @@ class CalendarCog(commands.Cog):
 
         # Initialize event with date as None (TBC)
         event_date = None
+        has_time_flag = False
             
         # Parse date if provided and not "TBC"
         if date and date.lower() != "tbc":
@@ -372,12 +374,14 @@ class CalendarCog(commands.Cog):
                     hour=event_time.hour,
                     minute=event_time.minute
                 )
+                has_time_flag = True
         
         events = load_events()
         new_event = {
             "title": title,
             "description": description,
             "date": event_date.isoformat() if event_date else None,
+            "has_time": has_time_flag,
             "organiser": organiser.id,
             "squad_maker": squad_maker.id if squad_maker else None,
             "guild_id": interaction.guild_id,
@@ -463,6 +467,7 @@ class CalendarCog(commands.Cog):
             # Check if user wants to clear the date
             if date.lower() in ['clear', 'tbc']:
                 event["date"] = None
+                event["has_time"] = False
             else:
                 event_date = parse_date(date)
                 if not event_date:
@@ -472,11 +477,16 @@ class CalendarCog(commands.Cog):
                     return
                     
                 # If only date is provided and there was a previous time, keep it
-                if not time and current_date and event["date"]:
+                if not time and current_date and event["date"] and event.get("has_time", False):
                     event_date = event_date.replace(
                         hour=current_date.hour,
                         minute=current_date.minute
                     )
+                    # Keep has_time flag
+                else:
+                    # Reset has_time flag if no time is specified
+                    event["has_time"] = False
+                    
                 event["date"] = event_date.isoformat()
             
         # Handle time changes separately (only if there's a date)
@@ -495,6 +505,7 @@ class CalendarCog(commands.Cog):
                 minute=event_time.minute
             )
             event["date"] = updated_date.isoformat()
+            event["has_time"] = True
 
         if organiser is not None:
             event["organiser"] = organiser.id
