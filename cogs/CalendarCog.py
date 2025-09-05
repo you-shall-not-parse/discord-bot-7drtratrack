@@ -106,7 +106,13 @@ def event_to_str(event: dict) -> str:
     )
     
     # Start building the message
-    msg = f"📌 **{event['title']}**\n"
+    msg = f"📌 **{event['title']}**"
+    
+    # Add recurring indicator if applicable
+    if event.get("recurring", False):
+        msg += " _(2 week rolling/recurring)_"
+    
+    msg += "\n"
     
     # Handle date display - show TBC if no date
     if event.get("date") is None:
@@ -115,9 +121,8 @@ def event_to_str(event: dict) -> str:
         dt = datetime.fromisoformat(event["date"]).astimezone(TIMEZONE)
         msg += f"🗓️ {dt.strftime('%d/%m/%Y')}"
         
-        # Only add time if it was explicitly set
-        # This checks if the event has a 'has_time' flag or if time is not midnight
-        if event.get("has_time", False) or dt.time() != time(0, 0):
+        # Only show time if it was explicitly set (has_time flag is True)
+        if event.get("has_time", False):
             msg += f", {dt.strftime('%H:%M')} UK time"
     
     msg += f"\n👤 Organiser: {organiser}"
@@ -136,6 +141,7 @@ def event_to_str(event: dict) -> str:
 
 def build_calendar_embed(events: list) -> discord.Embed:
     now = datetime.now(TIMEZONE)
+    two_weeks_later = now + timedelta(weeks=2)
 
     # Group upcoming events by (year, month) and sort
     month_groups: Dict[tuple[int, int], list] = {}
@@ -148,21 +154,54 @@ def build_calendar_embed(events: list) -> discord.Embed:
             continue
             
         dt = datetime.fromisoformat(e["date"]).astimezone(TIMEZONE)
+        
+        # Skip past events
         if dt < now:
-            continue
-        if e.get("recurring") and dt > now + timedelta(weeks=2):
-            continue
+            # For recurring events, we'll show them if they're within the next 2 weeks
+            # regardless of the original date
+            if not e.get("recurring", False):
+                continue
+        
+        # For recurring events, only include if within next 2 weeks
+        if e.get("recurring", False):
+            # Find the next occurrence of this event
+            # For simplicity, we're just using the weekday to determine recurrence
+            days_diff = (dt.weekday() - now.weekday()) % 7
+            next_occurrence = now + timedelta(days=days_diff)
+            
+            # Adjust to match the original time
+            next_occurrence = next_occurrence.replace(
+                hour=dt.hour, 
+                minute=dt.minute,
+                second=dt.second
+            )
+            
+            # If this places it in the past, add 7 days
+            if next_occurrence < now:
+                next_occurrence += timedelta(days=7)
+                
+            # Only include if within the 2-week window
+            if next_occurrence > two_weeks_later:
+                continue
+                
+            # Use the next occurrence date for display purposes
+            e["display_date"] = next_occurrence.isoformat()
+        else:
+            e["display_date"] = e["date"]
 
-        key = (dt.year, dt.month)
+        # Use the display date for grouping
+        display_dt = datetime.fromisoformat(e["display_date"]).astimezone(TIMEZONE)
+        key = (display_dt.year, display_dt.month)
         month_groups.setdefault(key, []).append(e)
 
     sorted_months = sorted(month_groups.keys())
     for key in sorted_months:
-        month_groups[key].sort(key=lambda ev: datetime.fromisoformat(ev["date"]))
+        # Sort by display date
+        month_groups[key].sort(key=lambda ev: datetime.fromisoformat(ev["display_date"]))
 
     embed = discord.Embed(
-        title="📅 7DR Event Calendar",
-        description="All of our planned events in one place...",
+        title="📅 Unit Calendar",
+        description="Upcoming scheduled events",
         colour=discord.Colour.blue(),
         timestamp=datetime.now(TIMEZONE),
     )
@@ -172,16 +211,25 @@ def build_calendar_embed(events: list) -> discord.Embed:
         return embed
 
     # Add events with dates first
-    for (year, month) in sorted_months:
-        month_name = f"┏━━━━━━━━{calendar.month_name[month]} {year}━━━━━━━━┓"
+    for i, (year, month) in enumerate(sorted_months):
+        # Fancy decorated month header
+        month_name = f"🗓️ **{calendar.month_name[month].upper()} {year}** 🗓️"
+        
         body = "\n\n".join(event_to_str(e) for e in month_groups[(year, month)])
         embed.add_field(name=month_name, value=body, inline=False)
+        
+        # Add separator between months (not after the last month)
+        if i < len(sorted_months) - 1:
+            embed.add_field(name="\u200b", value="┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄", inline=False)
+    
+    # Add a separator before TBC section if there are both dated and TBC events
+    if sorted_months and tbc_events:
+        embed.add_field(name="\u200b", value="┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄", inline=False)
     
     # Add TBC events last (at the bottom) if there are any
     if tbc_events:
         body = "\n\n".join(event_to_str(e) for e in tbc_events)
-        tbc_header = "┏━━━━━━━━ Date TBC ━━━━━━━━┓"
-        embed.add_field(name="Date TBC", value=body, inline=False)
+        embed.add_field(name="⭐ **DATE TBC** ⭐", value=body, inline=False)
 
     return embed
 
@@ -348,8 +396,8 @@ class CalendarCog(commands.Cog):
         active_events = []
         
         for event in events:
-            # Skip events with no date (TBC)
-            if event.get("date") is None:
+            # Skip events with no date (TBC) or recurring events
+            if event.get("date") is None or event.get("recurring", False):
                 active_events.append(event)
                 continue
                 
@@ -409,7 +457,8 @@ class CalendarCog(commands.Cog):
         time="Time in HH:MM format (24-hour, optional)",
         organiser="The event organiser",
         squad_maker="Squad maker (optional)",
-        thread_channel="Channel to create a thread for this event (optional)"
+        thread_channel="Channel to create a thread for this event (optional)",
+        recurring="Whether this event repeats weekly (shows on 2-week rolling basis)"
     )
     async def addtocalendar(
         self,
@@ -421,6 +470,7 @@ class CalendarCog(commands.Cog):
         time: Optional[str] = None,
         squad_maker: Optional[discord.Member] = None,
         thread_channel: Optional[discord.TextChannel] = None,
+        recurring: Optional[bool] = False
     ):
         if not has_calendar_permission(interaction.user):
             await interaction.response.send_message(
@@ -441,8 +491,8 @@ class CalendarCog(commands.Cog):
                 )
                 return
                 
-            # Check if date is in the past
-            if is_date_in_past(event_date):
+            # Check if date is in the past (only for non-recurring events)
+            if not recurring and is_date_in_past(event_date):
                 await interaction.response.send_message(
                     "❌ Cannot add events in the past. Please use a future date.", ephemeral=True
                 )
@@ -463,12 +513,19 @@ class CalendarCog(commands.Cog):
                 )
                 has_time_flag = True
                 
-                # Check again with time component if date is in the past
-                if is_date_in_past(event_date):
+                # Check again with time component if date is in the past (only for non-recurring events)
+                if not recurring and is_date_in_past(event_date):
                     await interaction.response.send_message(
                         "❌ Cannot add events in the past. Please use a future date and time.", ephemeral=True
                     )
                     return
+        
+        # Cannot have a recurring event without a date
+        if recurring and not event_date:
+            await interaction.response.send_message(
+                "❌ Recurring events must have a date specified.", ephemeral=True
+            )
+            return
         
         events = load_events()
         new_event = {
@@ -480,6 +537,7 @@ class CalendarCog(commands.Cog):
             "squad_maker": squad_maker.id if squad_maker else None,
             "guild_id": interaction.guild_id,
             "thread_id": None,
+            "recurring": recurring,
         }
 
         # Create thread if requested
@@ -520,7 +578,8 @@ class CalendarCog(commands.Cog):
         time="New time in HH:MM format (24-hour, optional)",
         organiser="New event organiser (optional)",
         squad_maker="New squad maker (optional)",
-        thread_channel="Create a new thread in this channel (optional)"
+        thread_channel="Create a new thread in this channel (optional)",
+        recurring="Whether this event repeats weekly (optional)"
     )
     async def editcalendar(
         self,
@@ -533,6 +592,7 @@ class CalendarCog(commands.Cog):
         organiser: Optional[discord.Member] = None,
         squad_maker: Optional[discord.Member] = None,
         thread_channel: Optional[discord.TextChannel] = None,
+        recurring: Optional[bool] = None
     ):
         if not has_calendar_permission(interaction.user):
             await interaction.response.send_message(
@@ -547,8 +607,9 @@ class CalendarCog(commands.Cog):
             await interaction.response.send_message("❌ Event not found.", ephemeral=True)
             return
 
-        # Store the original event date
+        # Store the original event date and recurring status
         current_date = datetime.fromisoformat(event["date"]) if event.get("date") else None
+        is_recurring = event.get("recurring", False) if recurring is None else recurring
         
         if new_title:
             event["title"] = new_title
@@ -560,6 +621,13 @@ class CalendarCog(commands.Cog):
         if date:
             # Check if user wants to clear the date
             if date.lower() in ['clear', 'tbc']:
+                # Cannot clear date for recurring events
+                if is_recurring:
+                    await interaction.response.send_message(
+                        "❌ Recurring events must have a date specified.", ephemeral=True
+                    )
+                    return
+                    
                 event["date"] = None
                 event["has_time"] = False
             else:
@@ -570,8 +638,8 @@ class CalendarCog(commands.Cog):
                     )
                     return
                 
-                # Check if new date is in the past
-                if is_date_in_past(event_date):
+                # Check if new date is in the past (only for non-recurring events)
+                if not is_recurring and is_date_in_past(event_date):
                     await interaction.response.send_message(
                         "❌ Cannot set event date to the past. Please use a future date.", ephemeral=True
                     )
@@ -606,8 +674,8 @@ class CalendarCog(commands.Cog):
                 minute=event_time.minute
             )
             
-            # Check if the new datetime is in the past
-            if is_date_in_past(updated_date):
+            # Check if the new datetime is in the past (only for non-recurring events)
+            if not is_recurring and is_date_in_past(updated_date):
                 await interaction.response.send_message(
                     "❌ Cannot set event time to the past. Please use a future time.", ephemeral=True
                 )
@@ -615,6 +683,17 @@ class CalendarCog(commands.Cog):
                 
             event["date"] = updated_date.isoformat()
             event["has_time"] = True
+            
+        # Update recurring status if provided
+        if recurring is not None:
+            # Cannot make an event recurring if it has no date
+            if recurring and not event.get("date"):
+                await interaction.response.send_message(
+                    "❌ Cannot make an event recurring without a date.", ephemeral=True
+                )
+                return
+                
+            event["recurring"] = recurring
 
         if organiser is not None:
             event["organiser"] = organiser.id
