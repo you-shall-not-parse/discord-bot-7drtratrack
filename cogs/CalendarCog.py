@@ -161,7 +161,7 @@ def build_calendar_embed(events: list) -> discord.Embed:
         month_groups[key].sort(key=lambda ev: datetime.fromisoformat(ev["date"]))
 
     embed = discord.Embed(
-        title="📅 # Unit Calendar",
+        title="📅 #Unit Calendar",
         description="Upcoming scheduled events",
         colour=discord.Colour.blue(),
         timestamp=datetime.now(TIMEZONE),
