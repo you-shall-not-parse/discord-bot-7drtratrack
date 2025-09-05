@@ -12,8 +12,8 @@ EVENTS_FILE = "events.json"
 TIMEZONE = pytz.timezone("Europe/London")
 CALENDAR_MANAGER_ROLES = ["Administration", "7DR-SNCO", "Fight Arrangeer"]
 # Required: set these to your guild & channel IDs (integers)
-GUILD_ID = 1097913605082579024  # <-- REPLACE with your guild id (int) for fast command sync (optional)
-CALENDAR_CHANNEL_ID = 1332736267485708419  # <-- REPLACE with your calendar channel id (int)
+GUILD_ID = 0  # <-- REPLACE with your guild id (int) for fast command sync (optional)
+CALENDAR_CHANNEL_ID = 0  # <-- REPLACE with your calendar channel id (int)
 
 # ===== LOGGING =====
 logging.basicConfig(
@@ -31,15 +31,101 @@ def has_calendar_permission(member: discord.Member) -> bool:
     return any(role.name in CALENDAR_MANAGER_ROLES for role in member.roles)
 
 
+def _default_event_structure() -> dict:
+    return {
+        "title": "Untitled",
+        "date": "TBD",
+        "recurring": False,
+        "organiser": None,
+        "squad_maker": None,
+        "reminder_hours": None,
+        "guild_id": GUILD_ID if isinstance(GUILD_ID, int) and GUILD_ID else None,
+        "thread_channel": None,
+        "thread_id": None,
+        "reminded": False,
+    }
+
+
 def load_events():
+    """
+    Load events from EVENTS_FILE and normalize them into a list of dicts.
+
+    This function tolerates legacy formats where events might be simple strings
+    (title only) or partially-formed objects. If normalization occurs, the
+    file is rewritten with normalized entries so future loads are safe.
+    """
     try:
         with open(EVENTS_FILE, "r") as f:
-            return json.load(f)
+            raw = json.load(f)
     except FileNotFoundError:
         return []
     except Exception:
         logging.exception("Failed to load events file")
         return []
+
+    normalized = []
+    changed = False
+
+    # If file contains a single string or single dict, coerce into list
+    if isinstance(raw, str):
+        raw = [raw]
+        changed = True
+    elif isinstance(raw, dict):
+        raw = [raw]
+        changed = True
+
+    if not isinstance(raw, list):
+        logging.warning("events file contains unexpected type %s; ignoring", type(raw))
+        return []
+
+    for item in raw:
+        if isinstance(item, str):
+            # Legacy: just a title string
+            ev = _default_event_structure()
+            ev["title"] = item
+            normalized.append(ev)
+            changed = True
+        elif isinstance(item, dict):
+            # Ensure expected keys exist and have sensible defaults
+            ev = _default_event_structure()
+            ev.update(item)  # keep existing keys, fill missing with defaults
+            # Some older entries might have organiser as mention string; try to extract digits
+            if isinstance(ev.get("organiser"), str):
+                digits = "".join(ch for ch in ev["organiser"] if ch.isdigit())
+                try:
+                    ev["organiser"] = int(digits) if digits else None
+                except Exception:
+                    ev["organiser"] = None
+            if isinstance(ev.get("squad_maker"), str):
+                digits = "".join(ch for ch in ev["squad_maker"] if ch.isdigit())
+                try:
+                    ev["squad_maker"] = int(digits) if digits else None
+                except Exception:
+                    ev["squad_maker"] = None
+            # guard types
+            if ev.get("reminder_hours") is not None:
+                try:
+                    ev["reminder_hours"] = int(ev["reminder_hours"])
+                except Exception:
+                    ev["reminder_hours"] = None
+                    changed = True
+            normalized.append(ev)
+        else:
+            logging.warning("Skipping event with unsupported type %s", type(item))
+            changed = True
+
+    if changed:
+        try:
+            # Persist normalized form back to disk so next run is clean
+            tmp_path = EVENTS_FILE + ".tmp"
+            with open(tmp_path, "w") as f:
+                json.dump(normalized, f, indent=4)
+            os.replace(tmp_path, EVENTS_FILE)
+            logging.info("Normalized events file and rewrote %s", EVENTS_FILE)
+        except Exception:
+            logging.exception("Failed to rewrite normalized events file")
+
+    return normalized
 
 
 def save_events(events):
@@ -157,7 +243,6 @@ class CalendarCog(commands.Cog):
         if not self._synced:
             try:
                 # Wait for application_id to be available.
-                # Usually on_ready is after application_id is set, but guard anyway.
                 if self.bot.application_id is None:
                     logging.warning("application_id is not yet set; skipping sync for now")
                 else:
@@ -216,32 +301,60 @@ class CalendarCog(commands.Cog):
 
     @tasks.loop(minutes=10)
     async def reminder_task(self):
+        """
+        Robust reminder loop:
+        - skips non-dict or malformed entries
+        - skips events without reminder_hours (explicitly None)
+        - tolerates 'TBD' dates and malformed ISO dates
+        """
         events = load_events()
         now = datetime.now(TIMEZONE)
         updated = False
         for event in events:
-            if not event.get("reminder_hours") or event.get("reminded"):
+            # Defensive: ensure event is a dict
+            if not isinstance(event, dict):
+                logging.debug("Skipping reminder for non-dict event: %s", repr(event))
                 continue
+
+            # Skip if no reminder or already reminded
+            if event.get("reminder_hours") is None or event.get("reminded"):
+                continue
+
+            # Parse event date safely
             try:
+                if not event.get("date") or event.get("date") == "TBD":
+                    continue
                 dt = datetime.fromisoformat(event["date"]).astimezone(TIMEZONE)
             except Exception:
+                logging.debug("Skipping reminder for event with invalid date: %s", event.get("title"))
                 continue
-            if now + timedelta(hours=event["reminder_hours"]) >= dt > now:
-                guild = self.bot.get_guild(event["guild_id"])
-                if guild:
-                    channel = guild.system_channel or discord.utils.get(guild.text_channels, permissions__send_messages=True)
-                    if channel:
-                        mentions = []
-                        if event.get("organiser"):
-                            mentions.append(f"<@{event['organiser']}>")
-                        if event.get("squad_maker"):
-                            mentions.append(f"<@{event['squad_maker']}>")
-                        try:
-                            await channel.send(f"⏰ Reminder: {event['title']} starts at {dt.strftime('%d %b %Y, %H:%M %Z')}!\n{' '.join(mentions)}")
-                        except Exception:
-                            logging.exception("Failed to send reminder for event %s", event.get("title"))
-                        event["reminded"] = True
-                        updated = True
+
+            try:
+                if now + timedelta(hours=int(event["reminder_hours"])) >= dt > now:
+                    guild_id = event.get("guild_id")
+                    if not guild_id:
+                        logging.debug("Event %s missing guild_id; skipping reminder", event.get("title"))
+                        continue
+                    guild = self.bot.get_guild(guild_id)
+                    if guild:
+                        channel = guild.system_channel or discord.utils.get(guild.text_channels, permissions__send_messages=True)
+                        if channel:
+                            mentions = []
+                            if event.get("organiser"):
+                                mentions.append(f"<@{event['organiser']}>")
+                            if event.get("squad_maker"):
+                                mentions.append(f"<@{event['squad_maker']}>")
+                            try:
+                                await channel.send(
+                                    f"⏰ Reminder: {event['title']} starts at {dt.strftime('%d %b %Y, %H:%M %Z')}!\n{' '.join(mentions)}"
+                                )
+                            except Exception:
+                                logging.exception("Failed to send reminder for event %s", event.get("title"))
+                            event["reminded"] = True
+                            updated = True
+            except Exception:
+                logging.exception("Error while processing reminder for event %s", event.get("title"))
+
         if updated:
             save_events(events)
 
