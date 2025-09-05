@@ -6,8 +6,8 @@ from datetime import datetime, timedelta
 import pytz
 
 # ===== CONFIG =====
-CALENDAR_CHANNEL_ID = 1332736267485708419  # <-- replace with your calendar channel ID
-ALLOWED_ROLES = ["Administration", "Fight Arrangeer", "7DR-SNCO"]  # roles that can add/edit/remove events
+CALENDAR_CHANNEL_ID = 123456789012345678  # <-- replace with your calendar channel ID
+ALLOWED_ROLES = ["Admin", "Event Manager"]  # roles that can add/edit/remove events
 DATA_FILE = "events.json"
 TIMEZONE = pytz.timezone("Europe/London")  # UK time
 
@@ -166,12 +166,6 @@ class CalendarCog(commands.Cog):
         self.bot = bot
         self.data = data
 
-    async def cog_load(self):
-        # register slash commands
-        self.bot.tree.add_command(self.add_event)
-        self.bot.tree.add_command(self.edit_event)
-        self.bot.tree.add_command(self.remove_event)
-
     def has_permission(self, interaction: discord.Interaction):
         return any(r.name in ALLOWED_ROLES for r in interaction.user.roles)
 
@@ -281,5 +275,8 @@ class CalendarCog(commands.Cog):
             new_message = await channel.send(embed=embed, view=view)
             self.data["calendar_message_id"] = new_message.id
             save_data()
+
+
+# ===== ENTRYPOINT =====
 async def setup(bot: commands.Bot):
     await bot.add_cog(CalendarCog(bot))
