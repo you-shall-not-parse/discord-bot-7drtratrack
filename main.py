@@ -53,6 +53,9 @@ async def main():
         await bot.load_extension("cogs.recruitform")
         await bot.load_extension("cogs.SquadUp")
         await bot.load_extension("cogs.CalendarCog")
+        print("Calendar cog loaded successfully")
+    except Exception as e:
+        print(f"Failed to load Calendar cog: {e}")
         await bot.load_extension("cogs.trainee_tracker")
         await bot.load_extension("cogs.armour_trainee_tracker")
         await bot.load_extension("cogs.recon_troop_tracker")
