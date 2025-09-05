@@ -225,7 +225,7 @@ def build_calendar_embed(events: list) -> discord.Embed:
             embed.add_field(name="\u200b", value="\u200b", inline=False)
             
         # Fancy decorated month header
-        month_name = f"┏━━━━━━ **{calendar.month_name[month]} {year}** ━━━━━━┓"
+        month_name = f"┏━━━━━━ 🗓️ **{calendar.month_name[month]} {year}** 🗓️ ━━━━━━┓"
         
         body = "\n\n".join(event_to_str(e) for e in month_groups[(year, month)])
         body = "\u200b\n" + body  # Add invisible character + newline for extra space
