@@ -11,7 +11,7 @@ from discord.ext import commands, tasks
 # ---------------- Config ----------------
 EVENTS_FILE = "events.json"
 STATE_FILE = "calendar_state.json"  # stores message_id
-TIMEZONE = pytz.timezone("Europe/London")
+TIMEZONE = pytz.timezone("Europe/London")  # Still needed for internal date calculations
 CALENDAR_MANAGER_ROLES = ["Administration", "7DR-SNCO", "Fight Arrangeer"]
 
 # Set your target guild and calendar channel here.
@@ -124,8 +124,9 @@ def event_to_str(event: dict) -> str:
         msg += f"🗓️ {dt.strftime('%d/%m/%Y')}"
         
         # Only show time if it was explicitly set (has_time flag is True)
+        # Removed "UK time" reference as requested
         if event.get("has_time", False):
-            msg += f", {dt.strftime('%H:%M')} UK time"
+            msg += f", {dt.strftime('%H:%M')}"
     
     msg += f"\n👤 Organiser: {organiser}"
     
@@ -205,7 +206,7 @@ def build_calendar_embed(events: list) -> discord.Embed:
         month_groups[key].sort(key=lambda ev: datetime.fromisoformat(ev["display_date"]))
 
     embed = discord.Embed(
-        title="📅 Unit Calendar",
+        title="📅 7DR Event Calendar :15emoji: ",
         description="Upcoming scheduled events",
         colour=discord.Colour.blue(),
         timestamp=datetime.now(TIMEZONE),
@@ -234,7 +235,7 @@ def build_calendar_embed(events: list) -> discord.Embed:
     # Add TBC events last (at the bottom) if there are any
     if tbc_events:
         body = "\n\n".join(event_to_str(e) for e in tbc_events)
-        embed.add_field(name="⭐ **DATE TBC** ⭐", value=body, inline=False)
+        embed.add_field(name=":15emoji: **DATE TBC** :15emoji: ", value=body, inline=False)
 
     return embed
 
@@ -275,6 +276,38 @@ def is_date_in_past(dt: datetime) -> bool:
     return dt < now
 
 
+def get_next_occurrence(event: dict, base_time: Optional[datetime] = None) -> Optional[datetime]:
+    """Calculate the next occurrence of a recurring event after the specified time"""
+    if not event.get("date"):
+        return None
+        
+    if base_time is None:
+        base_time = datetime.now(TIMEZONE)
+        
+    original_dt = datetime.fromisoformat(event["date"]).astimezone(TIMEZONE)
+    
+    # If it's not recurring, just return the original date
+    if not event.get("recurring", False):
+        return original_dt if original_dt > base_time else None
+        
+    # Calculate the next occurrence based on weekday
+    days_diff = (original_dt.weekday() - base_time.weekday()) % 7
+    next_occurrence = base_time + timedelta(days=days_diff)
+    
+    # Set the time to match the original event
+    next_occurrence = next_occurrence.replace(
+        hour=original_dt.hour,
+        minute=original_dt.minute,
+        second=original_dt.second
+    )
+    
+    # If this places it in the past, add 7 days
+    if next_occurrence < base_time:
+        next_occurrence += timedelta(days=7)
+        
+    return next_occurrence
+
+
 # ---------------- Calendar Cog ----------------
 class CalendarCog(commands.Cog):
     """Calendar management for the unit"""
@@ -284,12 +317,14 @@ class CalendarCog(commands.Cog):
         # Initialize files on cog load
         initialize_files()
         print("Calendar cog initialized")
-        # Start the cleanup task
+        # Start the tasks
         self.cleanup_expired_events.start()
+        self.check_upcoming_events.start()
 
     def cog_unload(self):
-        # Stop the task when the cog is unloaded
+        # Stop the tasks when the cog is unloaded
         self.cleanup_expired_events.cancel()
+        self.check_upcoming_events.cancel()
 
     # ---------- Helpers ----------
     def get_calendar_channel(self, guild: discord.Guild) -> Optional[discord.TextChannel]:
@@ -360,6 +395,38 @@ class CalendarCog(commands.Cog):
             print(f"❌ Failed to create new calendar message: {e}")
             return None
 
+    async def create_thread_for_event(self, guild: discord.Guild, event: dict, 
+                                     channel: discord.TextChannel) -> Optional[discord.Thread]:
+        """Create a thread for an event in the specified channel"""
+        if not channel:
+            return None
+            
+        try:
+            # Determine display date for thread title
+            date_str = ""
+            if event.get("display_date"):
+                dt = datetime.fromisoformat(event["display_date"]).astimezone(TIMEZONE)
+                date_str = f" [{dt.strftime('%d/%m')}]"
+            elif event.get("date"):
+                dt = datetime.fromisoformat(event["date"]).astimezone(TIMEZONE)
+                date_str = f" [{dt.strftime('%d/%m')}]"
+                
+            thread_name = f"{event['title']}{date_str}"
+            
+            thread = await channel.create_thread(
+                name=thread_name, 
+                type=discord.ChannelType.public_thread
+            )
+            
+            # Send the event details as the first message
+            await thread.send(event_to_str(event))
+            
+            print(f"Created thread for event '{event['title']}' in channel {channel.name}")
+            return thread
+        except Exception as e:
+            print(f"Failed to create thread: {e}")
+            return None
+
     async def update_thread_message(self, guild: discord.Guild, event: dict) -> None:
         """Update the message in an event's thread with current event details."""
         if not event.get("thread_id"):
@@ -388,6 +455,16 @@ class CalendarCog(commands.Cog):
                 print(f"Archived and locked thread for expired event '{event['title']}'")
         except Exception as e:
             print(f"Failed to archive thread: {e}")
+            
+    async def get_channel_for_thread(self, guild: discord.Guild, event: dict) -> Optional[discord.TextChannel]:
+        """Find an appropriate channel for creating a thread for this event"""
+        # First try to use the same channel as the calendar
+        calendar_channel = self.get_calendar_channel(guild)
+        if calendar_channel:
+            return calendar_channel
+            
+        # If that fails, find any channel we can post in
+        return find_sendable_channel(guild)
 
     # ---------- Periodic Tasks ----------
     @tasks.loop(hours=12)  # Run twice a day
@@ -437,11 +514,72 @@ class CalendarCog(commands.Cog):
         else:
             print("No expired events found")
 
+    @tasks.loop(hours=1)  # Check every hour
+    async def check_upcoming_events(self):
+        """
+        Check for events happening in the next 48 hours and create threads for recurring events
+        that don't have threads yet.
+        """
+        print("Checking for upcoming events that need threads...")
+        
+        now = datetime.now(TIMEZONE)
+        events = load_events()
+        events_updated = False
+        
+        for i, event in enumerate(events):
+            # Skip events with no date
+            if not event.get("date"):
+                continue
+                
+            # Get the next occurrence (especially for recurring events)
+            next_occurrence = get_next_occurrence(event)
+            if not next_occurrence:
+                continue
+                
+            # Check if this event is within 48 hours
+            time_until_event = next_occurrence - now
+            hours_until_event = time_until_event.total_seconds() / 3600
+            
+            # Only create threads for events 24-48 hours away (avoid repeatedly creating threads)
+            if 24 <= hours_until_event <= 48:
+                # For recurring events, they won't have a thread_id until we create one
+                # For non-recurring events, they may already have a thread from creation
+                if event.get("recurring", False) and not event.get("thread_id"):
+                    print(f"Creating thread for upcoming recurring event: {event['title']}")
+                    
+                    guild = self.bot.get_guild(int(event["guild_id"]))
+                    if guild:
+                        channel = await self.get_channel_for_thread(guild, event)
+                        if channel:
+                            # Create display date for this occurrence
+                            event_copy = event.copy()
+                            event_copy["display_date"] = next_occurrence.isoformat()
+                            
+                            thread = await self.create_thread_for_event(guild, event_copy, channel)
+                            if thread:
+                                # Update the original event in the events list
+                                events[i]["thread_id"] = thread.id
+                                events_updated = True
+                                
+                                # Send notification in the thread that it's for the upcoming occurrence
+                                occurrence_date = next_occurrence.strftime('%d/%m/%Y')
+                                await thread.send(f"📣 This thread is for the event occurrence on **{occurrence_date}**.")
+        
+        if events_updated:
+            save_events(events)
+            
+            # Update calendars for all guilds
+            for guild_id in {int(event["guild_id"]) for event in events}:
+                guild = self.bot.get_guild(guild_id)
+                if guild:
+                    await self.update_calendar(guild)
+
     @cleanup_expired_events.before_loop
-    async def before_cleanup(self):
-        """Wait for the bot to be ready before starting the cleanup task."""
+    @check_upcoming_events.before_loop
+    async def before_tasks(self):
+        """Wait for the bot to be ready before starting tasks."""
         await self.bot.wait_until_ready()
-        print("Starting expired events cleanup task")
+        print("Starting periodic tasks")
 
     # ---------- Autocomplete ----------
     async def autocomplete_event_titles(
@@ -545,17 +683,13 @@ class CalendarCog(commands.Cog):
             "recurring": recurring,
         }
 
-        # Create thread if requested
-        if thread_channel:
-            try:
-                thread = await thread_channel.create_thread(
-                    name=title, type=discord.ChannelType.public_thread
-                )
-                await thread.send(event_to_str(new_event))
+        # Only create thread immediately for non-recurring events
+        # Recurring events will have threads created 48 hours before each occurrence
+        if thread_channel and not recurring:
+            thread = await self.create_thread_for_event(interaction.guild, new_event, thread_channel)
+            if thread:
                 new_event["thread_id"] = thread.id
-                print(f"Created thread for event '{title}' in channel {thread_channel.name}")
-            except Exception as e:
-                print(f"Failed to create thread: {e}")
+            else:
                 await interaction.response.send_message(
                     "⚠️ Event added but failed to create thread.", ephemeral=True
                 )
@@ -567,8 +701,16 @@ class CalendarCog(commands.Cog):
         # Update the calendar embed
         await interaction.response.defer(ephemeral=True)
         result = await self.update_calendar(interaction.guild)
+        
         if result:
-            await interaction.followup.send("✅ Event added and calendar updated.", ephemeral=True)
+            if recurring:
+                await interaction.followup.send(
+                    "✅ Recurring event added! For recurring events, discussion threads will automatically "
+                    "open 48 hours before each occurrence.", 
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send("✅ Event added and calendar updated.", ephemeral=True)
         else:
             await interaction.followup.send("⚠️ Event added but failed to update calendar display.", ephemeral=True)
 
@@ -614,7 +756,8 @@ class CalendarCog(commands.Cog):
 
         # Store the original event date and recurring status
         current_date = datetime.fromisoformat(event["date"]) if event.get("date") else None
-        is_recurring = event.get("recurring", False) if recurring is None else recurring
+        was_recurring = event.get("recurring", False)
+        is_recurring = was_recurring if recurring is None else recurring
         
         if new_title:
             event["title"] = new_title
@@ -698,6 +841,11 @@ class CalendarCog(commands.Cog):
                 )
                 return
                 
+            # If changing from non-recurring to recurring, clear the thread_id
+            # so that threads will be created 48h before occurrences instead
+            if recurring and not was_recurring and event.get("thread_id"):
+                event["thread_id"] = None
+                
             event["recurring"] = recurring
 
         if organiser is not None:
@@ -706,27 +854,32 @@ class CalendarCog(commands.Cog):
         if squad_maker is not None:
             event["squad_maker"] = squad_maker.id if squad_maker else None
 
-        # Create new thread if requested
-        if thread_channel:
-            try:
-                thread = await thread_channel.create_thread(
-                    name=event["title"], type=discord.ChannelType.public_thread
-                )
-                await thread.send(event_to_str(event))
+        # Create new thread if requested and not a recurring event
+        # Recurring events will have threads created 48h before occurrences
+        if thread_channel and not is_recurring:
+            thread = await self.create_thread_for_event(interaction.guild, event, thread_channel)
+            if thread:
                 event["thread_id"] = thread.id
-                print(f"Created new thread for edited event '{event['title']}' in channel {thread_channel.name}")
-            except Exception as e:
-                print(f"Failed to create thread for edited event: {e}")
 
         # Update existing thread if it exists
-        await self.update_thread_message(interaction.guild, event)
+        if event.get("thread_id"):
+            await self.update_thread_message(interaction.guild, event)
                 
         save_events(events)
 
         await interaction.response.defer(ephemeral=True)
         result = await self.update_calendar(interaction.guild)
+        
+        # Prepare the response message
         if result:
-            await interaction.followup.send("✅ Event updated and calendar refreshed.", ephemeral=True)
+            if not was_recurring and is_recurring:
+                await interaction.followup.send(
+                    "✅ Event updated to recurring! For recurring events, discussion threads will automatically "
+                    "open 48 hours before each occurrence.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send("✅ Event updated and calendar refreshed.", ephemeral=True)
         else:
             await interaction.followup.send("⚠️ Event updated but failed to refresh calendar display.", ephemeral=True)
 
