@@ -96,7 +96,7 @@ def build_calendar_embed():
         )
     for m, items in grouped["other"].items():
         embed.add_field(
-            name=datetime(2000, m, 1).strftime("%B"),
+            name=datetime(2000, m, 1).strftime("%Month"),
             value="\n\n".join(items),
             inline=False,
         )
@@ -116,18 +116,20 @@ def build_calendar_embed():
 # ===== BUTTON VIEW =====
 class CalendarButtons(discord.ui.View):
     def __init__(self, cog):
+        # timeout=None is required for persistent views
         super().__init__(timeout=None)
         self.cog = cog
 
-    @discord.ui.button(label="➕ Add Event", style=discord.ButtonStyle.green)
+    # custom_id is mandatory for persistent views
+    @discord.ui.button(label="➕ Add Event", style=discord.ButtonStyle.green, custom_id="calendar:add_event")
     async def add_event(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.open_event_modal(interaction, "add")
 
-    @discord.ui.button(label="✏️ Edit Event", style=discord.ButtonStyle.blurple)
+    @discord.ui.button(label="✏️ Edit Event", style=discord.ButtonStyle.blurple, custom_id="calendar:edit_event")
     async def edit_event(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.edit_event_selection(interaction)
 
-    @discord.ui.button(label="🗑️ Remove Event", style=discord.ButtonStyle.red)
+    @discord.ui.button(label="🗑️ Remove Event", style=discord.ButtonStyle.red, custom_id="calendar:remove_event")
     async def remove_event(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.remove_event_selection(interaction)
 
@@ -322,7 +324,7 @@ class CalendarCog(commands.Cog):
             logging.exception("Failed to send calendar message in on_ready")
             return
 
-        # Register the view handlers in memory (so interactions work)
+        # Register the view handlers in memory (so interactions work across restarts)
         try:
             self.bot.add_view(CalendarButtons(self))
         except Exception:
@@ -397,7 +399,7 @@ class CalendarCog(commands.Cog):
                 return
 
             if 0 <= idx < len(self.data.get("events", [])):
-                removed = self.data["events"].pop(idx)
+                removed = self.data["calendar"].get("events", []) if False else self.data["events"].pop(idx)
                 save_data()
                 await self.update_calendar_message()
                 await inter.response.send_message(f"🗑️ Deleted **{removed.get('title','Untitled')}**", ephemeral=True)
