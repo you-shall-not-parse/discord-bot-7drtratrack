@@ -161,8 +161,8 @@ def build_calendar_embed(events: list) -> discord.Embed:
         month_groups[key].sort(key=lambda ev: datetime.fromisoformat(ev["date"]))
 
     embed = discord.Embed(
-        title="📅 #Unit Calendar",
-        description="Upcoming scheduled events",
+        title="📅 7DR Event Calendar",
+        description="All of our planned events in one place...",
         colour=discord.Colour.blue(),
         timestamp=datetime.now(TIMEZONE),
     )
@@ -173,7 +173,7 @@ def build_calendar_embed(events: list) -> discord.Embed:
 
     # Add events with dates first
     for (year, month) in sorted_months:
-        month_name = f"{calendar.month_name[month]} {year}"
+        month_name = f"┏━━━━━━━━{calendar.month_name[month]} {year}━━━━━━━━┓"
         body = "\n\n".join(event_to_str(e) for e in month_groups[(year, month)])
         embed.add_field(name=month_name, value=body, inline=False)
     
