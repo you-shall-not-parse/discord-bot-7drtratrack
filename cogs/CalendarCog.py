@@ -219,25 +219,18 @@ def build_calendar_embed(events: list) -> discord.Embed:
     # Add events with dates first
     for i, (year, month) in enumerate(sorted_months):
         # Fancy decorated month header
-        month_name = f"🗓️ **{calendar.month_name[month]} {year}** 🗓️"
+        month_name = f"┏━━━━━━━━ **{calendar.month_name[month]} {year}** ━━━━━━━━┓"
         
         body = "\n\n".join(event_to_str(e) for e in month_groups[(year, month)])
         body = "\u200b\n" + body  # Add invisible character + newline for extra space
         embed.add_field(name=month_name, value=body, inline=False)
-        
-        # Add separator between months (not after the last month)
-        if i < len(sorted_months) - 1:
-            embed.add_field(name="\u200b", value="┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄", inline=False)
-    
-    # Add a separator before TBC section if there are both dated and TBC events
-    if sorted_months and tbc_events:
-        embed.add_field(name="\u200b", value="┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄", inline=False)
+
     
     # Add TBC events last (at the bottom) if there are any
     if tbc_events:
         body = "\n\n".join(event_to_str(e) for e in tbc_events)
         body = "\u200b\n" + body  # Add invisible character + newline for extra space
-        embed.add_field(name="🔧 **Date TBC** 🔧", value=body, inline=False)
+        embed.add_field(name="┏━━━━━━━━ 🔧 **Date TBC** 🔧 ━━━━━━━━┓", value=body, inline=False)
 
     return embed
 
