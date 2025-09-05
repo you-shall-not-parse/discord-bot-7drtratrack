@@ -35,7 +35,6 @@ def build_calendar_embed():
     dated_events = [e for e in events if e["date"] != "TBD"]
     tbd_events = [e for e in events if e["date"] == "TBD"]
 
-    # sort by date
     dated_events = sorted(dated_events, key=lambda e: datetime.fromisoformat(e["date"]))
 
     grouped = {"this_month": [], "next_month": [], "other": {}, "tbd": []}
@@ -117,115 +116,6 @@ class CalendarButtons(discord.ui.View):
         await self.cog.remove_event(interaction)
 
 
-# ===== MAIN COG =====
-class CalendarCog(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
-        self.data = data
-
-    def has_permission(self, interaction: discord.Interaction):
-        return any(r.name in ALLOWED_ROLES for r in interaction.user.roles)
-
-    @commands.Cog.listener()
-    async def on_ready(self):
-        channel = self.bot.get_channel(CALENDAR_CHANNEL_ID)
-        if not channel:
-            print("Calendar channel not found")
-            return
-
-        message_id = self.data.get("calendar_message_id")
-        message = None
-
-        # Check if message still exists
-        if message_id:
-            try:
-                message = await channel.fetch_message(message_id)
-            except discord.NotFound:
-                message = None
-
-        # If missing, post new one
-        if not message:
-            embed = build_calendar_embed()
-            view = CalendarButtons(self)
-            new_message = await channel.send(embed=embed, view=view)
-            self.data["calendar_channel_id"] = channel.id
-            self.data["calendar_message_id"] = new_message.id
-            save_data()
-
-        print("✅ Calendar ready")
-
-    # ===== COMMANDS =====
-    @commands.slash_command(name="addevent", description="Add a new event")
-    async def add_event(self, ctx: discord.ApplicationContext):
-        if not self.has_permission(ctx):
-            await ctx.respond("❌ You don’t have permission.", ephemeral=True)
-            return
-
-        modal = EventModal(self, "Add Event")
-        await ctx.send_modal(modal)
-
-    @commands.slash_command(name="editevent", description="Edit an event")
-    async def edit_event(self, ctx: discord.ApplicationContext):
-        if not self.has_permission(ctx):
-            await ctx.respond("❌ You don’t have permission.", ephemeral=True)
-            return
-
-        options = [
-            discord.SelectOption(label=e["title"], value=str(i))
-            for i, e in enumerate(self.data["events"][-25:][::-1])
-        ]
-        if not options:
-            await ctx.respond("No events to edit.", ephemeral=True)
-            return
-
-        select = discord.ui.Select(placeholder="Choose event to edit", options=options)
-
-        async def select_callback(interaction: discord.Interaction):
-            idx = int(select.values[0])
-            modal = EventModal(self, "Edit Event", idx)
-            await interaction.response.send_modal(modal)
-
-        select.callback = select_callback
-        view = discord.ui.View()
-        view.add_item(select)
-        await ctx.respond("Select event to edit:", view=view, ephemeral=True)
-
-    @commands.slash_command(name="deleteevent", description="Delete an event")
-    async def remove_event(self, ctx: discord.ApplicationContext):
-        if not self.has_permission(ctx):
-            await ctx.respond("❌ You don’t have permission.", ephemeral=True)
-            return
-
-        options = [
-            discord.SelectOption(label=e["title"], value=str(i))
-            for i, e in enumerate(self.data["events"][-25:][::-1])
-        ]
-        if not options:
-            await ctx.respond("No events to delete.", ephemeral=True)
-            return
-
-        select = discord.ui.Select(placeholder="Choose event to delete", options=options)
-
-        async def select_callback(interaction: discord.Interaction):
-            idx = int(select.values[0])
-            removed = self.data["events"].pop(idx)
-            save_data()
-            await self.update_calendar_message()
-            await interaction.response.send_message(
-                f"🗑️ Deleted **{removed['title']}**", ephemeral=True
-            )
-
-        select.callback = select_callback
-        view = discord.ui.View()
-        view.add_item(select)
-        await ctx.respond("Select event to delete:", view=view, ephemeral=True)
-
-    async def update_calendar_message(self):
-        channel = self.bot.get_channel(self.data["calendar_channel_id"])
-        message = await channel.fetch_message(self.data["calendar_message_id"])
-        await message.edit(embed=build_calendar_embed(), view=CalendarButtons(self))
-
-
 # ===== MODAL FOR ADD/EDIT =====
 class EventModal(discord.ui.Modal):
     def __init__(self, cog, title, index=None):
@@ -268,3 +158,126 @@ class EventModal(discord.ui.Modal):
         save_data()
         await self.cog.update_calendar_message()
         await interaction.response.send_message(f"✅ {action} event **{title}**", ephemeral=True)
+
+
+# ===== MAIN COG =====
+class CalendarCog(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+        self.data = data
+
+    async def cog_load(self):
+        # register slash commands
+        self.bot.tree.add_command(self.add_event)
+        self.bot.tree.add_command(self.edit_event)
+        self.bot.tree.add_command(self.remove_event)
+
+    def has_permission(self, interaction: discord.Interaction):
+        return any(r.name in ALLOWED_ROLES for r in interaction.user.roles)
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        channel = self.bot.get_channel(CALENDAR_CHANNEL_ID)
+        if not channel:
+            print("Calendar channel not found")
+            return
+
+        message_id = self.data.get("calendar_message_id")
+        message = None
+
+        # Check if message still exists
+        if message_id:
+            try:
+                message = await channel.fetch_message(message_id)
+            except discord.NotFound:
+                message = None
+
+        # If missing, post new one
+        if not message:
+            embed = build_calendar_embed()
+            view = CalendarButtons(self)
+            new_message = await channel.send(embed=embed, view=view)
+            self.data["calendar_channel_id"] = channel.id
+            self.data["calendar_message_id"] = new_message.id
+            save_data()
+
+        print("✅ Calendar ready")
+
+    # ===== SLASH COMMANDS =====
+    @discord.app_commands.command(name="addevent", description="Add a new event")
+    async def add_event(self, interaction: discord.Interaction):
+        if not self.has_permission(interaction):
+            await interaction.response.send_message("❌ You don’t have permission.", ephemeral=True)
+            return
+        modal = EventModal(self, "Add Event")
+        await interaction.response.send_modal(modal)
+
+    @discord.app_commands.command(name="editevent", description="Edit an event")
+    async def edit_event(self, interaction: discord.Interaction):
+        if not self.has_permission(interaction):
+            await interaction.response.send_message("❌ You don’t have permission.", ephemeral=True)
+            return
+
+        options = [
+            discord.SelectOption(label=e["title"], value=str(i))
+            for i, e in enumerate(self.data["events"][-25:][::-1])
+        ]
+        if not options:
+            await interaction.response.send_message("No events to edit.", ephemeral=True)
+            return
+
+        select = discord.ui.Select(placeholder="Choose event to edit", options=options)
+
+        async def select_callback(inter: discord.Interaction):
+            idx = int(select.values[0])
+            modal = EventModal(self, "Edit Event", idx)
+            await inter.response.send_modal(modal)
+
+        select.callback = select_callback
+        view = discord.ui.View()
+        view.add_item(select)
+        await interaction.response.send_message("Select event to edit:", view=view, ephemeral=True)
+
+    @discord.app_commands.command(name="deleteevent", description="Delete an event")
+    async def remove_event(self, interaction: discord.Interaction):
+        if not self.has_permission(interaction):
+            await interaction.response.send_message("❌ You don’t have permission.", ephemeral=True)
+            return
+
+        options = [
+            discord.SelectOption(label=e["title"], value=str(i))
+            for i, e in enumerate(self.data["events"][-25:][::-1])
+        ]
+        if not options:
+            await interaction.response.send_message("No events to delete.", ephemeral=True)
+            return
+
+        select = discord.ui.Select(placeholder="Choose event to delete", options=options)
+
+        async def select_callback(inter: discord.Interaction):
+            idx = int(select.values[0])
+            removed = self.data["events"].pop(idx)
+            save_data()
+            await self.update_calendar_message()
+            await inter.response.send_message(f"🗑️ Deleted **{removed['title']}**", ephemeral=True)
+
+        select.callback = select_callback
+        view = discord.ui.View()
+        view.add_item(select)
+        await interaction.response.send_message("Select event to delete:", view=view, ephemeral=True)
+
+    # ===== UPDATE CALENDAR =====
+    async def update_calendar_message(self):
+        channel = self.bot.get_channel(self.data["calendar_channel_id"])
+        if not channel:
+            return
+        try:
+            message = await channel.fetch_message(self.data["calendar_message_id"])
+            await message.edit(embed=build_calendar_embed(), view=CalendarButtons(self))
+        except discord.NotFound:
+            # Recreate if missing
+            embed = build_calendar_embed()
+            view = CalendarButtons(self)
+            new_message = await channel.send(embed=embed, view=view)
+            self.data["calendar_message_id"] = new_message.id
+            save_data()
