@@ -131,6 +131,7 @@ def build_calendar_embed(events):
 class CalendarCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self._synced = False  # ensure we only sync once (after application_id is available)
         try:
             self.reminder_task.start()
         except RuntimeError:
@@ -138,19 +139,11 @@ class CalendarCog(commands.Cog):
             pass
 
     async def cog_load(self):
-        # Register the app command on the tree and sync to guild if provided.
-        # Use the new command name "7drcalendar" to avoid collisions with other bots.
-        try:
-            cmd_name = "7drcalendar"
-            # only add if not already present
-            if self.bot.tree.get_command(cmd_name) is None:
-                self.bot.tree.add_command(self.calendar_app)
-            if isinstance(GUILD_ID, int) and GUILD_ID:
-                await self.bot.tree.sync(guild=discord.Object(id=GUILD_ID))
-            else:
-                await self.bot.tree.sync()
-        except Exception:
-            logging.exception("Failed to sync app commands in cog_load")
+        # IMPORTANT: do NOT add the app command here.
+        # discord.ext.commands.Cog._inject will register decorated app commands for this cog.
+        # Syncing here may run before application_id is available (causing MissingApplicationID).
+        # We perform sync in on_ready (below) where application_id should be present.
+        return
 
     def cog_unload(self):
         try:
@@ -160,6 +153,23 @@ class CalendarCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
+        # Sync app commands once, after the bot is ready and application_id is set.
+        if not self._synced:
+            try:
+                # Wait for application_id to be available.
+                # Usually on_ready is after application_id is set, but guard anyway.
+                if self.bot.application_id is None:
+                    logging.warning("application_id is not yet set; skipping sync for now")
+                else:
+                    if isinstance(GUILD_ID, int) and GUILD_ID:
+                        await self.bot.tree.sync(guild=discord.Object(id=GUILD_ID))
+                    else:
+                        await self.bot.tree.sync()
+                    logging.info("App commands synced successfully")
+                    self._synced = True
+            except Exception:
+                logging.exception("Failed to sync app commands in on_ready")
+
         # On startup delete any previous calendar embed posted by the bot and post a fresh one
         try:
             if not isinstance(GUILD_ID, int) or not isinstance(CALENDAR_CHANNEL_ID, int) or GUILD_ID == 0 or CALENDAR_CHANNEL_ID == 0:
