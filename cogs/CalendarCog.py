@@ -106,12 +106,13 @@ def event_to_str(event: dict) -> str:
         else "None"
     )
     
+    # Format date with DD/MM/YYYY
     msg = (
         f"📌 **{event['title']}**\n"
-        f"🗓️ {dt.strftime('%d %b %Y')}"
+        f"🗓️ {dt.strftime('%d/%m/%Y')}"
     )
     
-    # Add time if it exists
+    # Add time if it exists (and is not midnight)
     if dt.time() != time(0, 0):
         msg += f", {dt.strftime('%H:%M %Z')}"
     
@@ -168,9 +169,9 @@ def build_calendar_embed(events: list) -> discord.Embed:
 
 
 def parse_date(date_str: str) -> Optional[datetime]:
-    """Parse 'DD-MM-YYYY' into a date."""
+    """Parse 'DD/MM/YYYY' into a date."""
     try:
-        return datetime.strptime(date_str, "%d-%m-%Y").replace(tzinfo=TIMEZONE)
+        return datetime.strptime(date_str, "%d/%m/%Y").replace(tzinfo=TIMEZONE)
     except Exception:
         return None
 
@@ -307,7 +308,7 @@ class CalendarCog(commands.Cog):
     @app_commands.describe(
         title="Event title",
         description="Optional description of the event",
-        date="Date in DD-MM-YYYY format",
+        date="Date in DD/MM/YYYY format",
         time="Time in HH:MM format (24-hour, optional)",
         organiser="The event organiser",
         squad_maker="Squad maker (optional)",
@@ -334,7 +335,7 @@ class CalendarCog(commands.Cog):
         event_date = parse_date(date)
         if not event_date:
             await interaction.response.send_message(
-                "❌ Invalid date format. Use DD-MM-YYYY.", ephemeral=True
+                "❌ Invalid date format. Use DD/MM/YYYY.", ephemeral=True
             )
             return
 
@@ -397,7 +398,7 @@ class CalendarCog(commands.Cog):
         title="Title of the event to edit",
         new_title="New event title (optional)",
         description="New description (optional)",
-        date="New date in DD-MM-YYYY format (optional)",
+        date="New date in DD/MM/YYYY format (optional)",
         time="New time in HH:MM format (24-hour, optional)",
         organiser="New event organiser (optional)",
         squad_maker="New squad maker (optional)",
@@ -442,7 +443,7 @@ class CalendarCog(commands.Cog):
             event_date = parse_date(date)
             if not event_date:
                 await interaction.response.send_message(
-                    "❌ Invalid date format. Use DD-MM-YYYY.", ephemeral=True
+                    "❌ Invalid date format. Use DD/MM/YYYY.", ephemeral=True
                 )
                 return
                 
