@@ -247,16 +247,32 @@ class CalendarCog(commands.Cog):
         if message_id:
             try:
                 message = await channel.fetch_message(message_id)
-            except discord.NotFound:
+            except Exception:
                 message = None
 
-        if not message:
-            embed = build_calendar_embed()
-            view = CalendarButtons(self)
-            new_message = await channel.send(embed=embed, view=view)
-            self.data["calendar_channel_id"] = channel.id
-            self.data["calendar_message_id"] = new_message.id
-            save_data()
+        # If there's an old bot message, delete it so we recreate fresh one and register view
+        if message:
+            try:
+                await message.delete()
+            except Exception:
+                # ignore if deletion fails for any reason
+                pass
+            message = None
+
+        # Send a fresh calendar message and register the view so buttons work after restart
+        embed = build_calendar_embed()
+        view = CalendarButtons(self)
+        new_message = await channel.send(embed=embed, view=view)
+        self.data["calendar_channel_id"] = channel.id
+        self.data["calendar_message_id"] = new_message.id
+        save_data()
+
+        # Register the view handlers in memory (so interactions work)
+        try:
+            self.bot.add_view(CalendarButtons(self))
+        except Exception:
+            # add_view may be called multiple times; ignore if it errors
+            pass
 
         print("✅ Calendar ready")
 
@@ -338,14 +354,20 @@ class CalendarCog(commands.Cog):
             return
         try:
             message = await channel.fetch_message(self.data["calendar_message_id"])
+            # edit in-place if possible
             await message.edit(embed=build_calendar_embed(), view=CalendarButtons(self))
         except Exception:
+            # If message not found or other issue, send a fresh one and store id and register view
             embed = build_calendar_embed()
             view = CalendarButtons(self)
             new_message = await channel.send(embed=embed, view=view)
             self.data["calendar_message_id"] = new_message.id
             self.data["calendar_channel_id"] = channel.id
             save_data()
+            try:
+                self.bot.add_view(CalendarButtons(self))
+            except Exception:
+                pass
 
     # ===== REMINDERS TASK =====
     @tasks.loop(minutes=1)
