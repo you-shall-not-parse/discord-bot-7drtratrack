@@ -281,3 +281,5 @@ class CalendarCog(commands.Cog):
             new_message = await channel.send(embed=embed, view=view)
             self.data["calendar_message_id"] = new_message.id
             save_data()
+async def setup(bot: commands.Bot):
+    await bot.add_cog(CalendarCog(bot))
