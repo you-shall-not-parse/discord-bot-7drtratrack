@@ -180,6 +180,7 @@ def build_calendar_embed(events: list) -> discord.Embed:
     # Add TBC events last (at the bottom) if there are any
     if tbc_events:
         body = "\n\n".join(event_to_str(e) for e in tbc_events)
+        tbc_header = "┏━━━━━━━━ Date TBC ━━━━━━━━┓"
         embed.add_field(name="Date TBC", value=body, inline=False)
 
     return embed
