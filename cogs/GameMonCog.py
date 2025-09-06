@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger('GameMonCog')
 
 # ---------------- CONFIG ----------------
-GUILD_ID = 0  # Replace with your guild/server ID
+GUILD_ID = 1097913605082579024   # Replace with your guild/server ID
 THREAD_ID = 1412934277133369494  # replace with your thread ID
 TRACKED_USERS = [1109147750932676649]  # list of user IDs to track
 IGNORED_GAMES = ["Spotify", "Discord", "Pornhub", "Netflix", "Disney", "Sky TV", "Youtube"]
