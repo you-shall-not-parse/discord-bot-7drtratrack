@@ -7,7 +7,7 @@ import datetime
 # ---------------- CONFIG ----------------
 THREAD_ID = 1412934277133369494  # replace with your thread ID
 TRACKED_USERS = [1109147750932676649]  # list of user IDs to track
-IGNORED_GAMES = ["Spotify", "Discord", "Pornhub", "Netflix", "Disney", Sky TV", "Youtube"]
+IGNORED_GAMES = ["Spotify", "Discord", "Pornhub", "Netflix", "Disney", "Sky TV", "Youtube"]
 PREFS_FILE = "game_prefs.json"
 STATE_FILE = "game_state.json"
 PROMPT_TIMEOUT = 300  # seconds (5 min) -> change here to configure timeout
