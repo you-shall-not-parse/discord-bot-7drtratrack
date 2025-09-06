@@ -19,7 +19,7 @@ PREFS_FILE = "game_prefs.json"
 STATE_FILE = "game_state.json"
 PROMPT_TIMEOUT = 300  # seconds (5 min) -> change here to configure timeout
 INACTIVE_CHECK_MINUTES = 60  # how often to check for inactive users
-MAX_INACTIVE_HOURS = 8  # maximum time a user can be inactive before removal
+MAX_INACTIVE_HOURS = 12  # maximum time a user can be inactive before removal
 # ----------------------------------------
 
 class GameMonCog(commands.Cog):
@@ -96,6 +96,53 @@ class GameMonCog(commands.Cog):
                 logger.error(f"Error saving {filename}: {e}")
                 return False
 
+    # ---------- Game Activity Detection ----------
+    def get_game_from_activity(self, activity):
+        """Extract game name from any type of activity"""
+        # Standard Game activity
+        if isinstance(activity, discord.Game):
+            return activity.name
+        
+        # Rich Presence for games
+        if isinstance(activity, discord.Activity):
+            # Playing activities
+            if activity.type == discord.ActivityType.playing:
+                return activity.name
+                
+            # Some games set their name in details or state fields
+            if hasattr(activity, 'details') and activity.details:
+                return activity.name or activity.details
+                
+        # For Streaming activities (if we want to track those)
+        if hasattr(activity, 'type') and activity.type == discord.ActivityType.streaming:
+            return f"Streaming: {activity.name}" if activity.name else None
+            
+        # Modern games often use Activity with application_id
+        if hasattr(activity, 'application_id') and activity.application_id:
+            # Try name attribute first, then details or state if available
+            name = getattr(activity, 'name', None)
+            if name:
+                return name
+                
+            # Some games put the actual game name in details or state
+            details = getattr(activity, 'details', None)
+            if details:
+                return details
+                
+            state = getattr(activity, 'state', None)
+            if state:
+                return state
+                
+        # Custom "Playing X" status
+        if isinstance(activity, discord.CustomActivity) and activity.name:
+            if "playing" in activity.name.lower():
+                parts = activity.name.lower().split("playing ", 1)
+                if len(parts) > 1:
+                    return parts[1].strip()
+                    
+        # No game detected from this activity
+        return None
+
     # ---------- Bot Ready Event ----------
     @commands.Cog.listener()
     async def on_ready(self):
@@ -169,6 +216,47 @@ class GameMonCog(commands.Cog):
                 ephemeral=True
             )
 
+    # ---------- Get Current Games Command ----------
+    @discord.app_commands.command(name="currentgames", description="Show currently detected games for tracked users")
+    async def currentgames(self, interaction: discord.Interaction):
+        # Build a report of current games being played by tracked users
+        result = []
+        result.append("**Current Games for Tracked Users:**")
+        
+        for user_id in TRACKED_USERS:
+            try:
+                user = self.bot.get_user(user_id)
+                username = user.name if user else f"User {user_id}"
+                result.append(f"\n**{username}**:")
+                
+                member = None
+                for guild in self.bot.guilds:
+                    member = guild.get_member(user_id)
+                    if member:
+                        break
+                        
+                if member and member.activities:
+                    for activity in member.activities:
+                        game = self.get_game_from_activity(activity)
+                        activity_type = getattr(activity, 'type', 'Unknown')
+                        result.append(f"- Activity Type: {activity_type}")
+                        result.append(f"  Name: {getattr(activity, 'name', 'None')}")
+                        result.append(f"  Details: {getattr(activity, 'details', 'None')}")
+                        result.append(f"  Detected Game: {game}")
+                else:
+                    result.append("- No activities detected")
+            except Exception as e:
+                result.append(f"- Error checking user: {str(e)}")
+                
+        # Also show what's in the current state
+        result.append("\n**Currently Tracked Games:**")
+        for uid, game in self.state["players"].items():
+            user = self.bot.get_user(int(uid))
+            username = user.name if user else f"User {uid}"
+            result.append(f"- {username}: {game}")
+            
+        await interaction.response.send_message("\n".join(result), ephemeral=True)
+
     # ---------- Event: Member updates ----------
     @commands.Cog.listener()
     async def on_presence_update(self, before, after):
@@ -176,40 +264,22 @@ class GameMonCog(commands.Cog):
         if after.id not in TRACKED_USERS:
             return
 
-        # ISSUE 2: Improved Activity Detection
-        # Check for all game activity types, not just discord.Game
+        # Use our improved game detection method
         before_game = None
         after_game = None
         
-        # Check for gaming activities across different activity types
+        # Check for gaming activities in before state
         for activity in before.activities:
-            # Game type
-            if isinstance(activity, discord.Game):
-                before_game = activity.name
-                break
-            # Rich Presence game
-            elif (isinstance(activity, discord.Activity) and 
-                  activity.type == discord.ActivityType.playing):
-                before_game = activity.name
-                break
-            # Custom activity that mentions a game
-            elif (isinstance(activity, discord.CustomActivity) and 
-                  activity.name and "playing" in activity.name.lower()):
-                before_game = activity.name.split("playing ", 1)[1].strip()
+            game = self.get_game_from_activity(activity)
+            if game:
+                before_game = game
                 break
         
-        # Same checks for after state
+        # Check for gaming activities in after state  
         for activity in after.activities:
-            if isinstance(activity, discord.Game):
-                after_game = activity.name
-                break
-            elif (isinstance(activity, discord.Activity) and 
-                  activity.type == discord.ActivityType.playing):
-                after_game = activity.name
-                break
-            elif (isinstance(activity, discord.CustomActivity) and 
-                  activity.name and "playing" in activity.name.lower()):
-                after_game = activity.name.split("playing ", 1)[1].strip()
+            game = self.get_game_from_activity(activity)
+            if game:
+                after_game = game
                 break
 
         # If unchanged or ignored, do nothing
@@ -236,8 +306,22 @@ class GameMonCog(commands.Cog):
                 await self.prompt_user(after, after_game)
             # always_reject does nothing
 
+        # Changed games
+        elif after_game and before_game and after_game != before_game:
+            logger.info(f"User {after.name} ({after.id}) changed games: {before_game} -> {after_game}")
+            # If user was already in the players list, update with new game
+            if user_id in self.state["players"]:
+                pref = self.prefs.get(user_id, "ask")
+                if pref == "always_accept":
+                    self.state["players"][user_id] = after_game
+                    await self.save_json(STATE_FILE, self.state)
+                    await self.update_embed()
+                elif pref == "ask":
+                    await self.prompt_user(after, after_game)
+                # always_reject does nothing
+
         # Stopped playing
-        if before_game and not after_game:
+        elif before_game and not after_game:
             logger.info(f"User {after.name} ({after.id}) stopped playing {before_game}")
             if user_id in self.state["players"]:
                 self.state["players"].pop(user_id)
@@ -314,7 +398,6 @@ class GameMonCog(commands.Cog):
         
         if self.state["players"]:
             for uid, game in self.state["players"].items():
-                # ISSUE 4: Improved User Resolution
                 try:
                     # Try to fetch user from cache
                     user = self.bot.get_user(int(uid))
@@ -419,7 +502,7 @@ class GameMonCog(commands.Cog):
         # Wait an additional 10 seconds to make sure on_ready has completed
         await asyncio.sleep(10)
 
-    # ISSUE 6: Cleanup for Inactive Users
+    # Task to handle player cleanup
     @tasks.loop(minutes=INACTIVE_CHECK_MINUTES)
     async def cleanup_inactive_users(self):
         """Background task to check and remove inactive users"""
