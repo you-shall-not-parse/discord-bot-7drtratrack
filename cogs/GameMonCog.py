@@ -22,6 +22,56 @@ INACTIVE_CHECK_MINUTES = 60  # how often to check for inactive users
 MAX_INACTIVE_HOURS = 12  # maximum time a user can be inactive before removal
 # ----------------------------------------
 
+class PreferenceView(discord.ui.View):
+    """View with preference buttons for the Now Playing embed"""
+    def __init__(self, cog):
+        super().__init__(timeout=None)  # No timeout for persistent view
+        self.cog = cog
+        
+    @discord.ui.button(label="Always Accept", style=discord.ButtonStyle.green, custom_id="pref:always_accept")
+    async def always_accept(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._set_preference(interaction, "always_accept")
+        
+    @discord.ui.button(label="Ask", style=discord.ButtonStyle.blurple, custom_id="pref:ask")
+    async def ask(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._set_preference(interaction, "ask")
+        
+    @discord.ui.button(label="Always Reject", style=discord.ButtonStyle.red, custom_id="pref:always_reject")
+    async def always_reject(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._set_preference(interaction, "always_reject")
+        
+    async def _set_preference(self, interaction, pref):
+        user_id = str(interaction.user.id)
+        current_pref = self.cog.prefs.get(user_id, "always_reject")  # Default changed to always_reject
+        self.cog.prefs[user_id] = pref
+        success = await self.cog.save_json(PREFS_FILE, self.cog.prefs)
+        
+        if success:
+            await interaction.response.send_message(
+                f"Preference updated from `{current_pref}` to `{pref}`",
+                ephemeral=True
+            )
+            
+            # If preference is ask, send test DM
+            if pref == "ask":
+                try:
+                    await interaction.user.send(
+                        "This is a test message to confirm you can receive DMs from this bot. " +
+                        "You'll receive prompts here when you play games."
+                    )
+                except discord.Forbidden:
+                    await interaction.followup.send(
+                        "⚠️ I couldn't send you a DM. Please enable DMs from server members to receive game prompts.",
+                        ephemeral=True
+                    )
+                except Exception as e:
+                    logger.error(f"Error sending test DM to {interaction.user.name}: {e}")
+        else:
+            await interaction.response.send_message(
+                "Error saving preference. Please try again.",
+                ephemeral=True
+            )
+
 class GameMonCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -41,6 +91,9 @@ class GameMonCog(commands.Cog):
         
         # File lock to prevent race conditions
         self.file_lock = asyncio.Lock()
+        
+        # Preference view for the embed
+        self.preference_view = PreferenceView(self)
         
         # Start background tasks
         self.cleanup_inactive_users.start()
@@ -207,18 +260,21 @@ class GameMonCog(commands.Cog):
         
         logger.info("Thread validation successful")
         
-        # Check if message already exists to prevent double posting
+        # Delete existing message if it exists
         if self.state.get("message_id"):
             try:
-                await thread.fetch_message(self.state["message_id"])
-                logger.info("Existing message found, skipping initial post")
-                self.initial_post_done = True
-                return
-            except (discord.NotFound, discord.HTTPException):
-                # Only force a new message if the existing one can't be found
-                logger.info("Existing message not found, creating new one")
+                old_message = await thread.fetch_message(self.state["message_id"])
+                await old_message.delete()
+                logger.info(f"Deleted previous message: {self.state['message_id']}")
+                self.state["message_id"] = None
+                await self.save_json(STATE_FILE, self.state)
+            except (discord.NotFound, discord.HTTPException) as e:
+                logger.warning(f"Could not delete previous message: {e}")
         
-        # Force an immediate update to ensure a message exists
+        # Add the persistent view to the bot
+        self.bot.add_view(self.preference_view)
+        
+        # Force an immediate update to create a new message
         await self.update_embed(force_new=True)
 
     # ---------- Presence Pref Command ----------
@@ -232,7 +288,7 @@ class GameMonCog(commands.Cog):
             )
             return
 
-        current_pref = self.prefs.get(str(interaction.user.id), "ask")
+        current_pref = self.prefs.get(str(interaction.user.id), "always_reject")  # Default changed to always_reject
         self.prefs[str(interaction.user.id)] = pref
         success = await self.save_json(PREFS_FILE, self.prefs)
         
@@ -264,72 +320,6 @@ class GameMonCog(commands.Cog):
                 ephemeral=True
             )
 
-    # ---------- Button-based Preference Setting Command ----------
-    @discord.app_commands.command(name="setpref", description="Set your game listing preference using buttons")
-    async def setpref(self, interaction: discord.Interaction):
-        """Set preference using buttons instead of command parameters"""
-        
-        class PrefView(discord.ui.View):
-            def __init__(self, cog):
-                super().__init__(timeout=60)
-                self.cog = cog
-                
-            @discord.ui.button(label="Always Show Games", style=discord.ButtonStyle.green)
-            async def always_accept(self, interaction: discord.Interaction, button: discord.ui.Button):
-                await self._set_preference(interaction, "always_accept")
-                
-            @discord.ui.button(label="Ask Every Time", style=discord.ButtonStyle.blurple)
-            async def ask(self, interaction: discord.Interaction, button: discord.ui.Button):
-                await self._set_preference(interaction, "ask")
-                
-            @discord.ui.button(label="Never Show Games", style=discord.ButtonStyle.red)
-            async def always_reject(self, interaction: discord.Interaction, button: discord.ui.Button):
-                await self._set_preference(interaction, "always_reject")
-                
-            async def _set_preference(self, interaction, pref):
-                user_id = str(interaction.user.id)
-                current_pref = self.cog.prefs.get(user_id, "ask")
-                self.cog.prefs[user_id] = pref
-                success = await self.cog.save_json(PREFS_FILE, self.cog.prefs)
-                
-                if success:
-                    await interaction.response.edit_message(
-                        content=f"Preference updated from `{current_pref}` to `{pref}`",
-                        view=None
-                    )
-                    
-                    # If changing to "ask", try to send a test DM
-                    if pref == "ask":
-                        try:
-                            test_dm = await interaction.user.send(
-                                "This is a test message to confirm you can receive DMs from this bot. " +
-                                "You'll receive prompts here when you play games."
-                            )
-                        except discord.Forbidden:
-                            logger.warning(f"Cannot DM user {interaction.user.name}. DMs may be disabled.")
-                            await interaction.followup.send(
-                                "⚠️ I couldn't send you a DM. Please enable DMs from server members to receive game prompts.",
-                                ephemeral=True
-                            )
-                        except Exception as e:
-                            logger.error(f"Error sending test DM to {interaction.user.name}: {e}")
-                else:
-                    await interaction.response.edit_message(
-                        content="Error saving preference. Please try again.",
-                        view=None
-                    )
-        
-        # Get current preference
-        current_pref = self.prefs.get(str(interaction.user.id), "ask")
-        
-        # Send message with buttons
-        await interaction.response.send_message(
-            f"Your current preference is: `{current_pref}`\n\n"
-            "Choose your game listing preference:",
-            view=PrefView(self),
-            ephemeral=True
-        )
-
     # ---------- Manual Refresh Command ----------
     @discord.app_commands.command(name="refreshgames", description="Refresh the Now Playing list")
     async def refreshgames(self, interaction: discord.Interaction):
@@ -355,7 +345,7 @@ class GameMonCog(commands.Cog):
         user_id = str(interaction.user.id)
         
         # Set preference to always_accept
-        old_pref = self.prefs.get(user_id, "ask")
+        old_pref = self.prefs.get(user_id, "always_reject")  # Default changed to always_reject
         self.prefs[user_id] = "always_accept"
         await self.save_json(PREFS_FILE, self.prefs)
         
@@ -506,7 +496,7 @@ class GameMonCog(commands.Cog):
         # Started playing
         if after_game and not before_game:
             logger.info(f"User {after.name} ({after.id}) started playing {after_game}")
-            pref = self.prefs.get(user_id, "ask")
+            pref = self.prefs.get(user_id, "always_reject")  # Default changed to always_reject
             logger.info(f"User preference: {pref}")
             
             if pref == "always_accept":
@@ -524,7 +514,7 @@ class GameMonCog(commands.Cog):
             logger.info(f"User {after.name} ({after.id}) changed games: {before_game} -> {after_game}")
             # If user was already in the players list, update with new game
             if user_id in self.state["players"]:
-                pref = self.prefs.get(user_id, "ask")
+                pref = self.prefs.get(user_id, "always_reject")  # Default changed to always_reject
                 logger.info(f"User preference: {pref}")
                 
                 if pref == "always_accept":
@@ -669,20 +659,20 @@ class GameMonCog(commands.Cog):
         else:
             embed.description = "Nobody is playing tracked games right now."
 
-        # Add footer with timestamp
-        embed.set_footer(text=f"Last updated")
+        # Add footer with instructions for preference buttons
+        embed.set_footer(text="Use the buttons below to set your preference • Last updated")
 
         try:
             if message and not force_new:
                 logger.info(f"Updating existing message {message.id}")
-                await message.edit(embed=embed)
+                await message.edit(embed=embed, view=self.preference_view)
                 self.initial_post_done = True
                 return True
             else:
                 # Only create a new message if absolutely necessary
                 if force_new or not self.state.get("message_id"):
                     logger.info("Creating new message in thread")
-                    msg = await thread.send(embed=embed)
+                    msg = await thread.send(embed=embed, view=self.preference_view)
                     self.state["message_id"] = msg.id
                     await self.save_json(STATE_FILE, self.state)
                     self.initial_post_done = True
@@ -700,7 +690,7 @@ class GameMonCog(commands.Cog):
             if force_new:
                 try:
                     logger.info("Attempting to create new message after failure")
-                    msg = await thread.send(embed=embed)
+                    msg = await thread.send(embed=embed, view=self.preference_view)
                     self.state["message_id"] = msg.id
                     await self.save_json(STATE_FILE, self.state)
                     self.initial_post_done = True
