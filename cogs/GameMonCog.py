@@ -264,6 +264,72 @@ class GameMonCog(commands.Cog):
                 ephemeral=True
             )
 
+    # ---------- Button-based Preference Setting Command ----------
+    @discord.app_commands.command(name="setpref", description="Set your game listing preference using buttons")
+    async def setpref(self, interaction: discord.Interaction):
+        """Set preference using buttons instead of command parameters"""
+        
+        class PrefView(discord.ui.View):
+            def __init__(self, cog):
+                super().__init__(timeout=60)
+                self.cog = cog
+                
+            @discord.ui.button(label="Always Show Games", style=discord.ButtonStyle.green)
+            async def always_accept(self, interaction: discord.Interaction, button: discord.ui.Button):
+                await self._set_preference(interaction, "always_accept")
+                
+            @discord.ui.button(label="Ask Every Time", style=discord.ButtonStyle.blurple)
+            async def ask(self, interaction: discord.Interaction, button: discord.ui.Button):
+                await self._set_preference(interaction, "ask")
+                
+            @discord.ui.button(label="Never Show Games", style=discord.ButtonStyle.red)
+            async def always_reject(self, interaction: discord.Interaction, button: discord.ui.Button):
+                await self._set_preference(interaction, "always_reject")
+                
+            async def _set_preference(self, interaction, pref):
+                user_id = str(interaction.user.id)
+                current_pref = self.cog.prefs.get(user_id, "ask")
+                self.cog.prefs[user_id] = pref
+                success = await self.cog.save_json(PREFS_FILE, self.cog.prefs)
+                
+                if success:
+                    await interaction.response.edit_message(
+                        content=f"Preference updated from `{current_pref}` to `{pref}`",
+                        view=None
+                    )
+                    
+                    # If changing to "ask", try to send a test DM
+                    if pref == "ask":
+                        try:
+                            test_dm = await interaction.user.send(
+                                "This is a test message to confirm you can receive DMs from this bot. " +
+                                "You'll receive prompts here when you play games."
+                            )
+                        except discord.Forbidden:
+                            logger.warning(f"Cannot DM user {interaction.user.name}. DMs may be disabled.")
+                            await interaction.followup.send(
+                                "⚠️ I couldn't send you a DM. Please enable DMs from server members to receive game prompts.",
+                                ephemeral=True
+                            )
+                        except Exception as e:
+                            logger.error(f"Error sending test DM to {interaction.user.name}: {e}")
+                else:
+                    await interaction.response.edit_message(
+                        content="Error saving preference. Please try again.",
+                        view=None
+                    )
+        
+        # Get current preference
+        current_pref = self.prefs.get(str(interaction.user.id), "ask")
+        
+        # Send message with buttons
+        await interaction.response.send_message(
+            f"Your current preference is: `{current_pref}`\n\n"
+            "Choose your game listing preference:",
+            view=PrefView(self),
+            ephemeral=True
+        )
+
     # ---------- Manual Refresh Command ----------
     @discord.app_commands.command(name="refreshgames", description="Refresh the Now Playing list")
     async def refreshgames(self, interaction: discord.Interaction):
@@ -607,36 +673,43 @@ class GameMonCog(commands.Cog):
         embed.set_footer(text=f"Last updated")
 
         try:
-            if not message or force_new:
-                logger.info("Creating new message in thread")
-                msg = await thread.send(embed=embed)
-                self.state["message_id"] = msg.id
-                await self.save_json(STATE_FILE, self.state)
-                self.initial_post_done = True
-                logger.info(f"Created new message with ID {msg.id}")
-                return True
-            else:
+            if message and not force_new:
                 logger.info(f"Updating existing message {message.id}")
                 await message.edit(embed=embed)
                 self.initial_post_done = True
                 return True
+            else:
+                # Only create a new message if absolutely necessary
+                if force_new or not self.state.get("message_id"):
+                    logger.info("Creating new message in thread")
+                    msg = await thread.send(embed=embed)
+                    self.state["message_id"] = msg.id
+                    await self.save_json(STATE_FILE, self.state)
+                    self.initial_post_done = True
+                    logger.info(f"Created new message with ID {msg.id}")
+                    return True
+                else:
+                    logger.error("Failed to update existing message and not allowed to create new one")
+                    return False
         except discord.Forbidden as e:
             logger.error(f"Permission error posting message: {e}")
             return False
         except discord.HTTPException as e:
             logger.error(f"HTTP error posting message: {e}")
-            # If edit fails, try to send a new message
-            try:
-                logger.info("Attempting to create new message after failure")
-                msg = await thread.send(embed=embed)
-                self.state["message_id"] = msg.id
-                await self.save_json(STATE_FILE, self.state)
-                self.initial_post_done = True
-                logger.info(f"Created new message with ID {msg.id}")
-                return True
-            except Exception as new_err:
-                logger.error(f"Failed to create new message: {new_err}")
-                return False
+            # Only create a new message if force_new is True
+            if force_new:
+                try:
+                    logger.info("Attempting to create new message after failure")
+                    msg = await thread.send(embed=embed)
+                    self.state["message_id"] = msg.id
+                    await self.save_json(STATE_FILE, self.state)
+                    self.initial_post_done = True
+                    logger.info(f"Created new message with ID {msg.id}")
+                    return True
+                except Exception as new_err:
+                    logger.error(f"Failed to create new message: {new_err}")
+                    return False
+            return False
         except Exception as e:
             logger.error(f"Unexpected error updating embed: {e}")
             return False
