@@ -124,7 +124,7 @@ def event_to_str(event: dict) -> str:
     
     # Add recurring indicator if applicable
     if event.get("recurring", False):
-        msg += " _(2 week rolling/recurring)_"
+        msg += " (2 weeks displayed, but recurs every week)"
     
     msg += "\n"
     
@@ -270,21 +270,23 @@ def build_calendar_embed(events: list) -> discord.Embed:
             
         # Create fields for each chunk
         for j, chunk in enumerate(chunks):
-            # Create appropriate headers
             if j == 0:
-                # Only use the fancy decorated header for the first chunk
+                # Only the first chunk gets a header
                 month_name = f"┏━━━━ 🗓️ **{calendar.month_name[month]} {year}** 🗓️ ━━━━┓"
+                
+                # Join events with double newlines and add the extra space at the top
+                body = "\n\n".join(chunk)
+                body = "\u200b\n" + body  # Add invisible character + newline for extra space
+                
+                embed.add_field(name=month_name, value=body, inline=False)
             else:
-                # For continuation chunks, use a simpler header
-                month_name = f"**{calendar.month_name[month]} {year}** (continued {j+1}/{len(chunks)})"
-            
-            # Join events with double newlines and add the extra space at the top
-            body = "\n\n".join(chunk)
-            body = "\u200b\n" + body  # Add invisible character + newline for extra space
-            
-            embed.add_field(name=month_name, value=body, inline=False)
+                # Continuation chunks have no header at all
+                body = "\n\n".join(chunk)
+                
+                # Use a zero-width space as the name to make it completely invisible
+                embed.add_field(name="\u200b", value=body, inline=False)
     
-    # Add TBC events with the same chunking approach
+    # Add TBC events with the same approach
     if tbc_events:
         # Add a blank line before TBC section if there are other events
         if sorted_months:
@@ -316,14 +318,19 @@ def build_calendar_embed(events: list) -> discord.Embed:
         # Create fields for each TBC chunk
         for j, chunk in enumerate(chunks):
             if j == 0:
+                # Only the first chunk gets a header
                 header = f"┏━━━━━ 🔧 **Date TBC** 🔧 ━━━━━┓"
+                
+                body = "\n\n".join(chunk)
+                body = "\u200b\n" + body
+                
+                embed.add_field(name=header, value=body, inline=False)
             else:
-                header = f"**Date TBC** (continued {j+1}/{len(chunks)})"
-            
-            body = "\n\n".join(chunk)
-            body = "\u200b\n" + body
-            
-            embed.add_field(name=header, value=body, inline=False)
+                # Continuation chunks have no header
+                body = "\n\n".join(chunk)
+                
+                # Use a zero-width space as the name to make it completely invisible
+                embed.add_field(name="\u200b", value=body, inline=False)
 
     return embed
 
