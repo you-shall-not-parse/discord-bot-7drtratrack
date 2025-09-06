@@ -18,7 +18,8 @@ PREFS_FILE = "game_prefs.json"
 STATE_FILE = "game_state.json"
 INACTIVE_CHECK_MINUTES = 60  # how often to check for inactive users
 MAX_INACTIVE_HOURS = 12  # maximum time a user can be inactive before removal
-DEFAULT_PREFERENCE = "opt_out"  # Default preference for users (opt_in or opt_out)
+DEFAULT_PREFERENCE = "opt_in"  # Default preference for users (opt_in or opt_out)
+ADMIN_USER_IDS = [1234567890, 9876543210]  # Replace with your admin user IDs who can use special commands
 # ----------------------------------------
 
 class PreferenceView(discord.ui.View):
@@ -261,6 +262,11 @@ class GameMonCog(commands.Cog):
         # No game detected from this activity
         return None
 
+    # ---------- Helper Function to Check Admin Access ----------
+    def is_admin_user(self, user_id):
+        """Check if a user is in the admin list"""
+        return user_id in ADMIN_USER_IDS
+
     # ---------- Bot Ready Event ----------
     @commands.Cog.listener()
     async def on_ready(self):
@@ -434,6 +440,14 @@ class GameMonCog(commands.Cog):
     # ---------- Manual Refresh Command ----------
     @discord.app_commands.command(name="refreshgames", description="Refresh the Now Playing list")
     async def refreshgames(self, interaction: discord.Interaction):
+        # Check if user is in the admin list
+        if not self.is_admin_user(interaction.user.id):
+            await interaction.response.send_message(
+                "You don't have permission to use this command.",
+                ephemeral=True
+            )
+            return
+            
         cleaned = await self.cleanup_stale_players()
         
         # Force a new message regardless of existing one
@@ -504,6 +518,14 @@ class GameMonCog(commands.Cog):
     # ---------- Get Current Games Command ----------
     @discord.app_commands.command(name="currentgames", description="Show currently detected games for users")
     async def currentgames(self, interaction: discord.Interaction):
+        # Check if user is in the admin list
+        if not self.is_admin_user(interaction.user.id):
+            await interaction.response.send_message(
+                "You don't have permission to use this command.",
+                ephemeral=True
+            )
+            return
+            
         # Build a report of current games being played
         result = []
         result.append("**Current Games by User:**")
