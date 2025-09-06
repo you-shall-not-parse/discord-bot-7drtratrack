@@ -207,6 +207,17 @@ class GameMonCog(commands.Cog):
         
         logger.info("Thread validation successful")
         
+        # Check if message already exists to prevent double posting
+        if self.state.get("message_id"):
+            try:
+                await thread.fetch_message(self.state["message_id"])
+                logger.info("Existing message found, skipping initial post")
+                self.initial_post_done = True
+                return
+            except (discord.NotFound, discord.HTTPException):
+                # Only force a new message if the existing one can't be found
+                logger.info("Existing message not found, creating new one")
+        
         # Force an immediate update to ensure a message exists
         await self.update_embed(force_new=True)
 
@@ -230,6 +241,23 @@ class GameMonCog(commands.Cog):
                 f"Preference updated from `{current_pref}` to `{pref}`", 
                 ephemeral=True
             )
+            
+            # If changing to "ask", try to send a test DM
+            if pref == "ask":
+                try:
+                    test_dm = await interaction.user.send(
+                        "This is a test message to confirm you can receive DMs from this bot. " +
+                        "You'll receive prompts here when you play games."
+                    )
+                    logger.info(f"Successfully sent test DM to {interaction.user.name} ({interaction.user.id})")
+                except discord.Forbidden:
+                    logger.warning(f"Cannot DM user {interaction.user.name} ({interaction.user.id}). DMs may be disabled.")
+                    await interaction.followup.send(
+                        "⚠️ I couldn't send you a DM. Please enable DMs from server members to receive game prompts.",
+                        ephemeral=True
+                    )
+                except Exception as e:
+                    logger.error(f"Error sending test DM to {interaction.user.name} ({interaction.user.id}): {e}")
         else:
             await interaction.response.send_message(
                 "Error saving preference. Please try again.", 
@@ -252,6 +280,57 @@ class GameMonCog(commands.Cog):
         else:
             await interaction.response.send_message(
                 f"Removed {cleaned} inactive players but failed to update the message. Check logs.",
+                ephemeral=True
+            )
+
+    # ---------- Fix Preference Command ----------
+    @discord.app_commands.command(name="fixpreference", description="Fix your game display preference and add current game")
+    async def fixpreference(self, interaction: discord.Interaction):
+        user_id = str(interaction.user.id)
+        
+        # Set preference to always_accept
+        old_pref = self.prefs.get(user_id, "ask")
+        self.prefs[user_id] = "always_accept"
+        await self.save_json(PREFS_FILE, self.prefs)
+        
+        # Check for current games and force add to state
+        member = None
+        for guild in self.bot.guilds:
+            member = guild.get_member(interaction.user.id)
+            if member:
+                break
+        
+        current_game = None
+        if member and member.activities:
+            for activity in member.activities:
+                game = self.get_game_from_activity(activity)
+                if game and game not in IGNORED_GAMES:
+                    current_game = game
+                    break
+        
+        if current_game:
+            # Force add to state
+            self.state["players"][user_id] = current_game
+            self.state["last_seen"][user_id] = datetime.datetime.utcnow().isoformat()
+            await self.save_json(STATE_FILE, self.state)
+            logger.info(f"Force added game for {interaction.user.name}: {current_game}")
+            
+            # Update the embed
+            success = await self.update_embed()
+            
+            if success:
+                await interaction.response.send_message(
+                    f"Changed preference from `{old_pref}` to `always_accept` and added your current game: {current_game}",
+                    ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(
+                    "Fixed preferences but failed to update the message. Try /refreshgames.",
+                    ephemeral=True
+                )
+        else:
+            await interaction.response.send_message(
+                f"Changed preference from `{old_pref}` to `always_accept`, but no game currently detected.",
                 ephemeral=True
             )
 
@@ -305,6 +384,13 @@ class GameMonCog(commands.Cog):
             user = self.bot.get_user(int(uid))
             username = user.name if user else f"User {uid}"
             result.append(f"- {username}: {game}")
+        
+        # Show user preferences
+        result.append("\n**User Preferences:**")
+        for uid, pref in self.prefs.items():
+            user = self.bot.get_user(int(uid))
+            username = user.name if user else f"User {uid}"
+            result.append(f"- {username}: {pref}")
             
         await interaction.response.send_message("\n".join(result), ephemeral=True)
 
@@ -431,18 +517,30 @@ class GameMonCog(commands.Cog):
                         logger.error(f"Error updating prompt timeout message: {e}")
 
         try:
+            # Check if user can receive DMs first
             view = Confirm(self, str(user.id), game)
-            dm = await user.send(
-                f"Do you want to show `{game}` in the Now Playing list?",
-                view=view
-            )
-            # Store reference to message in view for timeout handling
-            view.message = dm
-            logger.info(f"Sent game prompt to {user.name} ({user.id}) for {game}")
-        except discord.Forbidden:
-            logger.warning(f"Cannot DM user {user.name} ({user.id}). DMs may be disabled.")
+            try:
+                dm = await user.send(
+                    f"Do you want to show `{game}` in the Now Playing list?",
+                    view=view
+                )
+                # Store reference to message in view for timeout handling
+                view.message = dm
+                logger.info(f"Sent game prompt to {user.name} ({user.id}) for {game}")
+            except discord.Forbidden:
+                # DMs are disabled, so auto-accept and notify in console
+                logger.warning(f"Cannot DM user {user.name} ({user.id}). DMs disabled. Auto-accepting game.")
+                self.state["players"][str(user.id)] = game
+                await self.save_json(STATE_FILE, self.state)
+                await self.update_embed()
+            except Exception as e:
+                logger.error(f"Error sending prompt to {user.name} ({user.id}): {e}")
+                # On error, also auto-accept to prevent missing games
+                self.state["players"][str(user.id)] = game
+                await self.save_json(STATE_FILE, self.state)
+                await self.update_embed()
         except Exception as e:
-            logger.error(f"Error sending prompt to {user.name} ({user.id}): {e}")
+            logger.error(f"Unexpected error in prompt_user for {user.name} ({user.id}): {e}")
 
     # ---------- Embed Update ----------
     async def update_embed(self, force_new=False):
