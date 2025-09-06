@@ -178,13 +178,28 @@ def build_calendar_embed(events: list) -> discord.Embed:
         
         # For recurring events, generate all occurrences within the 2-week window
         if e.get("recurring", False):
+            # Extract the original time components - we want to preserve these exactly
+            original_hour = dt.hour
+            original_minute = dt.minute
+            original_second = dt.second
+            
             # Calculate first occurrence after now
             days_diff = (dt.weekday() - now.weekday()) % 7
             next_occurrence = now + timedelta(days=days_diff)
+            
+            # Reset the time to midnight to avoid any DST issues
             next_occurrence = next_occurrence.replace(
-                hour=dt.hour, 
-                minute=dt.minute,
-                second=dt.second
+                hour=0, 
+                minute=0,
+                second=0
+            )
+            
+            # Then explicitly set the hour and minute from the original event
+            # This ensures the exact time is preserved
+            next_occurrence = next_occurrence.replace(
+                hour=original_hour,
+                minute=original_minute, 
+                second=original_second
             )
             
             # If this places it in the past, add 7 days
@@ -384,15 +399,27 @@ def get_next_occurrence(event: dict, base_time: Optional[datetime] = None) -> Op
     if not event.get("recurring", False):
         return original_dt if original_dt > base_time else None
         
+    # Extract the original time components
+    original_hour = original_dt.hour
+    original_minute = original_dt.minute
+    original_second = original_dt.second
+    
     # Calculate the next occurrence based on weekday
     days_diff = (original_dt.weekday() - base_time.weekday()) % 7
     next_occurrence = base_time + timedelta(days=days_diff)
     
-    # Set the time to match the original event
+    # Reset to midnight to avoid DST issues
     next_occurrence = next_occurrence.replace(
-        hour=original_dt.hour,
-        minute=original_dt.minute,
-        second=original_dt.second
+        hour=0,
+        minute=0,
+        second=0
+    )
+    
+    # Set the exact time from the original event
+    next_occurrence = next_occurrence.replace(
+        hour=original_hour,
+        minute=original_minute,
+        second=original_second
     )
     
     # If this places it in the past, add 7 days
