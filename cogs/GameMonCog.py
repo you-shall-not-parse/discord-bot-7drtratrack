@@ -19,7 +19,7 @@ STATE_FILE = "game_state.json"
 INACTIVE_CHECK_MINUTES = 60  # how often to check for inactive users
 MAX_INACTIVE_HOURS = 12  # maximum time a user can be inactive before removal
 DEFAULT_PREFERENCE = "opt_out"  # Default preference for users (opt_in or opt_out)
-ADMIN_USER_IDS = [11109147750932676649]  # Replace with your admin user IDs who can use special commands
+ADMIN_USER_IDS = [1109147750932676649]  # Replace with your admin user IDs who can use special commands
 # ----------------------------------------
 
 class PreferenceView(discord.ui.View):
@@ -177,6 +177,62 @@ class GameMonCog(commands.Cog):
                 logger.error(f"Error saving {filename}: {e}")
                 return False
 
+    # ---------- Message Deletion Helper ----------
+    async def delete_previous_message(self):
+        """Dedicated method to delete the previous embed message"""
+        if not self.state.get("message_id"):
+            logger.info("No previous message ID in state to delete")
+            return False
+            
+        logger.info(f"Attempting to delete previous message with ID: {self.state['message_id']}")
+        
+        try:
+            # Get the thread/channel
+            thread = self.bot.get_channel(THREAD_ID)
+            if not thread:
+                logger.error(f"Thread with ID {THREAD_ID} not found for message deletion")
+                # Even if we can't find the thread, clear the message ID from state
+                self.state["message_id"] = None
+                await self.save_json(STATE_FILE, self.state)
+                return False
+                
+            # Convert message ID to int and validate
+            try:
+                message_id = int(self.state["message_id"])
+            except (ValueError, TypeError):
+                logger.error(f"Invalid message ID in state: {self.state['message_id']}")
+                self.state["message_id"] = None
+                await self.save_json(STATE_FILE, self.state)
+                return False
+                
+            # Try to fetch and delete the message
+            try:
+                message = await thread.fetch_message(message_id)
+                await message.delete()
+                logger.info(f"Successfully deleted previous message: {message_id}")
+                deleted = True
+            except discord.NotFound:
+                logger.warning(f"Message {message_id} not found, it may have been deleted already")
+                deleted = False
+            except discord.Forbidden:
+                logger.error(f"Bot lacks permission to delete message {message_id}")
+                deleted = False
+            except discord.HTTPException as e:
+                logger.error(f"HTTP error deleting message {message_id}: {e}")
+                deleted = False
+                
+            # Always clear the message ID from state
+            self.state["message_id"] = None
+            await self.save_json(STATE_FILE, self.state)
+            return deleted
+            
+        except Exception as e:
+            logger.error(f"Unexpected error in delete_previous_message: {e}")
+            # Still clear the message ID from state
+            self.state["message_id"] = None
+            await self.save_json(STATE_FILE, self.state)
+            return False
+
     # ---------- Game Name Normalization ----------
     def normalize_game_name(self, game_name):
         """Normalize game names by removing special characters and standardizing case"""
@@ -274,7 +330,7 @@ class GameMonCog(commands.Cog):
         logger.info(f"GameMonCog ready - Connected as {self.bot.user}")
         
         # Wait a moment to ensure bot is fully connected before attempting message operations
-        await asyncio.sleep(3)
+        await asyncio.sleep(5)
         
         # Register guild commands now that the bot is fully connected
         if GUILD_ID != 0:
@@ -338,28 +394,8 @@ class GameMonCog(commands.Cog):
                 logger.info(f"Removed {cleaned_users} users who hadn't explicitly opted in")
                 await self.save_json(STATE_FILE, self.state)
         
-        # Delete existing message if it exists
-        if self.state.get("message_id"):
-            try:
-                thread = self.bot.get_channel(THREAD_ID)
-                if thread:
-                    try:
-                        message_id = int(self.state["message_id"])  # Ensure ID is an integer
-                        old_message = await thread.fetch_message(message_id)
-                        await old_message.delete()
-                        logger.info(f"Deleted previous message: {message_id}")
-                    except (discord.NotFound, discord.HTTPException) as e:
-                        logger.warning(f"Could not delete previous message: {e}")
-                    except ValueError as e:
-                        logger.error(f"Invalid message ID in state file: {self.state['message_id']}, error: {e}")
-                else:
-                    logger.error(f"Thread with ID {THREAD_ID} not found, can't delete previous message")
-                    
-                # Always clear the message ID even if deletion failed
-                self.state["message_id"] = None
-                await self.save_json(STATE_FILE, self.state)
-            except Exception as e:
-                logger.error(f"Unexpected error during message deletion: {e}")
+        # Delete existing message using our dedicated method
+        await self.delete_previous_message()
         
         # Add the persistent view to the bot
         self.bot.add_view(self.preference_view)
@@ -736,6 +772,10 @@ class GameMonCog(commands.Cog):
             logger.error(f"Thread with ID {THREAD_ID} not found. Cannot post message.")
             return False
 
+        # If we're forcing a new message, delete the old one first
+        if force_new and self.state.get("message_id"):
+            await self.delete_previous_message()
+
         message = None
         if self.state.get("message_id") and not force_new:
             try:
@@ -744,6 +784,9 @@ class GameMonCog(commands.Cog):
             except discord.NotFound:
                 logger.warning(f"Message {self.state['message_id']} not found, will create new")
                 message = None
+                # Clear the state since message doesn't exist
+                self.state["message_id"] = None
+                await self.save_json(STATE_FILE, self.state)
             except discord.HTTPException as e:
                 logger.error(f"HTTP error fetching message: {e}")
                 message = None
@@ -796,8 +839,8 @@ class GameMonCog(commands.Cog):
                 self.initial_post_done = True
                 return True
             else:
-                # Only create a new message if absolutely necessary
-                if force_new or not self.state.get("message_id"):
+                # Create a new message
+                try:
                     logger.info("Creating new message in thread")
                     msg = await thread.send(embed=embed, view=self.preference_view)
                     self.state["message_id"] = msg.id
@@ -805,27 +848,14 @@ class GameMonCog(commands.Cog):
                     self.initial_post_done = True
                     logger.info(f"Created new message with ID {msg.id}")
                     return True
-                else:
-                    logger.error("Failed to update existing message and not allowed to create new one")
+                except Exception as e:
+                    logger.error(f"Failed to create new message: {e}")
                     return False
         except discord.Forbidden as e:
             logger.error(f"Permission error posting message: {e}")
             return False
         except discord.HTTPException as e:
             logger.error(f"HTTP error posting message: {e}")
-            # Only create a new message if force_new is True
-            if force_new:
-                try:
-                    logger.info("Attempting to create new message after failure")
-                    msg = await thread.send(embed=embed, view=self.preference_view)
-                    self.state["message_id"] = msg.id
-                    await self.save_json(STATE_FILE, self.state)
-                    self.initial_post_done = True
-                    logger.info(f"Created new message with ID {msg.id}")
-                    return True
-                except Exception as new_err:
-                    logger.error(f"Failed to create new message: {new_err}")
-                    return False
             return False
         except Exception as e:
             logger.error(f"Unexpected error updating embed: {e}")
