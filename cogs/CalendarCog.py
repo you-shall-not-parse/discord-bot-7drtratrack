@@ -699,6 +699,8 @@ class CalendarCog(commands.Cog):
                     "⚠️ Event added but failed to create thread.", ephemeral=True
                 )
                 return
+        # For recurring events without thread, this is normal - threads will be created automatically
+        # So we just continue with the event creation
 
         events.append(new_event)
         save_events(events)
