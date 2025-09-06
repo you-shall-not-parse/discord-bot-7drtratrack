@@ -223,26 +223,94 @@ def build_calendar_embed(events: list) -> discord.Embed:
         # Add a blank line separator before each month header (except the first one)
         if i > 0:
             embed.add_field(name="\u200b", value="\u200b", inline=False)
-            
-        # Fancy decorated month header
-        month_name = f"┏━━━━ 🗓️ **{calendar.month_name[month]} {year}** 🗓️ ━━━━┓"
         
-        body = "\n\n".join(event_to_str(e) for e in month_groups[(year, month)])
-        body = "\u200b\n" + body  # Add invisible character + newline for extra space
-        embed.add_field(name=month_name, value=body, inline=False)
+        # Get all events for this month
+        events_in_month = month_groups[(year, month)]
+        
+        # Convert events to strings and check if we need to split them into multiple fields
+        event_strings = [event_to_str(e) for e in events_in_month]
+        
+        # Discord has a limit of 1024 characters per field
+        # Split the events into chunks that fit within this limit
+        chunks = []
+        current_chunk = []
+        current_length = 0
+        
+        for event_str in event_strings:
+            # Add 2 for the newline separators between events
+            event_length = len(event_str) + 2
+            
+            # If adding this event would exceed the limit, start a new chunk
+            if current_length + event_length > 1000:  # Using 1000 to leave some buffer
+                if current_chunk:  # Only add non-empty chunks
+                    chunks.append(current_chunk)
+                current_chunk = [event_str]
+                current_length = event_length
+            else:
+                current_chunk.append(event_str)
+                current_length += event_length
+        
+        # Add the last chunk if it has content
+        if current_chunk:
+            chunks.append(current_chunk)
+            
+        # Create fields for each chunk
+        for j, chunk in enumerate(chunks):
+            # Create appropriate headers
+            if len(chunks) > 1:
+                # If we have multiple chunks, add part numbers
+                month_name = f"┏━━━━ 🗓️ **{calendar.month_name[month]} {year}** 🗓️ ━━━━┓ ({j+1}/{len(chunks)})"
+            else:
+                # Single chunk uses the standard header
+                month_name = f"┏━━━━ 🗓️ **{calendar.month_name[month]} {year}** 🗓️ ━━━━┓"
+            
+            # Join events with double newlines and add the extra space at the top
+            body = "\n\n".join(chunk)
+            body = "\u200b\n" + body  # Add invisible character + newline for extra space
+            
+            embed.add_field(name=month_name, value=body, inline=False)
     
-    # Add TBC events last (at the bottom) if there are any
+    # Add TBC events with the same chunking approach
     if tbc_events:
         # Add a blank line before TBC section if there are other events
         if sorted_months:
             embed.add_field(name="\u200b", value="\u200b", inline=False)
+        
+        # Convert TBC events to strings
+        tbc_strings = [event_to_str(e) for e in tbc_events]
+        
+        # Split into chunks with the same approach
+        chunks = []
+        current_chunk = []
+        current_length = 0
+        
+        for event_str in tbc_strings:
+            event_length = len(event_str) + 2
             
-        body = "\n\n".join(event_to_str(e) for e in tbc_events)
-        body = "\u200b\n" + body  # Add invisible character + newline for extra space
-        embed.add_field(name="┏━━━━━ 🔧 **Date TBC** 🔧 ━━━━━┓", value=body, inline=False)
+            if current_length + event_length > 1000:
+                if current_chunk:
+                    chunks.append(current_chunk)
+                current_chunk = [event_str]
+                current_length = event_length
+            else:
+                current_chunk.append(event_str)
+                current_length += event_length
+        
+        if current_chunk:
+            chunks.append(current_chunk)
+        
+        # Create fields for each TBC chunk
+        for j, chunk in enumerate(chunks):
+            if len(chunks) > 1:
+                header = f"┏━━━━━ 🔧 **Date TBC** 🔧 ━━━━━┓ ({j+1}/{len(chunks)})"
+            else:
+                header = f"┏━━━━━ 🔧 **Date TBC** 🔧 ━━━━━┓"
+            
+            body = "\n\n".join(chunk)
+            body = "\u200b\n" + body
+            
+            embed.add_field(name=header, value=body, inline=False)
 
-    return embed
-    
     return embed
 
 def parse_date(date_str: str) -> Optional[datetime]:
