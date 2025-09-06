@@ -12,7 +12,7 @@ from discord.ext import commands, tasks
 EVENTS_FILE = "events.json"
 STATE_FILE = "calendar_state.json"  # stores message_id
 TIMEZONE = pytz.timezone("Europe/London")  # Still needed for internal date calculations
-CALENDAR_MANAGER_ROLES = ["Administration", "7DR-SNCO", "Fight Arrangeer"]
+CALENDAR_MANAGER_ROLES = ["Administration", "Admin Core", "7DR-SNCO", "Fight arrangeer"]
 
 # Set your target guild and calendar channel here.
 CALENDAR_GUILD_ID = 1097913605082579024
