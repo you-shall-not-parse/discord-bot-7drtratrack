@@ -4,7 +4,8 @@ import json
 import os
 
 # ---------------- CONFIG ----------------
-FORUM_CHANNEL_ID = 123456789012345678  # replace with your forum channel ID
+THREAD_ID = 1412934277133369494  # replace with your thread ID
+TRACKED_USERS = [1109147750932676649]  # list of user IDs to track
 IGNORED_GAMES = ["Spotify", "Discord", "Visual Studio Code"]
 PREFS_FILE = "game_prefs.json"
 STATE_FILE = "game_state.json"
@@ -18,8 +19,6 @@ class GameMonCog(commands.Cog):
         self.state = self.load_json(STATE_FILE)
         if "players" not in self.state:
             self.state["players"] = {}
-        if "thread_id" not in self.state:
-            self.state["thread_id"] = None
         if "message_id" not in self.state:
             self.state["message_id"] = None
 
@@ -39,7 +38,10 @@ class GameMonCog(commands.Cog):
     @discord.app_commands.describe(pref="ask / always_accept / always_reject")
     async def presencepref(self, interaction: discord.Interaction, pref: str):
         if pref not in ["ask", "always_accept", "always_reject"]:
-            await interaction.response.send_message("Invalid preference. Use ask / always_accept / always_reject.", ephemeral=True)
+            await interaction.response.send_message(
+                "Invalid preference. Use ask / always_accept / always_reject.", 
+                ephemeral=True
+            )
             return
 
         self.prefs[str(interaction.user.id)] = pref
@@ -49,6 +51,10 @@ class GameMonCog(commands.Cog):
     # ---------- Event: Member updates ----------
     @commands.Cog.listener()
     async def on_presence_update(self, before, after):
+        # Only track whitelisted users
+        if after.id not in TRACKED_USERS:
+            return
+
         before_game = next((a.name for a in before.activities if isinstance(a, discord.Game)), None)
         after_game = next((a.name for a in after.activities if isinstance(a, discord.Game)), None)
 
@@ -102,37 +108,35 @@ class GameMonCog(commands.Cog):
                 pass
 
         try:
-            await user.send(f"Do you want to show `{game}` in the Now Playing list?", view=Confirm(self, str(user.id), game))
+            await user.send(
+                f"Do you want to show `{game}` in the Now Playing list?",
+                view=Confirm(self, str(user.id), game)
+            )
         except discord.Forbidden:
             pass  # can't DM user
 
     # ---------- Embed Update ----------
     async def update_embed(self):
-        forum = self.bot.get_channel(FORUM_CHANNEL_ID)
-        if not forum:
-            return
-
-        thread = None
-        if self.state.get("thread_id"):
-            thread = forum.get_thread(self.state["thread_id"])
-
+        thread = self.bot.get_channel(THREAD_ID)
         if not thread:
-            thread = await forum.create_thread(name="🎮 Now Playing", content="Tracking active games...", locked=True)
-            self.state["thread_id"] = thread.id
-            self.save_json(STATE_FILE, self.state)
+            return
 
         message = None
         if self.state.get("message_id"):
             try:
                 message = await thread.fetch_message(self.state["message_id"])
-            except discord.NotFound:
+            except (discord.NotFound, discord.HTTPException):
                 message = None
 
         embed = discord.Embed(title="🎮 Now Playing", color=discord.Color.green())
         if self.state["players"]:
             for uid, game in self.state["players"].items():
                 user = self.bot.get_user(int(uid))
-                embed.add_field(name=user.display_name if user else f"User {uid}", value=game, inline=False)
+                embed.add_field(
+                    name=user.display_name if user else f"User {uid}",
+                    value=game,
+                    inline=False
+                )
         else:
             embed.description = "Nobody is playing tracked games right now."
 
