@@ -316,6 +316,49 @@ class GameMonCog(commands.Cog):
         # Add the persistent view to the bot
         self.bot.add_view(self.preference_view)
         
+        # Add startup scan to detect current games from all members
+        logger.info("Starting full server scan for games")
+        guild = self.bot.get_guild(GUILD_ID)
+        if guild:
+            scan_count = 0
+            added_count = 0
+            
+            for member in guild.members:
+                if member.bot:
+                    continue
+                    
+                scan_count += 1
+                user_id = str(member.id)
+                pref = self.prefs.get(user_id, DEFAULT_PREFERENCE)
+                
+                # Only check users who have opted in
+                if pref == "opt_in":
+                    # Find any current game
+                    current_game = None
+                    for activity in member.activities:
+                        game = self.get_game_from_activity(activity)
+                        if game and game not in IGNORED_GAMES:
+                            current_game = game
+                            break
+                            
+                    if current_game:
+                        # Add to game list
+                        if current_game not in self.state["games"]:
+                            self.state["games"][current_game] = []
+                        if user_id not in self.state["games"][current_game]:
+                            self.state["games"][current_game].append(user_id)
+                            added_count += 1
+                            
+                        # Update last seen time
+                        self.state["last_seen"][user_id] = datetime.datetime.utcnow().isoformat()
+            
+            logger.info(f"Server scan complete - Checked {scan_count} users, added {added_count} games")
+            
+            # Save if any changes were made
+            if added_count > 0:
+                await self.save_json(STATE_FILE, self.state)
+                logger.info("Saved state after startup scan")
+        
         # Force an immediate update to create a new message
         await self.update_embed(force_new=True)
 
