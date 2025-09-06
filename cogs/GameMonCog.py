@@ -81,50 +81,88 @@ class GameMonCog(commands.Cog):
                 logger.error(f"Error saving {filename}: {e}")
                 return False
 
+    # ---------- Game Name Normalization ----------
+    def normalize_game_name(self, game_name):
+        """Normalize game names by removing special characters and standardizing case"""
+        if not game_name:
+            return None
+        
+        # Replace trademark, registered, and copyright symbols
+        normalized = game_name.replace("™", "").replace("®", "").replace("©", "")
+        
+        # Remove extra whitespace and trim
+        normalized = " ".join(normalized.split())
+        
+        logger.info(f"Normalized game name: '{game_name}' -> '{normalized}'")
+        return normalized
+
     # ---------- Game Activity Detection ----------
     def get_game_from_activity(self, activity):
         """Extract game name from any type of activity"""
+        # Debug logging for activity
+        logger.debug(f"Activity: {activity} | Type: {type(activity)}")
+        
+        # Game name to return
+        game_name = None
+        
         # Standard Game activity
         if isinstance(activity, discord.Game):
-            return activity.name
+            game_name = activity.name
         
         # Rich Presence for games
-        if isinstance(activity, discord.Activity):
+        elif isinstance(activity, discord.Activity):
+            # Debug logging for rich activity details
+            if hasattr(activity, 'application_id'):
+                logger.debug(f"Application ID: {activity.application_id}")
+            if hasattr(activity, 'name'):
+                logger.debug(f"Name: {activity.name}")
+            if hasattr(activity, 'details'):
+                logger.debug(f"Details: {activity.details}")
+            if hasattr(activity, 'state'):
+                logger.debug(f"State: {activity.state}")
+            
             # Playing activities
             if activity.type == discord.ActivityType.playing:
-                return activity.name
-                
-            # Some games set their name in details or state fields
-            if hasattr(activity, 'details') and activity.details:
-                return activity.name or activity.details
-                
-        # For Streaming activities (if we want to track those)
-        if hasattr(activity, 'type') and activity.type == discord.ActivityType.streaming:
-            return f"Streaming: {activity.name}" if activity.name else None
+                game_name = activity.name
             
-        # Modern games often use Activity with application_id
-        if hasattr(activity, 'application_id') and activity.application_id:
-            # Try name attribute first, then details or state if available
-            name = getattr(activity, 'name', None)
-            if name:
-                return name
+            # Some games set their name in details or state fields
+            elif hasattr(activity, 'details') and activity.details:
+                game_name = activity.name or activity.details
+            
+            # Check for Xbox specific indicators
+            if hasattr(activity, 'assets') and activity.assets:
+                # Check for Xbox assets or platform identifiers
+                large_image = getattr(activity.assets, 'large_image', '')
+                small_image = getattr(activity.assets, 'small_image', '')
+                large_text = getattr(activity.assets, 'large_text', '')
+                small_text = getattr(activity.assets, 'small_text', '')
                 
-            # Some games put the actual game name in details or state
-            details = getattr(activity, 'details', None)
-            if details:
-                return details
+                logger.debug(f"Assets - Large image: {large_image}, Small image: {small_image}")
+                logger.debug(f"Asset text - Large: {large_text}, Small: {small_text}")
                 
-            state = getattr(activity, 'state', None)
-            if state:
-                return state
+                # Look for Xbox indicators in the assets
+                xbox_indicators = ['xbox', 'xboxlive', 'xbl']
+                assets_text = f"{large_image} {small_image} {large_text} {small_text}".lower()
                 
+                if any(indicator in assets_text for indicator in xbox_indicators):
+                    logger.info(f"Xbox game detected: {activity.name}")
+                    game_name = activity.name
+        
+        # For Streaming activities (if we want to track those)
+        elif hasattr(activity, 'type') and activity.type == discord.ActivityType.streaming:
+            game_name = f"Streaming: {activity.name}" if activity.name else None
+        
         # Custom "Playing X" status
-        if isinstance(activity, discord.CustomActivity) and activity.name:
+        elif isinstance(activity, discord.CustomActivity) and activity.name:
             if "playing" in activity.name.lower():
                 parts = activity.name.lower().split("playing ", 1)
                 if len(parts) > 1:
-                    return parts[1].strip()
-                    
+                    game_name = parts[1].strip()
+        
+        # Normalize the game name if one was found
+        if game_name:
+            return self.normalize_game_name(game_name)
+            
         # No game detected from this activity
         return None
 
@@ -238,12 +276,24 @@ class GameMonCog(commands.Cog):
                         
                 if member and member.activities:
                     for activity in member.activities:
-                        game = self.get_game_from_activity(activity)
+                        raw_game = None
+                        if hasattr(activity, 'name'):
+                            raw_game = activity.name
+                        
+                        normalized_game = self.get_game_from_activity(activity)
                         activity_type = getattr(activity, 'type', 'Unknown')
+                        
                         result.append(f"- Activity Type: {activity_type}")
-                        result.append(f"  Name: {getattr(activity, 'name', 'None')}")
+                        result.append(f"  Raw Name: {raw_game}")
                         result.append(f"  Details: {getattr(activity, 'details', 'None')}")
-                        result.append(f"  Detected Game: {game}")
+                        result.append(f"  State: {getattr(activity, 'state', 'None')}")
+                        result.append(f"  Normalized Game: {normalized_game}")
+                        
+                        # Xbox specific info
+                        if hasattr(activity, 'assets') and activity.assets:
+                            large_image = getattr(activity.assets, 'large_image', 'None')
+                            small_image = getattr(activity.assets, 'small_image', 'None')
+                            result.append(f"  Assets - Large: {large_image}, Small: {small_image}")
                 else:
                     result.append("- No activities detected")
             except Exception as e:
@@ -283,10 +333,16 @@ class GameMonCog(commands.Cog):
                 after_game = game
                 break
 
+        # Debug logging
+        logger.info(f"Presence update for {after.name} ({after.id}): {before_game} -> {after_game}")
+
         # If unchanged or ignored, do nothing
         if before_game == after_game:
+            logger.debug(f"Game unchanged for {after.name}: {after_game}")
             return
+            
         if after_game in IGNORED_GAMES or before_game in IGNORED_GAMES:
+            logger.debug(f"Ignored game for {after.name}: {after_game or before_game}")
             return
 
         user_id = str(after.id)
@@ -299,9 +355,13 @@ class GameMonCog(commands.Cog):
         if after_game and not before_game:
             logger.info(f"User {after.name} ({after.id}) started playing {after_game}")
             pref = self.prefs.get(user_id, "ask")
+            logger.info(f"User preference: {pref}")
+            
             if pref == "always_accept":
                 self.state["players"][user_id] = after_game
                 await self.save_json(STATE_FILE, self.state)
+                logger.info(f"Auto-accepted game for {after.name}: {after_game}")
+                logger.info(f"Updated state: {self.state['players']}")
                 await self.update_embed()
             elif pref == "ask":
                 await self.prompt_user(after, after_game)
@@ -313,9 +373,13 @@ class GameMonCog(commands.Cog):
             # If user was already in the players list, update with new game
             if user_id in self.state["players"]:
                 pref = self.prefs.get(user_id, "ask")
+                logger.info(f"User preference: {pref}")
+                
                 if pref == "always_accept":
                     self.state["players"][user_id] = after_game
                     await self.save_json(STATE_FILE, self.state)
+                    logger.info(f"Auto-updated game for {after.name}: {after_game}")
+                    logger.info(f"Updated state: {self.state['players']}")
                     await self.update_embed()
                 elif pref == "ask":
                     await self.prompt_user(after, after_game)
@@ -327,6 +391,8 @@ class GameMonCog(commands.Cog):
             if user_id in self.state["players"]:
                 self.state["players"].pop(user_id)
                 await self.save_json(STATE_FILE, self.state)
+                logger.info(f"Removed game for {after.name}")
+                logger.info(f"Updated state: {self.state['players']}")
                 await self.update_embed()
 
     # ---------- DM Prompt ----------
@@ -345,18 +411,22 @@ class GameMonCog(commands.Cog):
                 self.responded = True
                 self.cog.state["players"][self.user_id] = self.game
                 await self.cog.save_json(STATE_FILE, self.cog.state)
+                logger.info(f"User {user.name} accepted game: {self.game}")
+                logger.info(f"Updated state: {self.cog.state['players']}")
                 await self.cog.update_embed()
                 await interaction.response.edit_message(content=f"Accepted: {self.game}", view=None)
 
             @discord.ui.button(label="❌ Reject", style=discord.ButtonStyle.red)
             async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
                 self.responded = True
+                logger.info(f"User {user.name} rejected game: {self.game}")
                 await interaction.response.edit_message(content=f"Rejected: {self.game}", view=None)
 
             async def on_timeout(self):
                 if not self.responded and self.message:
                     try:
                         await self.message.edit(content=f"Timed out. Game not shown: {self.game}", view=None)
+                        logger.info(f"Prompt timed out for {user.name}: {self.game}")
                     except Exception as e:
                         logger.error(f"Error updating prompt timeout message: {e}")
 
@@ -394,6 +464,7 @@ class GameMonCog(commands.Cog):
                 logger.error(f"HTTP error fetching message: {e}")
                 message = None
 
+        logger.info(f"Creating embed with players: {self.state['players']}")
         embed = discord.Embed(title="🎮 Now Playing", color=discord.Color.green())
         embed.timestamp = discord.utils.utcnow()
         
@@ -562,6 +633,35 @@ class GameMonCog(commands.Cog):
             await self.update_embed()
             
         return removed_count
+
+    # ---------- Reset State Command ----------
+    @discord.app_commands.command(name="resetstate", description="Reset the game state (admin only)")
+    async def resetstate(self, interaction: discord.Interaction):
+        # Check if user has admin permission
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "You need administrator permissions to use this command.",
+                ephemeral=True
+            )
+            return
+            
+        # Reset the state to defaults
+        self.state = {
+            "players": {},
+            "message_id": None,
+            "last_seen": {}
+        }
+        
+        # Save the empty state
+        await self.save_json(STATE_FILE, self.state)
+        
+        # Create a new embed
+        await self.update_embed(force_new=True)
+        
+        await interaction.response.send_message(
+            "Game state has been reset. All tracked games have been cleared.",
+            ephemeral=True
+        )
 
 async def setup(bot):
     await bot.add_cog(GameMonCog(bot))
