@@ -13,12 +13,12 @@ logger = logging.getLogger('GameMonCog')
 # ---------------- CONFIG ----------------
 GUILD_ID = 1097913605082579024   # Replace with your guild/server ID
 THREAD_ID = 1412934277133369494  # replace with your thread ID
-TRACKED_USERS = [1109147750932676649]  # list of user IDs to track
 IGNORED_GAMES = ["Spotify", "Discord", "Pornhub", "Netflix", "Disney", "Sky TV", "Youtube"]
 PREFS_FILE = "game_prefs.json"
 STATE_FILE = "game_state.json"
 INACTIVE_CHECK_MINUTES = 60  # how often to check for inactive users
 MAX_INACTIVE_HOURS = 12  # maximum time a user can be inactive before removal
+DEFAULT_PREFERENCE = "opt_out"  # Default preference for users (opt_in or opt_out)
 # ----------------------------------------
 
 class PreferenceView(discord.ui.View):
@@ -37,7 +37,7 @@ class PreferenceView(discord.ui.View):
         
     async def _set_preference(self, interaction, pref):
         user_id = str(interaction.user.id)
-        current_pref = self.cog.prefs.get(user_id, "opt_out")  # Default to opt-out
+        current_pref = self.cog.prefs.get(user_id, DEFAULT_PREFERENCE)
         self.cog.prefs[user_id] = pref
         success = await self.cog.save_json(PREFS_FILE, self.cog.prefs)
         
@@ -50,7 +50,12 @@ class PreferenceView(discord.ui.View):
                     for activity in member.activities:
                         game = self.cog.get_game_from_activity(activity)
                         if game and game not in IGNORED_GAMES:
-                            self.cog.state["players"][user_id] = game
+                            # Update the game-based state structure
+                            if game not in self.cog.state["games"]:
+                                self.cog.state["games"][game] = []
+                            if user_id not in self.cog.state["games"][game]:
+                                self.cog.state["games"][game].append(user_id)
+                                
                             self.cog.state["last_seen"][user_id] = datetime.datetime.utcnow().isoformat()
                             await self.cog.save_json(STATE_FILE, self.cog.state)
                             await self.cog.update_embed()
@@ -67,8 +72,16 @@ class PreferenceView(discord.ui.View):
                 )
             else:  # opt_out
                 # Remove any current games
-                if user_id in self.cog.state["players"]:
-                    self.cog.state["players"].pop(user_id)
+                removed = False
+                for game, users in list(self.cog.state["games"].items()):
+                    if user_id in users:
+                        users.remove(user_id)
+                        removed = True
+                        # If no users left for this game, remove the game
+                        if not users:
+                            self.cog.state["games"].pop(game)
+                
+                if removed:
                     await self.cog.save_json(STATE_FILE, self.cog.state)
                     await self.cog.update_embed()
                 
@@ -89,12 +102,16 @@ class GameMonCog(commands.Cog):
         self.state = self.load_json(STATE_FILE)
         
         # Initialize state with proper structure
-        if "players" not in self.state:
-            self.state["players"] = {}
+        if "games" not in self.state:
+            self.state["games"] = {}  # Structure: {"game_name": ["user_id1", "user_id2"]}
         if "message_id" not in self.state:
             self.state["message_id"] = None
         if "last_seen" not in self.state:
             self.state["last_seen"] = {}
+            
+        # Migrate old player-based structure to new game-based structure if needed
+        if "players" in self.state and self.state["players"]:
+            self._migrate_player_to_game_structure()
             
         # Flag to track if initial posting has been done
         self.initial_post_done = False
@@ -108,6 +125,21 @@ class GameMonCog(commands.Cog):
         # Start background tasks
         self.cleanup_inactive_users.start()
         self.ensure_message_exists.start()
+
+    def _migrate_player_to_game_structure(self):
+        """Migrate from old player-based structure to new game-based structure"""
+        try:
+            for user_id, game in self.state["players"].items():
+                if game not in self.state["games"]:
+                    self.state["games"][game] = []
+                if user_id not in self.state["games"][game]:
+                    self.state["games"][game].append(user_id)
+            
+            # Remove old players structure
+            self.state.pop("players")
+            logger.info("Successfully migrated from player-based to game-based structure")
+        except Exception as e:
+            logger.error(f"Error migrating data structure: {e}")
 
     def cog_unload(self):
         """Clean up when cog is unloaded"""
@@ -298,7 +330,7 @@ class GameMonCog(commands.Cog):
             )
             return
 
-        current_pref = self.prefs.get(str(interaction.user.id), "opt_out")  # Default to opt-out
+        current_pref = self.prefs.get(str(interaction.user.id), DEFAULT_PREFERENCE)
         self.prefs[str(interaction.user.id)] = pref
         success = await self.save_json(PREFS_FILE, self.prefs)
         
@@ -312,7 +344,12 @@ class GameMonCog(commands.Cog):
                     for activity in member.activities:
                         game = self.get_game_from_activity(activity)
                         if game and game not in IGNORED_GAMES:
-                            self.state["players"][user_id] = game
+                            # Update the game-based state structure
+                            if game not in self.state["games"]:
+                                self.state["games"][game] = []
+                            if user_id not in self.state["games"][game]:
+                                self.state["games"][game].append(user_id)
+                                
                             self.state["last_seen"][user_id] = datetime.datetime.utcnow().isoformat()
                             await self.save_json(STATE_FILE, self.state)
                             await self.update_embed()
@@ -328,8 +365,16 @@ class GameMonCog(commands.Cog):
                 )
             else:  # opt_out
                 # Remove any current games
-                if user_id in self.state["players"]:
-                    self.state["players"].pop(user_id)
+                removed = False
+                for game, users in list(self.state["games"].items()):
+                    if user_id in users:
+                        users.remove(user_id)
+                        removed = True
+                        # If no users left for this game, remove the game
+                        if not users:
+                            self.state["games"].pop(game)
+                
+                if removed:
                     await self.save_json(STATE_FILE, self.state)
                     await self.update_embed()
                 
@@ -363,21 +408,17 @@ class GameMonCog(commands.Cog):
             )
 
     # ---------- Fix Preference Command ----------
-    @discord.app_commands.command(name="fixpreference", description="Fix your game display preference and add current game")
-    async def fixpreference(self, interaction: discord.Interaction):
+    @discord.app_commands.command(name="fixgame", description="Fix your game display (opt-in and force add current game)")
+    async def fixgame(self, interaction: discord.Interaction):
         user_id = str(interaction.user.id)
         
         # Set preference to opt_in
-        old_pref = self.prefs.get(user_id, "opt_out")  # Default to opt-out
+        old_pref = self.prefs.get(user_id, DEFAULT_PREFERENCE)
         self.prefs[user_id] = "opt_in"
         await self.save_json(PREFS_FILE, self.prefs)
         
         # Check for current games and force add to state
-        member = None
-        for guild in self.bot.guilds:
-            member = guild.get_member(interaction.user.id)
-            if member:
-                break
+        member = interaction.guild.get_member(interaction.user.id)
         
         current_game = None
         if member and member.activities:
@@ -389,7 +430,11 @@ class GameMonCog(commands.Cog):
         
         if current_game:
             # Force add to state
-            self.state["players"][user_id] = current_game
+            if current_game not in self.state["games"]:
+                self.state["games"][current_game] = []
+            if user_id not in self.state["games"][current_game]:
+                self.state["games"][current_game].append(user_id)
+            
             self.state["last_seen"][user_id] = datetime.datetime.utcnow().isoformat()
             await self.save_json(STATE_FILE, self.state)
             logger.info(f"Force added game for {interaction.user.name}: {current_game}")
@@ -414,70 +459,76 @@ class GameMonCog(commands.Cog):
             )
 
     # ---------- Get Current Games Command ----------
-    @discord.app_commands.command(name="currentgames", description="Show currently detected games for tracked users")
+    @discord.app_commands.command(name="currentgames", description="Show currently detected games for users")
     async def currentgames(self, interaction: discord.Interaction):
-        # Build a report of current games being played by tracked users
+        # Build a report of current games being played
         result = []
-        result.append("**Current Games for Tracked Users:**")
+        result.append("**Current Games by User:**")
         
-        for user_id in TRACKED_USERS:
-            try:
-                user = self.bot.get_user(user_id)
-                username = user.name if user else f"User {user_id}"
-                result.append(f"\n**{username}**:")
+        guild = self.bot.get_guild(GUILD_ID)
+        if not guild:
+            await interaction.response.send_message("Error: Could not find the guild.", ephemeral=True)
+            return
+            
+        # Get all members in the guild
+        members = guild.members
+        
+        # Get all games being played
+        games_by_user = {}
+        
+        for member in members:
+            if member.bot:
+                continue
                 
-                member = None
-                for guild in self.bot.guilds:
-                    member = guild.get_member(user_id)
-                    if member:
-                        break
+            username = member.display_name
+            user_id = str(member.id)
+            
+            if member.activities:
+                detected_games = []
+                for activity in member.activities:
+                    game = self.get_game_from_activity(activity)
+                    if game and game not in IGNORED_GAMES:
+                        detected_games.append(game)
                         
-                if member and member.activities:
-                    for activity in member.activities:
-                        raw_game = None
-                        if hasattr(activity, 'name'):
-                            raw_game = activity.name
-                        
-                        normalized_game = self.get_game_from_activity(activity)
-                        activity_type = getattr(activity, 'type', 'Unknown')
-                        
-                        result.append(f"- Activity Type: {activity_type}")
-                        result.append(f"  Raw Name: {raw_game}")
-                        result.append(f"  Details: {getattr(activity, 'details', 'None')}")
-                        result.append(f"  State: {getattr(activity, 'state', 'None')}")
-                        result.append(f"  Normalized Game: {normalized_game}")
-                        
-                        # Xbox specific info
-                        if hasattr(activity, 'assets') and activity.assets:
-                            large_image = getattr(activity.assets, 'large_image', 'None')
-                            small_image = getattr(activity.assets, 'small_image', 'None')
-                            result.append(f"  Assets - Large: {large_image}, Small: {small_image}")
-                else:
-                    result.append("- No activities detected")
-            except Exception as e:
-                result.append(f"- Error checking user: {str(e)}")
+                if detected_games:
+                    games_by_user[username] = detected_games
+        
+        # Add detected games to the result
+        if games_by_user:
+            for username, games in games_by_user.items():
+                result.append(f"\n**{username}**:")
+                for game in games:
+                    result.append(f"- {game}")
+        else:
+            result.append("\nNo games currently detected for any users.")
                 
         # Also show what's in the current state
         result.append("\n**Currently Tracked Games:**")
-        for uid, game in self.state["players"].items():
-            user = self.bot.get_user(int(uid))
-            username = user.name if user else f"User {uid}"
-            result.append(f"- {username}: {game}")
+        for game, users in self.state["games"].items():
+            user_names = []
+            for user_id in users:
+                member = guild.get_member(int(user_id))
+                if member:
+                    user_names.append(member.display_name)
+                else:
+                    user_names.append(f"Unknown User ({user_id})")
+            
+            result.append(f"- **{game}**: {', '.join(user_names)}")
         
         # Show user preferences
         result.append("\n**User Preferences:**")
-        for uid, pref in self.prefs.items():
-            user = self.bot.get_user(int(uid))
-            username = user.name if user else f"User {uid}"
-            result.append(f"- {username}: {pref}")
+        for user_id, pref in self.prefs.items():
+            member = guild.get_member(int(user_id))
+            if member:
+                result.append(f"- {member.display_name}: {pref}")
             
         await interaction.response.send_message("\n".join(result), ephemeral=True)
 
     # ---------- Event: Member updates ----------
     @commands.Cog.listener()
     async def on_presence_update(self, before, after):
-        # Only track whitelisted users
-        if after.id not in TRACKED_USERS:
+        # Skip bot users
+        if after.bot:
             return
 
         # Use our improved game detection method
@@ -487,27 +538,23 @@ class GameMonCog(commands.Cog):
         # Check for gaming activities in before state
         for activity in before.activities:
             game = self.get_game_from_activity(activity)
-            if game:
+            if game and game not in IGNORED_GAMES:
                 before_game = game
                 break
         
         # Check for gaming activities in after state  
         for activity in after.activities:
             game = self.get_game_from_activity(activity)
-            if game:
+            if game and game not in IGNORED_GAMES:
                 after_game = game
                 break
 
         # Debug logging
         logger.info(f"Presence update for {after.name} ({after.id}): {before_game} -> {after_game}")
 
-        # If unchanged or ignored, do nothing
+        # If unchanged, do nothing
         if before_game == after_game:
             logger.debug(f"Game unchanged for {after.name}: {after_game}")
-            return
-            
-        if after_game in IGNORED_GAMES or before_game in IGNORED_GAMES:
-            logger.debug(f"Ignored game for {after.name}: {after_game or before_game}")
             return
 
         user_id = str(after.id)
@@ -516,39 +563,49 @@ class GameMonCog(commands.Cog):
         self.state["last_seen"][user_id] = datetime.datetime.utcnow().isoformat()
         await self.save_json(STATE_FILE, self.state)
 
-        # Check preference - simplified to just opt_in or opt_out
-        pref = self.prefs.get(user_id, "opt_out")  # Default to opt_out
+        # Check preference - only track users who have opted in
+        pref = self.prefs.get(user_id, DEFAULT_PREFERENCE)
+        if pref != "opt_in":
+            logger.debug(f"User {after.name} has not opted in. Preference: {pref}")
+            return
         
-        # Started playing
-        if after_game and not before_game:
-            logger.info(f"User {after.name} ({after.id}) started playing {after_game}")
-            logger.info(f"User preference: {pref}")
+        # Started playing or changed games
+        if after_game:
+            logger.info(f"User {after.name} ({after.id}) playing {after_game}")
             
-            if pref == "opt_in":
-                self.state["players"][user_id] = after_game
-                await self.save_json(STATE_FILE, self.state)
-                logger.info(f"Added game for {after.name}: {after_game}")
-                await self.update_embed()
-            # opt_out does nothing
-
-        # Changed games
-        elif after_game and before_game and after_game != before_game:
-            logger.info(f"User {after.name} ({after.id}) changed games: {before_game} -> {after_game}")
-            if user_id in self.state["players"] and pref == "opt_in":
-                self.state["players"][user_id] = after_game
-                await self.save_json(STATE_FILE, self.state)
-                logger.info(f"Updated game for {after.name}: {after_game}")
-                await self.update_embed()
-            # opt_out does nothing
+            # Remove user from any other games they might be in
+            for game, users in list(self.state["games"].items()):
+                if user_id in users and game != after_game:
+                    users.remove(user_id)
+                    # If no users left for this game, remove the game
+                    if not users:
+                        self.state["games"].pop(game)
+            
+            # Add user to the new game
+            if after_game not in self.state["games"]:
+                self.state["games"][after_game] = []
+            if user_id not in self.state["games"][after_game]:
+                self.state["games"][after_game].append(user_id)
+                
+            await self.save_json(STATE_FILE, self.state)
+            logger.info(f"Updated game for {after.name}: {after_game}")
+            await self.update_embed()
 
         # Stopped playing
         elif before_game and not after_game:
             logger.info(f"User {after.name} ({after.id}) stopped playing {before_game}")
-            if user_id in self.state["players"]:
-                self.state["players"].pop(user_id)
-                await self.save_json(STATE_FILE, self.state)
-                logger.info(f"Removed game for {after.name}")
-                await self.update_embed()
+            
+            # Remove user from the game they were playing
+            if before_game in self.state["games"]:
+                if user_id in self.state["games"][before_game]:
+                    self.state["games"][before_game].remove(user_id)
+                    # If no users left for this game, remove the game
+                    if not self.state["games"][before_game]:
+                        self.state["games"].pop(before_game)
+                    
+                    await self.save_json(STATE_FILE, self.state)
+                    logger.info(f"Removed game for {after.name}")
+                    await self.update_embed()
 
     # ---------- Embed Update ----------
     async def update_embed(self, force_new=False):
@@ -570,44 +627,41 @@ class GameMonCog(commands.Cog):
                 logger.error(f"HTTP error fetching message: {e}")
                 message = None
 
-        logger.info(f"Creating embed with players: {self.state['players']}")
+        logger.info(f"Creating embed with games: {self.state['games']}")
         embed = discord.Embed(title="🎮 Now Playing", color=discord.Color.green())
         embed.timestamp = discord.utils.utcnow()
         
-        if self.state["players"]:
-            for uid, game in self.state["players"].items():
-                try:
-                    # Try to fetch user from cache
-                    user = self.bot.get_user(int(uid))
-                    if user:
-                        embed.add_field(
-                            name=user.display_name,
-                            value=game,
-                            inline=False
-                        )
+        if self.state["games"]:
+            # Sort games by number of players (most players first)
+            sorted_games = sorted(
+                self.state["games"].items(), 
+                key=lambda x: len(x[1]), 
+                reverse=True
+            )
+            
+            guild = self.bot.get_guild(GUILD_ID)
+            
+            for game, user_ids in sorted_games:
+                # Get display names for all users playing this game
+                user_names = []
+                for user_id in user_ids:
+                    member = guild.get_member(int(user_id)) if guild else None
+                    if member:
+                        user_names.append(member.display_name)
                     else:
-                        # Try to fetch from API
-                        try:
-                            user = await self.bot.fetch_user(int(uid))
-                            embed.add_field(
-                                name=user.display_name,
-                                value=game,
-                                inline=False
-                            )
-                        except Exception as fetch_err:
-                            logger.error(f"Error fetching user {uid}: {fetch_err}")
-                            embed.add_field(
-                                name=f"Unknown User (ID: {uid})",
-                                value=game,
-                                inline=False
-                            )
-                except Exception as e:
-                    logger.error(f"Error adding field for user {uid}: {e}")
-                    embed.add_field(
-                        name=f"User {uid} (Error: {type(e).__name__})",
-                        value=game,
-                        inline=False
-                    )
+                        # Try to fetch from bot cache
+                        user = self.bot.get_user(int(user_id))
+                        if user:
+                            user_names.append(user.name)
+                        else:
+                            user_names.append(f"User {user_id}")
+                
+                # Add field with game as name and players as value
+                embed.add_field(
+                    name=game,
+                    value="• " + "\n• ".join(user_names),
+                    inline=False
+                )
         else:
             embed.description = "Nobody is playing tracked games right now."
 
@@ -705,43 +759,37 @@ class GameMonCog(commands.Cog):
         max_inactive = datetime.timedelta(hours=MAX_INACTIVE_HOURS)
         removed_count = 0
         
-        # Get a list of UIDs to remove (to avoid modifying dict during iteration)
-        to_remove = []
+        # Get a list of users to remove from games
+        users_to_remove = []
         
-        for uid, game in self.state["players"].items():
-            # Get last seen time
-            last_seen_str = self.state["last_seen"].get(uid)
-            
-            if not last_seen_str:
-                # If no timestamp, add it with current time and keep the player
-                self.state["last_seen"][uid] = now.isoformat()
-                continue
-                
+        # Find users who haven't been seen recently
+        for user_id, last_seen_str in self.state["last_seen"].items():
             try:
-                # Parse the timestamp
                 last_seen = datetime.datetime.fromisoformat(last_seen_str)
-                
-                # Calculate time difference
                 time_diff = now - last_seen
                 
-                # If too long, mark for removal
                 if time_diff > max_inactive:
-                    logger.info(f"Marking user {uid} for removal - inactive for {time_diff}")
-                    to_remove.append(uid)
+                    logger.info(f"User {user_id} inactive for {time_diff}, marking for removal")
+                    users_to_remove.append(user_id)
                     removed_count += 1
             except (ValueError, TypeError) as e:
-                logger.error(f"Error parsing timestamp for user {uid}: {e}")
-                # If timestamp is invalid, update it and keep the player
-                self.state["last_seen"][uid] = now.isoformat()
+                logger.error(f"Error parsing timestamp for user {user_id}: {e}")
+                # If timestamp is invalid, update it
+                self.state["last_seen"][user_id] = now.isoformat()
         
-        # Remove inactive players
-        for uid in to_remove:
-            if uid in self.state["players"]:
-                self.state["players"].pop(uid)
-                logger.info(f"Removed inactive user {uid}")
-            
-        # If any players were removed, update the embed
-        if to_remove:
+        # Remove inactive users from all games
+        update_needed = False
+        for user_id in users_to_remove:
+            for game, users in list(self.state["games"].items()):
+                if user_id in users:
+                    users.remove(user_id)
+                    update_needed = True
+                    # If no users left for this game, remove the game
+                    if not users:
+                        self.state["games"].pop(game)
+        
+        # If any users were removed, update the state and embed
+        if update_needed:
             await self.save_json(STATE_FILE, self.state)
             await self.update_embed()
             
@@ -760,7 +808,7 @@ class GameMonCog(commands.Cog):
             
         # Reset the state to defaults
         self.state = {
-            "players": {},
+            "games": {},
             "message_id": None,
             "last_seen": {}
         }
