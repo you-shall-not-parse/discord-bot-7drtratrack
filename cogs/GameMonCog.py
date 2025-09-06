@@ -19,7 +19,7 @@ STATE_FILE = "game_state.json"
 INACTIVE_CHECK_MINUTES = 60  # how often to check for inactive users
 MAX_INACTIVE_HOURS = 12  # maximum time a user can be inactive before removal
 DEFAULT_PREFERENCE = "opt_out"  # Default preference for users (opt_in or opt_out)
-ADMIN_USER_IDS = [1109147750932676649]  # Replace with your admin user IDs who can use special commands
+ADMIN_USER_IDS = [11109147750932676649]  # Replace with your admin user IDs who can use special commands
 # ----------------------------------------
 
 class PreferenceView(discord.ui.View):
@@ -273,6 +273,9 @@ class GameMonCog(commands.Cog):
         """Called when the bot is ready and connected"""
         logger.info(f"GameMonCog ready - Connected as {self.bot.user}")
         
+        # Wait a moment to ensure bot is fully connected before attempting message operations
+        await asyncio.sleep(3)
+        
         # Register guild commands now that the bot is fully connected
         if GUILD_ID != 0:
             try:
@@ -338,13 +341,25 @@ class GameMonCog(commands.Cog):
         # Delete existing message if it exists
         if self.state.get("message_id"):
             try:
-                old_message = await thread.fetch_message(self.state["message_id"])
-                await old_message.delete()
-                logger.info(f"Deleted previous message: {self.state['message_id']}")
+                thread = self.bot.get_channel(THREAD_ID)
+                if thread:
+                    try:
+                        message_id = int(self.state["message_id"])  # Ensure ID is an integer
+                        old_message = await thread.fetch_message(message_id)
+                        await old_message.delete()
+                        logger.info(f"Deleted previous message: {message_id}")
+                    except (discord.NotFound, discord.HTTPException) as e:
+                        logger.warning(f"Could not delete previous message: {e}")
+                    except ValueError as e:
+                        logger.error(f"Invalid message ID in state file: {self.state['message_id']}, error: {e}")
+                else:
+                    logger.error(f"Thread with ID {THREAD_ID} not found, can't delete previous message")
+                    
+                # Always clear the message ID even if deletion failed
                 self.state["message_id"] = None
                 await self.save_json(STATE_FILE, self.state)
-            except (discord.NotFound, discord.HTTPException) as e:
-                logger.warning(f"Could not delete previous message: {e}")
+            except Exception as e:
+                logger.error(f"Unexpected error during message deletion: {e}")
         
         # Add the persistent view to the bot
         self.bot.add_view(self.preference_view)
@@ -659,6 +674,20 @@ class GameMonCog(commands.Cog):
         pref = self.prefs.get(user_id, DEFAULT_PREFERENCE)
         if pref != "opt_in":
             logger.debug(f"User {after.name} has not opted in. Preference: {pref}")
+            # ADDED: Also remove user from any existing games to be extra safe
+            removed = False
+            for game, users in list(self.state["games"].items()):
+                if user_id in users:
+                    users.remove(user_id)
+                    removed = True
+                    logger.info(f"Removing non-opted-in user {after.name} from {game}")
+                    # If no users left for this game, remove the game
+                    if not users:
+                        self.state["games"].pop(game)
+            
+            if removed:
+                await self.save_json(STATE_FILE, self.state)
+                await self.update_embed()
             return
         
         # Started playing or changed games
