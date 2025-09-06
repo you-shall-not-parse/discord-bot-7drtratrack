@@ -53,6 +53,7 @@ async def main():
         await bot.load_extension("cogs.recruitform")
         await bot.load_extension("cogs.SquadUp")
         await bot.load_extension("cogs.CalendarCog")
+        await bot.load_extension("cogs.GameMonCog")
         await bot.load_extension("cogs.trainee_tracker")
         await bot.load_extension("cogs.armour_trainee_tracker")
         await bot.load_extension("cogs.recon_troop_tracker")
