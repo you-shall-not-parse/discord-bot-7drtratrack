@@ -19,7 +19,7 @@ STATE_FILE = "game_state.json"
 INACTIVE_CHECK_MINUTES = 60  # how often to check for inactive users
 MAX_INACTIVE_HOURS = 12  # maximum time a user can be inactive before removal
 DEFAULT_PREFERENCE = "opt_in"  # Default preference for users (opt_in or opt_out)
-ADMIN_USER_IDS = [1234567890, 9876543210]  # Replace with your admin user IDs who can use special commands
+ADMIN_USER_IDS = [1109147750932676649]  # Replace with your admin user IDs who can use special commands
 # ----------------------------------------
 
 class PreferenceView(discord.ui.View):
