@@ -446,6 +446,27 @@ class GameMonCog(commands.Cog):
         # Force an immediate update to create a new message
         await self.update_embed(force_new=True)
 
+    # ---------- Message Event Handler ----------
+    @commands.Cog.listener()
+    async def on_message(self, message):
+        """Monitor messages and delete human messages in the tracked thread"""
+        # Skip messages from bots (including the bot itself)
+        if message.author.bot:
+            return
+            
+        # Check if the message is in the monitored thread
+        if message.channel.id == THREAD_ID:
+            try:
+                # Delete the message
+                await message.delete()
+                logger.info(f"Deleted human message from {message.author.name} in thread")
+            except discord.Forbidden:
+                logger.error("Bot lacks permission to delete messages")
+            except discord.NotFound:
+                logger.warning("Message was already deleted")
+            except discord.HTTPException as e:
+                logger.error(f"HTTP error deleting message: {e}")
+
     # ---------- Preference Command ----------
     @discord.app_commands.command(name="gamepref", description="Set your game listing preference")
     @discord.app_commands.describe(pref="opt_in / opt_out")
