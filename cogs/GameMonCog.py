@@ -18,7 +18,7 @@ PREFS_FILE = "game_prefs.json"
 STATE_FILE = "game_state.json"
 INACTIVE_CHECK_MINUTES = 60  # how often to check for inactive users
 MAX_INACTIVE_HOURS = 12  # maximum time a user can be inactive before removal
-DEFAULT_PREFERENCE = "opt_in"  # Default preference for users (opt_in or opt_out)
+DEFAULT_PREFERENCE = "opt_out"  # Default preference for users (opt_in or opt_out)
 ADMIN_USER_IDS = [1109147750932676649]  # Replace with your admin user IDs who can use special commands
 # ----------------------------------------
 
@@ -307,6 +307,33 @@ class GameMonCog(commands.Cog):
             return
         
         logger.info("Thread validation successful")
+        
+        # Clean out users who haven't explicitly opted in
+        if DEFAULT_PREFERENCE == "opt_out":
+            logger.info("Default preference is opt-out, removing users without explicit preferences")
+            cleaned_users = 0
+            
+            # Find all user_ids in games
+            all_tracked_users = set()
+            for game, users in list(self.state["games"].items()):
+                all_tracked_users.update(users)
+            
+            # Check each user if they have explicitly opted in
+            for user_id in list(all_tracked_users):
+                # Only keep users who explicitly have "opt_in" in the prefs file
+                if self.prefs.get(user_id) != "opt_in":
+                    # Remove from all games
+                    for game, users in list(self.state["games"].items()):
+                        if user_id in users:
+                            users.remove(user_id)
+                            cleaned_users += 1
+                            # If no users left for this game, remove the game
+                            if not users:
+                                self.state["games"].pop(game)
+            
+            if cleaned_users > 0:
+                logger.info(f"Removed {cleaned_users} users who hadn't explicitly opted in")
+                await self.save_json(STATE_FILE, self.state)
         
         # Delete existing message if it exists
         if self.state.get("message_id"):
