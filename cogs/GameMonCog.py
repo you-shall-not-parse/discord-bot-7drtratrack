@@ -46,21 +46,6 @@ class GameMonCog(commands.Cog):
         self.cleanup_inactive_users.start()
         self.ensure_message_exists.start()
 
-    # ---------- Register Guild Commands ----------
-    async def cog_load(self):
-        """Register guild-specific commands when the cog loads"""
-        if GUILD_ID == 0:
-            logger.warning("GUILD_ID is not set! Please set a valid guild ID in the config.")
-            return
-            
-        try:
-            # Register the commands with the specific guild
-            self.bot.tree.copy_global_to(guild=discord.Object(id=GUILD_ID))
-            await self.bot.tree.sync(guild=discord.Object(id=GUILD_ID))
-            logger.info(f"Registered commands for guild ID: {GUILD_ID}")
-        except Exception as e:
-            logger.error(f"Failed to register guild commands: {e}")
-
     def cog_unload(self):
         """Clean up when cog is unloaded"""
         # Stop background tasks
@@ -148,6 +133,22 @@ class GameMonCog(commands.Cog):
     async def on_ready(self):
         """Called when the bot is ready and connected"""
         logger.info(f"GameMonCog ready - Connected as {self.bot.user}")
+        
+        # Register guild commands now that the bot is fully connected
+        if GUILD_ID != 0:
+            try:
+                # Make sure we're registered with the right guild
+                guild = self.bot.get_guild(GUILD_ID)
+                if guild:
+                    logger.info(f"Registering commands for guild: {guild.name}")
+                    # Register the commands with the specific guild
+                    self.bot.tree.copy_global_to(guild=discord.Object(id=GUILD_ID))
+                    await self.bot.tree.sync(guild=discord.Object(id=GUILD_ID))
+                    logger.info(f"Successfully registered commands for guild ID: {GUILD_ID}")
+                else:
+                    logger.warning(f"Could not find guild with ID {GUILD_ID}")
+            except Exception as e:
+                logger.error(f"Failed to register guild commands: {e}")
         
         # Validate thread exists
         thread = self.bot.get_channel(THREAD_ID)
