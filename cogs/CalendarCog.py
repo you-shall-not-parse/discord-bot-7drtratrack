@@ -18,6 +18,9 @@ CALENDAR_MANAGER_ROLES = ["Administration", "Admin Core", "7DR-SNCO", "Fight arr
 CALENDAR_GUILD_ID = 1097913605082579024
 CALENDAR_CHANNEL_ID = 1332736267485708419  # The channel where the calendar will be posted
 
+# When to create threads for recurring events (hours before the event)
+THREAD_CREATION_HOURS_BEFORE = 48
+
 # Auto (re)publish the calendar on startup. It will delete the previous embed and post a new one.
 AUTO_PUBLISH_ON_START = True
 
@@ -99,11 +102,22 @@ def event_to_str(event: dict) -> str:
     squad_maker = f"<@{event['squad_maker']}>" if event.get("squad_maker") else "None"
     description = event.get("description", "")
     
-    thread = (
-        f"[Link](https://discord.com/channels/{event['guild_id']}/{event['thread_id']})"
-        if event.get("thread_id")
-        else "None"
-    )
+    # Get thread link - for recurring events, check if there's a thread for this specific occurrence
+    thread = None
+    if event.get("recurring", False) and event.get("thread_info") and event.get("display_date"):
+        # Get occurrence date in YYYY-MM-DD format for lookup
+        display_dt = datetime.fromisoformat(event["display_date"])
+        occurrence_date_str = display_dt.strftime('%Y-%m-%d')
+        
+        # If there's a thread for this occurrence, show it
+        if occurrence_date_str in event["thread_info"]:
+            thread_id = event["thread_info"][occurrence_date_str]
+            thread = f"[Link](https://discord.com/channels/{event['guild_id']}/{thread_id})"
+    elif event.get("thread_id"):  # For non-recurring events
+        thread = f"[Link](https://discord.com/channels/{event['guild_id']}/{event['thread_id']})"
+    
+    if thread is None:
+        thread = "None"
     
     # Start building the message
     msg = f"📌 **{event['title']}**"
@@ -138,7 +152,7 @@ def event_to_str(event: dict) -> str:
     if description:
         msg += f"\n📝 Description: {description}"
     
-    if event.get("thread_id"):
+    if thread != "None":
         msg += f"\n🧵 Thread: {thread}"
     
     return msg
@@ -475,16 +489,8 @@ class CalendarCog(commands.Cog):
             return None
             
         try:
-            # Determine display date for thread title
-            date_str = ""
-            if event.get("display_date"):
-                dt = datetime.fromisoformat(event["display_date"]).astimezone(TIMEZONE)
-                date_str = f" [{dt.strftime('%d/%m')}]"
-            elif event.get("date"):
-                dt = datetime.fromisoformat(event["date"]).astimezone(TIMEZONE)
-                date_str = f" [{dt.strftime('%d/%m')}]"
-                
-            thread_name = f"{event['title']}{date_str}"
+            # Create a simple thread name without date
+            thread_name = event['title']
             
             thread = await channel.create_thread(
                 name=thread_name, 
@@ -501,20 +507,49 @@ class CalendarCog(commands.Cog):
             return None
 
     async def update_thread_message(self, guild: discord.Guild, event: dict) -> None:
-        """Update the message in an event's thread with current event details."""
-        if not event.get("thread_id"):
-            return
-            
-        try:
-            thread = guild.get_thread(event["thread_id"])
-            if thread:
-                # Get the first message in the thread
-                async for message in thread.history(limit=1, oldest_first=True):
-                    await message.edit(content=event_to_str(event))
-                    print(f"Updated thread message for event '{event['title']}'")
-                    break
-        except Exception as e:
-            print(f"Failed to update thread message: {e}")
+        """Update the message and thread title for an event."""
+        # For non-recurring events
+        if event.get("thread_id"):
+            try:
+                thread = guild.get_thread(event["thread_id"])
+                if thread:
+                    # Update thread title if it doesn't match event title
+                    if thread.name != event["title"]:
+                        await thread.edit(name=event["title"])
+                        print(f"Updated thread title for event '{event['title']}'")
+                    
+                    # Update the first message in the thread
+                    async for message in thread.history(limit=1, oldest_first=True):
+                        await message.edit(content=event_to_str(event))
+                        print(f"Updated thread message for event '{event['title']}'")
+                        break
+            except Exception as e:
+                print(f"Failed to update thread: {e}")
+                
+        # For recurring events with thread_info
+        elif event.get("recurring") and event.get("thread_info"):
+            try:
+                # Update all threads for this recurring event
+                for date_str, thread_id in event["thread_info"].items():
+                    thread = guild.get_thread(thread_id)
+                    if thread:
+                        # Update thread title if it doesn't match event title
+                        if thread.name != event["title"]:
+                            await thread.edit(name=event["title"])
+                            print(f"Updated thread title for recurring event '{event['title']}' on {date_str}")
+                        
+                        # Update the first message in the thread
+                        async for message in thread.history(limit=1, oldest_first=True):
+                            # Create a copy with the specific display_date for this occurrence
+                            event_copy = event.copy()
+                            occurrence_date = datetime.strptime(date_str, '%Y-%m-%d').replace(tzinfo=TIMEZONE)
+                            event_copy["display_date"] = occurrence_date.isoformat()
+                            
+                            await message.edit(content=event_to_str(event_copy))
+                            print(f"Updated thread message for recurring event '{event['title']}' on {date_str}")
+                            break
+            except Exception as e:
+                print(f"Failed to update recurring event thread: {e}")
 
     async def archive_thread(self, guild: discord.Guild, event: dict) -> None:
         """Archive the thread associated with an event."""
@@ -549,13 +584,53 @@ class CalendarCog(commands.Cog):
         events = load_events()
         expired_events = []
         active_events = []
+        events_updated = False
         
-        for event in events:
-            # Skip events with no date (TBC) or recurring events
-            if event.get("date") is None or event.get("recurring", False):
+        for i, event in enumerate(events):
+            # Skip events with no date (TBC)
+            if event.get("date") is None:
                 active_events.append(event)
                 continue
                 
+            # Handle recurring events specially
+            if event.get("recurring", False):
+                # For recurring events, check if any past occurrences need their threads archived
+                if event.get("thread_info"):
+                    # Convert dates to datetime objects for comparison
+                    occurrence_dates = {}
+                    for date_str, thread_id in event["thread_info"].items():
+                        occurrence_date = datetime.strptime(date_str, '%Y-%m-%d').replace(tzinfo=TIMEZONE)
+                        occurrence_dates[date_str] = occurrence_date
+                    
+                    # Identify and archive threads for past occurrences
+                    expired_occurrences = []
+                    for date_str, occurrence_date in occurrence_dates.items():
+                        if occurrence_date < now:
+                            # Archive the thread for this past occurrence
+                            thread_id = event["thread_info"][date_str]
+                            guild = self.bot.get_guild(int(event["guild_id"]))
+                            if guild:
+                                try:
+                                    thread = guild.get_thread(thread_id)
+                                    if thread:
+                                        await thread.edit(archived=True, locked=True)
+                                        print(f"Archived thread for past occurrence of '{event['title']}' on {date_str}")
+                                except Exception as e:
+                                    print(f"Failed to archive thread: {e}")
+                            
+                            # Mark this occurrence for removal
+                            expired_occurrences.append(date_str)
+                    
+                    # Remove expired occurrences from thread_info
+                    for date_str in expired_occurrences:
+                        del events[i]["thread_info"][date_str]
+                        events_updated = True
+                
+                # Keep recurring events in the active list
+                active_events.append(event)
+                continue
+                    
+            # For non-recurring events, check if the event date is in the past
             event_date = datetime.fromisoformat(event["date"]).astimezone(TIMEZONE)
             if event_date < now:
                 expired_events.append(event)
@@ -576,6 +651,11 @@ class CalendarCog(commands.Cog):
             
             # Save the active events only
             save_events(active_events)
+            events_updated = True
+        
+        # Save events if thread_info was updated for recurring events
+        if events_updated:
+            save_events(active_events)
             
             # Update the calendar display for all guilds
             for guild_id in {int(event["guild_id"]) for event in events}:
@@ -583,14 +663,14 @@ class CalendarCog(commands.Cog):
                 if guild:
                     await self.update_calendar(guild)
             
-            print(f"Cleanup complete - removed {len(expired_events)} expired events")
+            print(f"Cleanup complete - removed {len(expired_events)} expired events and archived past occurrence threads")
         else:
-            print("No expired events found")
+            print("No expired events or past occurrence threads found")
 
     @tasks.loop(hours=1)  # Check every hour
     async def check_upcoming_events(self):
         """
-        Check for events happening in the next 48 hours and create threads for recurring events
+        Check for events happening soon and create threads for recurring events
         that don't have threads yet.
         """
         print("Checking for upcoming events that need threads...")
@@ -604,39 +684,56 @@ class CalendarCog(commands.Cog):
             if not event.get("date"):
                 continue
                 
+            # Skip events that have threads disabled (no thread channel was specified)
+            if not event.get("create_threads", True):
+                continue
+                
             # Get the next occurrence (especially for recurring events)
             next_occurrence = get_next_occurrence(event)
             if not next_occurrence:
                 continue
                 
-            # Check if this event is within 48 hours
+            # Check if this event is within the configured hours window
             time_until_event = next_occurrence - now
             hours_until_event = time_until_event.total_seconds() / 3600
             
-            # Only create threads for events 24-48 hours away (avoid repeatedly creating threads)
-            if 24 <= hours_until_event <= 48:
-                # For recurring events, they won't have a thread_id until we create one
-                # For non-recurring events, they may already have a thread from creation
-                if event.get("recurring", False) and not event.get("thread_id"):
-                    print(f"Creating thread for upcoming recurring event: {event['title']}")
+            # Create threads for events that are coming up within the configured time window
+            # The lower bound ensures we don't constantly recreate threads for imminent events
+            thread_window_min = max(1, THREAD_CREATION_HOURS_BEFORE - 4)  # At least 1 hour before, or 4 hours less than config
+            thread_window_max = THREAD_CREATION_HOURS_BEFORE
+            
+            if thread_window_min <= hours_until_event <= thread_window_max:
+                # For recurring events, we need to handle differently than one-time events
+                if event.get("recurring", False):
+                    # For recurring events, check if this specific occurrence already has a thread
+                    # by looking at the thread_info and the next occurrence date
+                    occurrence_date_str = next_occurrence.strftime('%Y-%m-%d')
                     
-                    guild = self.bot.get_guild(int(event["guild_id"]))
-                    if guild:
-                        channel = await self.get_channel_for_thread(guild, event)
-                        if channel:
-                            # Create display date for this occurrence
-                            event_copy = event.copy()
-                            event_copy["display_date"] = next_occurrence.isoformat()
-                            
-                            thread = await self.create_thread_for_event(guild, event_copy, channel)
-                            if thread:
-                                # Update the original event in the events list
-                                events[i]["thread_id"] = thread.id
-                                events_updated = True
+                    # We'll use a thread_info dictionary to track occurrence-specific threads
+                    if not event.get("thread_info"):
+                        events[i]["thread_info"] = {}
+                    
+                    # Check if we already created a thread for this specific occurrence
+                    if occurrence_date_str not in event["thread_info"]:
+                        print(f"Creating thread for upcoming recurring event: {event['title']} on {occurrence_date_str}")
+                        
+                        guild = self.bot.get_guild(int(event["guild_id"]))
+                        if guild:
+                            channel = await self.get_channel_for_thread(guild, event)
+                            if channel:
+                                # Create display date for this occurrence
+                                event_copy = event.copy()
+                                event_copy["display_date"] = next_occurrence.isoformat()
                                 
-                                # Send notification in the thread that it's for the upcoming occurrence
-                                occurrence_date = next_occurrence.strftime('%d/%m/%Y')
-                                await thread.send(f"📣 This thread is for the event occurrence on **{occurrence_date}**.")
+                                thread = await self.create_thread_for_event(guild, event_copy, channel)
+                                if thread:
+                                    # Store thread ID for this specific occurrence
+                                    events[i]["thread_info"][occurrence_date_str] = thread.id
+                                    events_updated = True
+                                    
+                                    # Send notification in the thread that it's for the upcoming occurrence
+                                    occurrence_date = next_occurrence.strftime('%d/%m/%Y')
+                                    await thread.send(f"📣 This thread is for the event occurrence on **{occurrence_date}**.")
         
         if events_updated:
             save_events(events)
@@ -754,10 +851,12 @@ class CalendarCog(commands.Cog):
             "guild_id": interaction.guild_id,
             "thread_id": None,
             "recurring": recurring,
+            "create_threads": thread_channel is not None,  # Track whether threads should be created
         }
 
         # Only create thread immediately for non-recurring events
-        # Recurring events will have threads created 48 hours before each occurrence
+        # Recurring events will have threads created before each occurrence
+        # based on the THREAD_CREATION_HOURS_BEFORE setting
         if thread_channel and not recurring:
             thread = await self.create_thread_for_event(interaction.guild, new_event, thread_channel)
             if thread:
@@ -767,8 +866,8 @@ class CalendarCog(commands.Cog):
                     "⚠️ Event added but failed to create thread.", ephemeral=True
                 )
                 return
-        # For recurring events without thread, this is normal - threads will be created automatically
-        # So we just continue with the event creation
+        # For recurring events with thread_channel, threads will be created automatically
+        # before each occurrence, so we just continue with event creation
 
         events.append(new_event)
         save_events(events)
@@ -778,10 +877,10 @@ class CalendarCog(commands.Cog):
         result = await self.update_calendar(interaction.guild)
         
         if result:
-            if recurring:
+            if recurring and thread_channel:
                 await interaction.followup.send(
-                    "✅ Recurring event added! For recurring events, discussion threads will automatically "
-                    "open 48 hours before each occurrence.", 
+                    f"✅ Recurring event added! Discussion threads will automatically "
+                    f"open {THREAD_CREATION_HOURS_BEFORE} hours before each occurrence.", 
                     ephemeral=True
                 )
             else:
@@ -834,9 +933,11 @@ class CalendarCog(commands.Cog):
         was_recurring = event.get("recurring", False)
         is_recurring = was_recurring if recurring is None else recurring
         
+        # Update title if provided
         if new_title:
             event["title"] = new_title
 
+        # Update description if provided
         if description is not None:  # Allow empty string to clear description
             event["description"] = description
             
@@ -917,27 +1018,25 @@ class CalendarCog(commands.Cog):
                 return
                 
             # If changing from non-recurring to recurring, clear the thread_id
-            # so that threads will be created 48h before occurrences instead
+            # so that threads will be created before occurrences instead
             if recurring and not was_recurring and event.get("thread_id"):
                 event["thread_id"] = None
                 
             event["recurring"] = recurring
+            
+        # Update thread channel if provided
+        if thread_channel is not None:
+            # Update create_threads flag based on whether a channel was specified
+            event["create_threads"] = thread_channel is not None
+            
+            # Create new thread if requested and not a recurring event
+            if thread_channel and not is_recurring:
+                thread = await self.create_thread_for_event(interaction.guild, event, thread_channel)
+                if thread:
+                    event["thread_id"] = thread.id
 
-        if organiser is not None:
-            event["organiser"] = organiser.id
-
-        if squad_maker is not None:
-            event["squad_maker"] = squad_maker.id if squad_maker else None
-
-        # Create new thread if requested and not a recurring event
-        # Recurring events will have threads created 48h before occurrences
-        if thread_channel and not is_recurring:
-            thread = await self.create_thread_for_event(interaction.guild, event, thread_channel)
-            if thread:
-                event["thread_id"] = thread.id
-
-        # Update existing thread if it exists
-        if event.get("thread_id"):
+        # Update existing thread titles and content
+        if new_title or description is not None or date or time or organiser is not None or squad_maker is not None:
             await self.update_thread_message(interaction.guild, event)
                 
         save_events(events)
@@ -948,11 +1047,17 @@ class CalendarCog(commands.Cog):
         # Prepare the response message
         if result:
             if not was_recurring and is_recurring:
-                await interaction.followup.send(
-                    "✅ Event updated to recurring! For recurring events, discussion threads will automatically "
-                    "open 48 hours before each occurrence.",
-                    ephemeral=True
-                )
+                if event.get("create_threads", False):
+                    await interaction.followup.send(
+                        f"✅ Event updated to recurring! Discussion threads will automatically "
+                        f"open {THREAD_CREATION_HOURS_BEFORE} hours before each occurrence.",
+                        ephemeral=True
+                    )
+                else:
+                    await interaction.followup.send(
+                        "✅ Event updated to recurring! No threads will be created for this event.",
+                        ephemeral=True
+                    )
             else:
                 await interaction.followup.send("✅ Event updated and calendar refreshed.", ephemeral=True)
         else:
@@ -976,8 +1081,17 @@ class CalendarCog(commands.Cog):
             await interaction.response.send_message("❌ Event not found.", ephemeral=True)
             return
 
-        # Archive thread if exists
-        if event.get("thread_id"):
+        # Archive threads if they exist
+        if event.get("recurring") and event.get("thread_info"):
+            for date_str, thread_id in event["thread_info"].items():
+                try:
+                    thread = interaction.guild.get_thread(thread_id)
+                    if thread:
+                        await thread.edit(archived=True, locked=True)
+                        print(f"Archived and locked thread for recurring event '{title}' on {date_str}")
+                except Exception as e:
+                    print(f"Failed to archive thread: {e}")
+        elif event.get("thread_id"):
             try:
                 thread = interaction.guild.get_thread(event["thread_id"])
                 if thread:
