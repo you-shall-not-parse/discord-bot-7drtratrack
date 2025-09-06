@@ -17,55 +17,65 @@ TRACKED_USERS = [1109147750932676649]  # list of user IDs to track
 IGNORED_GAMES = ["Spotify", "Discord", "Pornhub", "Netflix", "Disney", "Sky TV", "Youtube"]
 PREFS_FILE = "game_prefs.json"
 STATE_FILE = "game_state.json"
-PROMPT_TIMEOUT = 300  # seconds (5 min) -> change here to configure timeout
 INACTIVE_CHECK_MINUTES = 60  # how often to check for inactive users
 MAX_INACTIVE_HOURS = 12  # maximum time a user can be inactive before removal
 # ----------------------------------------
 
 class PreferenceView(discord.ui.View):
-    """View with preference buttons for the Now Playing embed"""
+    """View with simplified preference buttons for the Now Playing embed"""
     def __init__(self, cog):
         super().__init__(timeout=None)  # No timeout for persistent view
         self.cog = cog
         
-    @discord.ui.button(label="Always Accept", style=discord.ButtonStyle.green, custom_id="pref:always_accept")
-    async def always_accept(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._set_preference(interaction, "always_accept")
+    @discord.ui.button(label="Opt-In (Show My Games)", style=discord.ButtonStyle.green, custom_id="pref:opt_in")
+    async def opt_in(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._set_preference(interaction, "opt_in")
         
-    @discord.ui.button(label="Ask", style=discord.ButtonStyle.blurple, custom_id="pref:ask")
-    async def ask(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._set_preference(interaction, "ask")
-        
-    @discord.ui.button(label="Always Reject", style=discord.ButtonStyle.red, custom_id="pref:always_reject")
-    async def always_reject(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._set_preference(interaction, "always_reject")
+    @discord.ui.button(label="Opt-Out (Hide My Games)", style=discord.ButtonStyle.red, custom_id="pref:opt_out")
+    async def opt_out(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._set_preference(interaction, "opt_out")
         
     async def _set_preference(self, interaction, pref):
         user_id = str(interaction.user.id)
-        current_pref = self.cog.prefs.get(user_id, "always_reject")  # Default changed to always_reject
+        current_pref = self.cog.prefs.get(user_id, "opt_out")  # Default to opt-out
         self.cog.prefs[user_id] = pref
         success = await self.cog.save_json(PREFS_FILE, self.cog.prefs)
         
         if success:
-            await interaction.response.send_message(
-                f"Preference updated from `{current_pref}` to `{pref}`",
-                ephemeral=True
-            )
-            
-            # If preference is ask, send test DM
-            if pref == "ask":
-                try:
-                    await interaction.user.send(
-                        "This is a test message to confirm you can receive DMs from this bot. " +
-                        "You'll receive prompts here when you play games."
-                    )
-                except discord.Forbidden:
-                    await interaction.followup.send(
-                        "⚠️ I couldn't send you a DM. Please enable DMs from server members to receive game prompts.",
-                        ephemeral=True
-                    )
-                except Exception as e:
-                    logger.error(f"Error sending test DM to {interaction.user.name}: {e}")
+            # If user opted in and is currently playing a game, add it
+            if pref == "opt_in":
+                # Check if user is playing a game now
+                member = interaction.guild.get_member(interaction.user.id)
+                if member and member.activities:
+                    for activity in member.activities:
+                        game = self.cog.get_game_from_activity(activity)
+                        if game and game not in IGNORED_GAMES:
+                            self.cog.state["players"][user_id] = game
+                            self.cog.state["last_seen"][user_id] = datetime.datetime.utcnow().isoformat()
+                            await self.cog.save_json(STATE_FILE, self.cog.state)
+                            await self.cog.update_embed()
+                            await interaction.response.send_message(
+                                f"You've opted in! Your current game '{game}' has been added to the list.",
+                                ephemeral=True
+                            )
+                            return
+                
+                # No game or couldn't detect one
+                await interaction.response.send_message(
+                    f"You've opted in! Your games will now appear in the Now Playing list.",
+                    ephemeral=True
+                )
+            else:  # opt_out
+                # Remove any current games
+                if user_id in self.cog.state["players"]:
+                    self.cog.state["players"].pop(user_id)
+                    await self.cog.save_json(STATE_FILE, self.cog.state)
+                    await self.cog.update_embed()
+                
+                await interaction.response.send_message(
+                    f"You've opted out. Your games will no longer appear in the Now Playing list.",
+                    ephemeral=True
+                )
         else:
             await interaction.response.send_message(
                 "Error saving preference. Please try again.",
@@ -277,43 +287,56 @@ class GameMonCog(commands.Cog):
         # Force an immediate update to create a new message
         await self.update_embed(force_new=True)
 
-    # ---------- Presence Pref Command ----------
-    @discord.app_commands.command(name="presencepref", description="Set your game listing preference")
-    @discord.app_commands.describe(pref="ask / always_accept / always_reject")
-    async def presencepref(self, interaction: discord.Interaction, pref: str):
-        if pref not in ["ask", "always_accept", "always_reject"]:
+    # ---------- Preference Command ----------
+    @discord.app_commands.command(name="gamepref", description="Set your game listing preference")
+    @discord.app_commands.describe(pref="opt_in / opt_out")
+    async def gamepref(self, interaction: discord.Interaction, pref: str):
+        if pref not in ["opt_in", "opt_out"]:
             await interaction.response.send_message(
-                "Invalid preference. Use ask / always_accept / always_reject.", 
+                "Invalid preference. Use opt_in / opt_out.", 
                 ephemeral=True
             )
             return
 
-        current_pref = self.prefs.get(str(interaction.user.id), "always_reject")  # Default changed to always_reject
+        current_pref = self.prefs.get(str(interaction.user.id), "opt_out")  # Default to opt-out
         self.prefs[str(interaction.user.id)] = pref
         success = await self.save_json(PREFS_FILE, self.prefs)
         
         if success:
-            await interaction.response.send_message(
-                f"Preference updated from `{current_pref}` to `{pref}`", 
-                ephemeral=True
-            )
+            # Handle same logic as the button version
+            user_id = str(interaction.user.id)
+            if pref == "opt_in":
+                # Check if user is playing a game now
+                member = interaction.guild.get_member(interaction.user.id)
+                if member and member.activities:
+                    for activity in member.activities:
+                        game = self.get_game_from_activity(activity)
+                        if game and game not in IGNORED_GAMES:
+                            self.state["players"][user_id] = game
+                            self.state["last_seen"][user_id] = datetime.datetime.utcnow().isoformat()
+                            await self.save_json(STATE_FILE, self.state)
+                            await self.update_embed()
+                            await interaction.response.send_message(
+                                f"You've opted in! Your current game '{game}' has been added to the list.",
+                                ephemeral=True
+                            )
+                            return
             
-            # If changing to "ask", try to send a test DM
-            if pref == "ask":
-                try:
-                    test_dm = await interaction.user.send(
-                        "This is a test message to confirm you can receive DMs from this bot. " +
-                        "You'll receive prompts here when you play games."
-                    )
-                    logger.info(f"Successfully sent test DM to {interaction.user.name} ({interaction.user.id})")
-                except discord.Forbidden:
-                    logger.warning(f"Cannot DM user {interaction.user.name} ({interaction.user.id}). DMs may be disabled.")
-                    await interaction.followup.send(
-                        "⚠️ I couldn't send you a DM. Please enable DMs from server members to receive game prompts.",
-                        ephemeral=True
-                    )
-                except Exception as e:
-                    logger.error(f"Error sending test DM to {interaction.user.name} ({interaction.user.id}): {e}")
+                await interaction.response.send_message(
+                    f"You've opted in! Your games will now appear in the Now Playing list.", 
+                    ephemeral=True
+                )
+            else:  # opt_out
+                # Remove any current games
+                if user_id in self.state["players"]:
+                    self.state["players"].pop(user_id)
+                    await self.save_json(STATE_FILE, self.state)
+                    await self.update_embed()
+                
+                await interaction.response.send_message(
+                    f"You've opted out. Your games will no longer appear in the Now Playing list.", 
+                    ephemeral=True
+                )
         else:
             await interaction.response.send_message(
                 "Error saving preference. Please try again.", 
@@ -344,9 +367,9 @@ class GameMonCog(commands.Cog):
     async def fixpreference(self, interaction: discord.Interaction):
         user_id = str(interaction.user.id)
         
-        # Set preference to always_accept
-        old_pref = self.prefs.get(user_id, "always_reject")  # Default changed to always_reject
-        self.prefs[user_id] = "always_accept"
+        # Set preference to opt_in
+        old_pref = self.prefs.get(user_id, "opt_out")  # Default to opt-out
+        self.prefs[user_id] = "opt_in"
         await self.save_json(PREFS_FILE, self.prefs)
         
         # Check for current games and force add to state
@@ -376,7 +399,7 @@ class GameMonCog(commands.Cog):
             
             if success:
                 await interaction.response.send_message(
-                    f"Changed preference from `{old_pref}` to `always_accept` and added your current game: {current_game}",
+                    f"Changed preference from `{old_pref}` to `opt_in` and added your current game: {current_game}",
                     ephemeral=True
                 )
             else:
@@ -386,7 +409,7 @@ class GameMonCog(commands.Cog):
                 )
         else:
             await interaction.response.send_message(
-                f"Changed preference from `{old_pref}` to `always_accept`, but no game currently detected.",
+                f"Changed preference from `{old_pref}` to `opt_in`, but no game currently detected.",
                 ephemeral=True
             )
 
@@ -493,39 +516,30 @@ class GameMonCog(commands.Cog):
         self.state["last_seen"][user_id] = datetime.datetime.utcnow().isoformat()
         await self.save_json(STATE_FILE, self.state)
 
+        # Check preference - simplified to just opt_in or opt_out
+        pref = self.prefs.get(user_id, "opt_out")  # Default to opt_out
+        
         # Started playing
         if after_game and not before_game:
             logger.info(f"User {after.name} ({after.id}) started playing {after_game}")
-            pref = self.prefs.get(user_id, "always_reject")  # Default changed to always_reject
             logger.info(f"User preference: {pref}")
             
-            if pref == "always_accept":
+            if pref == "opt_in":
                 self.state["players"][user_id] = after_game
                 await self.save_json(STATE_FILE, self.state)
-                logger.info(f"Auto-accepted game for {after.name}: {after_game}")
-                logger.info(f"Updated state: {self.state['players']}")
+                logger.info(f"Added game for {after.name}: {after_game}")
                 await self.update_embed()
-            elif pref == "ask":
-                await self.prompt_user(after, after_game)
-            # always_reject does nothing
+            # opt_out does nothing
 
         # Changed games
         elif after_game and before_game and after_game != before_game:
             logger.info(f"User {after.name} ({after.id}) changed games: {before_game} -> {after_game}")
-            # If user was already in the players list, update with new game
-            if user_id in self.state["players"]:
-                pref = self.prefs.get(user_id, "always_reject")  # Default changed to always_reject
-                logger.info(f"User preference: {pref}")
-                
-                if pref == "always_accept":
-                    self.state["players"][user_id] = after_game
-                    await self.save_json(STATE_FILE, self.state)
-                    logger.info(f"Auto-updated game for {after.name}: {after_game}")
-                    logger.info(f"Updated state: {self.state['players']}")
-                    await self.update_embed()
-                elif pref == "ask":
-                    await self.prompt_user(after, after_game)
-                # always_reject does nothing
+            if user_id in self.state["players"] and pref == "opt_in":
+                self.state["players"][user_id] = after_game
+                await self.save_json(STATE_FILE, self.state)
+                logger.info(f"Updated game for {after.name}: {after_game}")
+                await self.update_embed()
+            # opt_out does nothing
 
         # Stopped playing
         elif before_game and not after_game:
@@ -534,69 +548,7 @@ class GameMonCog(commands.Cog):
                 self.state["players"].pop(user_id)
                 await self.save_json(STATE_FILE, self.state)
                 logger.info(f"Removed game for {after.name}")
-                logger.info(f"Updated state: {self.state['players']}")
                 await self.update_embed()
-
-    # ---------- DM Prompt ----------
-    async def prompt_user(self, user, game):
-        class Confirm(discord.ui.View):
-            def __init__(self, cog, user_id, game):
-                super().__init__(timeout=PROMPT_TIMEOUT)
-                self.cog = cog
-                self.user_id = user_id
-                self.game = game
-                self.responded = False
-                self.message = None
-
-            @discord.ui.button(label="✅ Accept", style=discord.ButtonStyle.green)
-            async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
-                self.responded = True
-                self.cog.state["players"][self.user_id] = self.game
-                await self.cog.save_json(STATE_FILE, self.cog.state)
-                logger.info(f"User {user.name} accepted game: {self.game}")
-                logger.info(f"Updated state: {self.cog.state['players']}")
-                await self.cog.update_embed()
-                await interaction.response.edit_message(content=f"Accepted: {self.game}", view=None)
-
-            @discord.ui.button(label="❌ Reject", style=discord.ButtonStyle.red)
-            async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
-                self.responded = True
-                logger.info(f"User {user.name} rejected game: {self.game}")
-                await interaction.response.edit_message(content=f"Rejected: {self.game}", view=None)
-
-            async def on_timeout(self):
-                if not self.responded and self.message:
-                    try:
-                        await self.message.edit(content=f"Timed out. Game not shown: {self.game}", view=None)
-                        logger.info(f"Prompt timed out for {user.name}: {self.game}")
-                    except Exception as e:
-                        logger.error(f"Error updating prompt timeout message: {e}")
-
-        try:
-            # Check if user can receive DMs first
-            view = Confirm(self, str(user.id), game)
-            try:
-                dm = await user.send(
-                    f"Do you want to show `{game}` in the Now Playing list?",
-                    view=view
-                )
-                # Store reference to message in view for timeout handling
-                view.message = dm
-                logger.info(f"Sent game prompt to {user.name} ({user.id}) for {game}")
-            except discord.Forbidden:
-                # DMs are disabled, so auto-accept and notify in console
-                logger.warning(f"Cannot DM user {user.name} ({user.id}). DMs disabled. Auto-accepting game.")
-                self.state["players"][str(user.id)] = game
-                await self.save_json(STATE_FILE, self.state)
-                await self.update_embed()
-            except Exception as e:
-                logger.error(f"Error sending prompt to {user.name} ({user.id}): {e}")
-                # On error, also auto-accept to prevent missing games
-                self.state["players"][str(user.id)] = game
-                await self.save_json(STATE_FILE, self.state)
-                await self.update_embed()
-        except Exception as e:
-            logger.error(f"Unexpected error in prompt_user for {user.name} ({user.id}): {e}")
 
     # ---------- Embed Update ----------
     async def update_embed(self, force_new=False):
@@ -660,7 +612,7 @@ class GameMonCog(commands.Cog):
             embed.description = "Nobody is playing tracked games right now."
 
         # Add footer with instructions for preference buttons
-        embed.set_footer(text="Use the buttons below to set your preference • Last updated")
+        embed.set_footer(text="Use the buttons below to show or hide your games • Last updated")
 
         try:
             if message and not force_new:
