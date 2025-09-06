@@ -257,12 +257,12 @@ def build_calendar_embed(events: list) -> discord.Embed:
         # Create fields for each chunk
         for j, chunk in enumerate(chunks):
             # Create appropriate headers
-            if len(chunks) > 1:
-                # If we have multiple chunks, add part numbers
-                month_name = f"┏━━━━ 🗓️ **{calendar.month_name[month]} {year}** 🗓️ ━━━━┓ ({j+1}/{len(chunks)})"
-            else:
-                # Single chunk uses the standard header
+            if j == 0:
+                # Only use the fancy decorated header for the first chunk
                 month_name = f"┏━━━━ 🗓️ **{calendar.month_name[month]} {year}** 🗓️ ━━━━┓"
+            else:
+                # For continuation chunks, use a simpler header
+                month_name = f"**{calendar.month_name[month]} {year}** (continued {j+1}/{len(chunks)})"
             
             # Join events with double newlines and add the extra space at the top
             body = "\n\n".join(chunk)
@@ -301,10 +301,10 @@ def build_calendar_embed(events: list) -> discord.Embed:
         
         # Create fields for each TBC chunk
         for j, chunk in enumerate(chunks):
-            if len(chunks) > 1:
-                header = f"┏━━━━━ 🔧 **Date TBC** 🔧 ━━━━━┓ ({j+1}/{len(chunks)})"
-            else:
+            if j == 0:
                 header = f"┏━━━━━ 🔧 **Date TBC** 🔧 ━━━━━┓"
+            else:
+                header = f"**Date TBC** (continued {j+1}/{len(chunks)})"
             
             body = "\n\n".join(chunk)
             body = "\u200b\n" + body
