@@ -136,12 +136,19 @@ def event_to_str(event: dict) -> str:
         date_field = event.get("display_date", event.get("date"))
         dt = datetime.fromisoformat(date_field)
         
-        # Convert to timezone WITHOUT adjusting the time
+        # Show date without time
         msg += f"🗓️ {dt.day:02d}/{dt.month:02d}/{dt.year}"
         
-        # Only show time if it was explicitly set (has_time flag is True)
+        # If the event has time, show it separately using the original values if available
         if event.get("has_time", False):
-            msg += f", {dt.hour:02d}:{dt.minute:02d}"
+            # For events with original_hour/minute, use those exact values
+            if "original_hour" in event and "original_minute" in event:
+                hour = event["original_hour"]
+                minute = event["original_minute"]
+                msg += f", {hour:02d}:{minute:02d}"
+            # Fallback to datetime's hour/minute for older events
+            else:
+                msg += f", {dt.hour:02d}:{dt.minute:02d}"
     
     msg += f"\n👤 Organiser: {organiser}"
     
@@ -206,6 +213,12 @@ def build_calendar_embed(events: list) -> discord.Embed:
             current_occurrence = next_occurrence
             while current_occurrence <= two_weeks_later:
                 event_copy = e.copy()
+                
+                # Preserve original time components in each occurrence if available
+                if "original_hour" in e and "original_minute" in e:
+                    event_copy["original_hour"] = e["original_hour"]
+                    event_copy["original_minute"] = e["original_minute"]
+                
                 event_copy["display_date"] = current_occurrence.isoformat()
                 processed_events.append(event_copy)
                 
@@ -827,6 +840,8 @@ class CalendarCog(commands.Cog):
         # Initialize event with date as None (TBC)
         event_date = None
         has_time_flag = False
+        original_hour = None
+        original_minute = None
             
         # Parse date if provided and not "TBC"
         if date and date.lower() != "tbc":
@@ -852,6 +867,11 @@ class CalendarCog(commands.Cog):
                         "❌ Invalid time format. Use HH:MM (24-hour).", ephemeral=True
                     )
                     return
+                    
+                # Store the exact input time components
+                original_hour = event_time.hour
+                original_minute = event_time.minute
+                
                 # Combine date and time
                 event_date = event_date.replace(
                     hour=event_time.hour,
@@ -886,6 +906,11 @@ class CalendarCog(commands.Cog):
             "recurring": recurring,
             "create_threads": thread_channel is not None,  # Track whether threads should be created
         }
+        
+        # Add original time components if time was provided
+        if has_time_flag and original_hour is not None and original_minute is not None:
+            new_event["original_hour"] = original_hour
+            new_event["original_minute"] = original_minute
 
         # Only create thread immediately for non-recurring events
         # Recurring events will have threads created before each occurrence
@@ -987,6 +1012,9 @@ class CalendarCog(commands.Cog):
                     
                 event["date"] = None
                 event["has_time"] = False
+                # Remove time fields if they exist
+                event.pop("original_hour", None)
+                event.pop("original_minute", None)
             else:
                 event_date = parse_date(date)
                 if not event_date:
@@ -1008,10 +1036,13 @@ class CalendarCog(commands.Cog):
                         hour=current_date.hour,
                         minute=current_date.minute
                     )
-                    # Keep has_time flag
+                    # Keep has_time flag and original time components
                 else:
                     # Reset has_time flag if no time is specified
                     event["has_time"] = False
+                    # Remove time fields if they exist
+                    event.pop("original_hour", None)
+                    event.pop("original_minute", None)
                     
                 event["date"] = event_date.isoformat()
             
@@ -1023,6 +1054,10 @@ class CalendarCog(commands.Cog):
                     "❌ Invalid time format. Use HH:MM (24-hour).", ephemeral=True
                 )
                 return
+                
+            # Store the exact input time components
+            event["original_hour"] = event_time.hour
+            event["original_minute"] = event_time.minute
                 
             # Update just the time component
             current_date = datetime.fromisoformat(event["date"])
@@ -1056,6 +1091,14 @@ class CalendarCog(commands.Cog):
                 event["thread_id"] = None
                 
             event["recurring"] = recurring
+            
+        # Update organiser if provided
+        if organiser is not None:
+            event["organiser"] = organiser.id
+            
+        # Update squad maker if provided
+        if squad_maker is not None:
+            event["squad_maker"] = squad_maker.id
             
         # Update thread channel if provided
         if thread_channel is not None:
