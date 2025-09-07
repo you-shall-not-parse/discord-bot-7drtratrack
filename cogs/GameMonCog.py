@@ -6,9 +6,19 @@ import datetime
 import asyncio
 import logging
 
-# Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# Set up logging with configurable verbosity
+VERBOSE_LOGGING = False  # Set to False to reduce terminal output
+
+# Configure logging level based on verbosity
+logging_level = logging.INFO if VERBOSE_LOGGING else logging.WARNING
+logging.basicConfig(level=logging_level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('GameMonCog')
+
+# For even more control, silence specific loggers that are too chatty
+if not VERBOSE_LOGGING:
+    # Silence these specific loggers that are too chatty
+    logging.getLogger('discord.gateway').setLevel(logging.WARNING)
+    logging.getLogger('discord.client').setLevel(logging.WARNING)
 
 # ---------------- CONFIG ----------------
 GUILD_ID = 1097913605082579024   # Replace with your guild/server ID
@@ -20,6 +30,7 @@ INACTIVE_CHECK_MINUTES = 60  # how often to check for inactive users
 MAX_INACTIVE_HOURS = 12  # maximum time a user can be inactive before removal
 DEFAULT_PREFERENCE = "opt_out"  # Default preference for users (opt_in or opt_out)
 ADMIN_USER_IDS = [1109147750932676649]  # Replace with your admin user IDs who can use special commands
+TEMP_DISABLE_DEFAULT_MONITORING = False  # Set to True to temporarily disable all monitoring for users without explicit preferences
 # ----------------------------------------
 
 class PreferenceView(discord.ui.View):
@@ -454,6 +465,11 @@ class GameMonCog(commands.Cog):
         if message.author.bot:
             return
             
+        # Skip messages from admin users
+        if message.author.id in ADMIN_USER_IDS:
+            logger.info(f"Admin message from {message.author.name} - not deleting")
+            return
+            
         # Check if the message is in the monitored thread
         if message.channel.id == THREAD_ID:
             try:
@@ -695,6 +711,33 @@ class GameMonCog(commands.Cog):
         if after.bot:
             return
 
+        user_id = str(after.id)
+        
+        # Check preference - only track users who have explicitly opted in
+        pref = self.prefs.get(user_id, DEFAULT_PREFERENCE)
+        
+        # If default is opt_out and the TEMP_DISABLE flag is on, ignore users without explicit preference
+        if DEFAULT_PREFERENCE == "opt_out" and TEMP_DISABLE_DEFAULT_MONITORING and user_id not in self.prefs:
+            return  # Skip processing completely for users without explicit preference
+            
+        if pref != "opt_in":
+            logger.debug(f"User {after.name} has not opted in. Preference: {pref}")
+            # Also remove user from any existing games to be extra safe
+            removed = False
+            for game, users in list(self.state["games"].items()):
+                if user_id in users:
+                    users.remove(user_id)
+                    removed = True
+                    logger.info(f"Removing non-opted-in user {after.name} from {game}")
+                    # If no users left for this game, remove the game
+                    if not users:
+                        self.state["games"].pop(game)
+            
+            if removed:
+                await self.save_json(STATE_FILE, self.state)
+                await self.update_embed()
+            return
+
         # Use our improved game detection method
         before_game = None
         after_game = None
@@ -720,32 +763,10 @@ class GameMonCog(commands.Cog):
         if before_game == after_game:
             logger.debug(f"Game unchanged for {after.name}: {after_game}")
             return
-
-        user_id = str(after.id)
         
         # Update last seen timestamp
         self.state["last_seen"][user_id] = datetime.datetime.utcnow().isoformat()
         await self.save_json(STATE_FILE, self.state)
-
-        # Check preference - only track users who have opted in
-        pref = self.prefs.get(user_id, DEFAULT_PREFERENCE)
-        if pref != "opt_in":
-            logger.debug(f"User {after.name} has not opted in. Preference: {pref}")
-            # ADDED: Also remove user from any existing games to be extra safe
-            removed = False
-            for game, users in list(self.state["games"].items()):
-                if user_id in users:
-                    users.remove(user_id)
-                    removed = True
-                    logger.info(f"Removing non-opted-in user {after.name} from {game}")
-                    # If no users left for this game, remove the game
-                    if not users:
-                        self.state["games"].pop(game)
-            
-            if removed:
-                await self.save_json(STATE_FILE, self.state)
-                await self.update_embed()
-            return
         
         # Started playing or changed games
         if after_game:
@@ -993,6 +1014,50 @@ class GameMonCog(commands.Cog):
         
         await interaction.response.send_message(
             "Game state has been reset. All tracked games have been cleared.",
+            ephemeral=True
+        )
+        
+    # ---------- Toggle Monitoring Command ----------
+    @discord.app_commands.command(name="togglemonitoring", description="Toggle monitoring for users without preferences (admin only)")
+    async def toggle_monitoring(self, interaction: discord.Interaction):
+        # Check if user is in the admin list
+        if not self.is_admin_user(interaction.user.id):
+            await interaction.response.send_message(
+                "You don't have permission to use this command.",
+                ephemeral=True
+            )
+            return
+        
+        global TEMP_DISABLE_DEFAULT_MONITORING
+        TEMP_DISABLE_DEFAULT_MONITORING = not TEMP_DISABLE_DEFAULT_MONITORING
+        status = "disabled" if TEMP_DISABLE_DEFAULT_MONITORING else "enabled"
+        
+        await interaction.response.send_message(
+            f"Monitoring for users without explicit preferences is now {status}.",
+            ephemeral=True
+        )
+        
+    # ---------- Toggle Verbose Logging Command ----------
+    @discord.app_commands.command(name="toggleverbose", description="Toggle verbose logging (admin only)")
+    async def toggle_verbose(self, interaction: discord.Interaction):
+        # Check if user is in the admin list
+        if not self.is_admin_user(interaction.user.id):
+            await interaction.response.send_message(
+                "You don't have permission to use this command.",
+                ephemeral=True
+            )
+            return
+        
+        global VERBOSE_LOGGING
+        VERBOSE_LOGGING = not VERBOSE_LOGGING
+        
+        # Update logging levels
+        logging_level = logging.INFO if VERBOSE_LOGGING else logging.WARNING
+        logger.setLevel(logging_level)
+        
+        status = "enabled" if VERBOSE_LOGGING else "disabled"
+        await interaction.response.send_message(
+            f"Verbose logging is now {status}.",
             ephemeral=True
         )
 
