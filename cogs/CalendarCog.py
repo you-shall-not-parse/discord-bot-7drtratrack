@@ -124,7 +124,7 @@ def event_to_str(event: dict) -> str:
     
     # Add recurring indicator if applicable
     if event.get("recurring", False):
-        msg += " (2 weeks displayed, but recurs every week)"
+        msg += " _(2 week rolling/recurring)_"
     
     msg += "\n"
     
@@ -137,7 +137,6 @@ def event_to_str(event: dict) -> str:
         dt = datetime.fromisoformat(date_field)
         
         # Convert to timezone WITHOUT adjusting the time
-        # This prevents the extra minute issue by just using the time components directly
         msg += f"🗓️ {dt.day:02d}/{dt.month:02d}/{dt.year}"
         
         # Only show time if it was explicitly set (has_time flag is True)
@@ -178,33 +177,30 @@ def build_calendar_embed(events: list) -> discord.Embed:
         
         # For recurring events, generate all occurrences within the 2-week window
         if e.get("recurring", False):
-            # Extract the original time components - we want to preserve these exactly
-            original_hour = dt.hour
-            original_minute = dt.minute
-            original_second = dt.second
+            # Store the original time components exactly
+            original_time = dt.time()
             
             # Calculate first occurrence after now
             days_diff = (dt.weekday() - now.weekday()) % 7
-            next_occurrence = now + timedelta(days=days_diff)
+            next_occurrence_date = now.date() + timedelta(days=days_diff)
             
-            # Reset the time to midnight to avoid any DST issues
-            next_occurrence = next_occurrence.replace(
-                hour=0, 
-                minute=0,
-                second=0
+            # Combine the date with the EXACT original time
+            next_occurrence = datetime.combine(
+                next_occurrence_date,
+                original_time
             )
             
-            # Then explicitly set the hour and minute from the original event
-            # This ensures the exact time is preserved
-            next_occurrence = next_occurrence.replace(
-                hour=original_hour,
-                minute=original_minute, 
-                second=original_second
-            )
+            # Attach timezone after combining to avoid DST issues
+            next_occurrence = TIMEZONE.localize(next_occurrence)
             
             # If this places it in the past, add 7 days
             if next_occurrence < now:
-                next_occurrence += timedelta(days=7)
+                next_occurrence_date = next_occurrence_date + timedelta(days=7)
+                next_occurrence = datetime.combine(
+                    next_occurrence_date,
+                    original_time
+                )
+                next_occurrence = TIMEZONE.localize(next_occurrence)
                 
             # Add all occurrences within the 2-week window
             current_occurrence = next_occurrence
@@ -213,8 +209,13 @@ def build_calendar_embed(events: list) -> discord.Embed:
                 event_copy["display_date"] = current_occurrence.isoformat()
                 processed_events.append(event_copy)
                 
-                # Add 7 days for the next weekly occurrence
-                current_occurrence += timedelta(days=7)
+                # Add 7 days for the next weekly occurrence - with exact time preservation
+                next_date = (current_occurrence.date() + timedelta(days=7))
+                current_occurrence = datetime.combine(
+                    next_date,
+                    original_time
+                )
+                current_occurrence = TIMEZONE.localize(current_occurrence)
         else:
             # Skip past events that aren't recurring
             if dt < now:
@@ -399,32 +400,30 @@ def get_next_occurrence(event: dict, base_time: Optional[datetime] = None) -> Op
     if not event.get("recurring", False):
         return original_dt if original_dt > base_time else None
         
-    # Extract the original time components
-    original_hour = original_dt.hour
-    original_minute = original_dt.minute
-    original_second = original_dt.second
+    # Store the original time components exactly
+    original_time = original_dt.time()
     
     # Calculate the next occurrence based on weekday
     days_diff = (original_dt.weekday() - base_time.weekday()) % 7
-    next_occurrence = base_time + timedelta(days=days_diff)
+    next_occurrence_date = base_time.date() + timedelta(days=days_diff)
     
-    # Reset to midnight to avoid DST issues
-    next_occurrence = next_occurrence.replace(
-        hour=0,
-        minute=0,
-        second=0
+    # Combine the calculated date with the EXACT original time
+    next_occurrence = datetime.combine(
+        next_occurrence_date,
+        original_time
     )
     
-    # Set the exact time from the original event
-    next_occurrence = next_occurrence.replace(
-        hour=original_hour,
-        minute=original_minute,
-        second=original_second
-    )
+    # Attach timezone after combining date and time to avoid DST issues
+    next_occurrence = TIMEZONE.localize(next_occurrence)
     
     # If this places it in the past, add 7 days
     if next_occurrence < base_time:
-        next_occurrence += timedelta(days=7)
+        next_occurrence_date = next_occurrence_date + timedelta(days=7)
+        next_occurrence = datetime.combine(
+            next_occurrence_date,
+            original_time
+        )
+        next_occurrence = TIMEZONE.localize(next_occurrence)
         
     return next_occurrence
 
