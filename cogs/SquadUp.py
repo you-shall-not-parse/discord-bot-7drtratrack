@@ -3,12 +3,20 @@ from discord import app_commands
 from discord.ext import commands
 import json
 import os
-from typing import Optional
-import io
+from typing import Optional, Dict, List, Union
+import asyncio
+import time
 
 DATA_FOLDER = "data"
 POSTS_FILE = os.path.join(DATA_FOLDER, "squadup_posts.json")
 CONFIG_FILE = os.path.join(DATA_FOLDER, "squadup_config.json")
+
+# Cache to reduce file I/O
+POST_CACHE = {}
+CONFIG_CACHE = None
+SAVE_INTERVAL = 60  # seconds between writes to disk
+last_save_time = 0
+dirty_cache = False  # Flag to track if cache has unsaved changes
 
 NATO_SQUAD_NAMES = [
     "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot",
@@ -26,29 +34,107 @@ ANYSIZE_CREATIVE_NAMES = [
     "Rascal", "Goblin", "Mongoose", "Thumper", "Spitfire", "Bulldog", "Viper"
 ]
 
+# View cache to reduce recreation of views
+VIEW_CACHE = {}
+
 def ensure_file_exists(path, default_data):
+    """Initialize files and load into cache if needed"""
+    global CONFIG_CACHE
+    
+    if path == CONFIG_FILE and CONFIG_CACHE is not None:
+        return CONFIG_CACHE
+        
     if not os.path.exists(DATA_FOLDER):
         os.makedirs(DATA_FOLDER)
+        
     if not os.path.isfile(path):
         with open(path, "w", encoding="utf-8") as f:
             json.dump(default_data, f, indent=4)
+        
+        if path == CONFIG_FILE:
+            CONFIG_CACHE = default_data
         return default_data
+        
     try:
         with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+            if path == CONFIG_FILE:
+                CONFIG_CACHE = data
+            return data
     except (json.JSONDecodeError, FileNotFoundError):
         with open(path, "w", encoding="utf-8") as f:
             json.dump(default_data, f, indent=4)
+        
+        if path == CONFIG_FILE:
+            CONFIG_CACHE = default_data
         return default_data
 
-def save_json(path, data):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4)
+def get_post_data(message_id: str) -> dict:
+    """Get post data from cache or load from file"""
+    global POST_CACHE
+    
+    message_id = str(message_id)  # Ensure string format
+    
+    if message_id in POST_CACHE:
+        return POST_CACHE[message_id]
+        
+    # Load all posts into cache if not already done
+    if not POST_CACHE:
+        POST_CACHE = ensure_file_exists(POSTS_FILE, {})
+    
+    return POST_CACHE.get(message_id, None)
+
+def update_post_data(message_id: str, post_data: dict):
+    """Update post in cache and schedule save to disk"""
+    global POST_CACHE, dirty_cache
+    
+    message_id = str(message_id)  # Ensure string format
+    POST_CACHE[message_id] = post_data
+    dirty_cache = True  # Mark cache as needing save
+
+def check_and_save_posts():
+    """Check if posts need saving and save if necessary"""
+    global last_save_time, dirty_cache
+    
+    current_time = time.time()
+    if dirty_cache and current_time - last_save_time > SAVE_INTERVAL:
+        save_all_posts()
+        last_save_time = current_time
+        dirty_cache = False
+
+def save_all_posts():
+    """Force save all cached posts to disk"""
+    global POST_CACHE
+    
+    if not POST_CACHE:
+        return  # Nothing to save
+    
+    with open(POSTS_FILE, "w", encoding="utf-8") as f:
+        json.dump(POST_CACHE, f, indent=4)
 
 def is_role_based(post: dict) -> bool:
     return post.get("role_based", False) or (
         post.get("multi") and post.get("squads") and isinstance(next(iter(post["squads"].values())), dict)
     )
+
+def get_or_create_view(bot, message_id, op_id, multi=False, squad_names=None, post_data=None):
+    """Get cached view or create a new one"""
+    cache_key = f"{message_id}"
+    
+    # Check if view exists and is still valid
+    if cache_key in VIEW_CACHE:
+        view = VIEW_CACHE[cache_key]
+        # Update the view if squad names changed
+        if multi and squad_names and view.squad_names != squad_names:
+            # Need to create a new view since we can't easily modify existing one
+            view = SquadSignupView(bot, message_id, op_id, multi, squad_names)
+            VIEW_CACHE[cache_key] = view
+        return view
+    
+    # Create new view if not in cache
+    view = SquadSignupView(bot, message_id, op_id, multi, squad_names)
+    VIEW_CACHE[cache_key] = view
+    return view
 
 class JoinButton(discord.ui.Button):
     def __init__(self):
@@ -56,8 +142,7 @@ class JoinButton(discord.ui.Button):
 
     async def callback(self, interaction: discord.Interaction):
         view = self.view
-        data = ensure_file_exists(POSTS_FILE, {})
-        post = data.get(str(view.message_id))
+        post = get_post_data(view.message_id)
         if not post or post.get("closed", False):
             await interaction.response.send_message("Signups are closed or not found.", ephemeral=True)
             return
@@ -72,10 +157,9 @@ class JoinButton(discord.ui.Button):
         else:
             await interaction.response.send_message("You are already joined!", ephemeral=True)
 
-        data[str(view.message_id)] = post
-        save_json(POSTS_FILE, data)
+        update_post_data(view.message_id, post)
         embed = view.bot.get_cog("SquadUp").build_embed(post)
-        await interaction.message.edit(embed=embed, view=view)
+        await interaction.message.edit(embed=embed)
 
 class MaybeButton(discord.ui.Button):
     def __init__(self):
@@ -83,8 +167,7 @@ class MaybeButton(discord.ui.Button):
 
     async def callback(self, interaction: discord.Interaction):
         view = self.view
-        data = ensure_file_exists(POSTS_FILE, {})
-        post = data.get(str(view.message_id))
+        post = get_post_data(view.message_id)
         if not post or post.get("closed", False):
             await interaction.response.send_message("Signups are closed or not found.", ephemeral=True)
             return
@@ -99,10 +182,9 @@ class MaybeButton(discord.ui.Button):
         else:
             await interaction.response.send_message("You are already marked as maybe!", ephemeral=True)
 
-        data[str(view.message_id)] = post
-        save_json(POSTS_FILE, data)
+        update_post_data(view.message_id, post)
         embed = view.bot.get_cog("SquadUp").build_embed(post)
-        await interaction.message.edit(embed=embed, view=view)
+        await interaction.message.edit(embed=embed)
 
 class RemoveMeButton(discord.ui.Button):
     def __init__(self):
@@ -110,8 +192,7 @@ class RemoveMeButton(discord.ui.Button):
 
     async def callback(self, interaction: discord.Interaction):
         view = self.view
-        data = ensure_file_exists(POSTS_FILE, {})
-        post = data.get(str(view.message_id))
+        post = get_post_data(view.message_id)
         if not post or post.get("closed", False):
             await interaction.response.send_message("Signups are closed or not found.", ephemeral=True)
             return
@@ -135,10 +216,9 @@ class RemoveMeButton(discord.ui.Button):
                 if user_id in post[k]:
                     post[k].remove(user_id)
 
-        data[str(view.message_id)] = post
-        save_json(POSTS_FILE, data)
+        update_post_data(view.message_id, post)
         embed = view.bot.get_cog("SquadUp").build_embed(post)
-        await interaction.message.edit(embed=embed, view=view)
+        await interaction.message.edit(embed=embed)
         await interaction.response.send_message("You have been removed from the signup.", ephemeral=True)
 
 class RoleSelect(discord.ui.Select):
@@ -154,8 +234,7 @@ class RoleSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         chosen_role = self.values[0]
-        data = ensure_file_exists(POSTS_FILE, {})
-        post = data.get(str(self.message_id))
+        post = get_post_data(self.message_id)
         if not post:
             await interaction.response.send_message("Post not found.", ephemeral=True)
             return
@@ -183,8 +262,7 @@ class RoleSelect(discord.ui.Select):
 
         if target_roles.get(chosen_role) in (None, user_id):
             target_roles[chosen_role] = user_id
-            data[str(self.message_id)] = post
-            save_json(POSTS_FILE, data)
+            update_post_data(self.message_id, post)
 
             # Update the original signup message's embed
             cog = interaction.client.get_cog("SquadUp")
@@ -214,8 +292,7 @@ class SquadButton(discord.ui.Button):
 
     async def callback(self, interaction: discord.Interaction):
         view = self.view
-        data = ensure_file_exists(POSTS_FILE, {})
-        post = data.get(str(view.message_id))
+        post = get_post_data(view.message_id)
         if not post or post.get("closed", False):
             await interaction.response.send_message("Signups are closed or not found.", ephemeral=True)
             return
@@ -237,10 +314,9 @@ class SquadButton(discord.ui.Button):
         else:
             await interaction.response.send_message(f"{self.squad_name} squad is full!", ephemeral=True)
 
-        data[str(view.message_id)] = post
-        save_json(POSTS_FILE, data)
+        update_post_data(view.message_id, post)
         embed = view.bot.get_cog("SquadUp").build_embed(post)
-        await interaction.message.edit(embed=embed, view=view)
+        await interaction.message.edit(embed=embed)
 
 class CloseButton(discord.ui.Button):
     def __init__(self):
@@ -248,8 +324,7 @@ class CloseButton(discord.ui.Button):
 
     async def callback(self, interaction: discord.Interaction):
         view = self.view
-        data = ensure_file_exists(POSTS_FILE, {})
-        post = data.get(str(view.message_id))
+        post = get_post_data(view.message_id)
         if not post:
             await interaction.response.send_message("Post not found.", ephemeral=True)
             return
@@ -258,7 +333,9 @@ class CloseButton(discord.ui.Button):
             return
 
         post["closed"] = True
-        save_json(POSTS_FILE, data)
+        update_post_data(view.message_id, post)
+        save_all_posts()  # Immediately save closed posts
+        
         for child in view.children:
             child.disabled = True
         await interaction.message.edit(view=view)
@@ -270,8 +347,7 @@ class AddMoreSquadsButton(discord.ui.Button):
     
     async def callback(self, interaction: discord.Interaction):
         view = self.view
-        data = ensure_file_exists(POSTS_FILE, {})
-        post = data.get(str(view.message_id))
+        post = get_post_data(view.message_id)
         
         if not post:
             await interaction.response.send_message("Post not found.", ephemeral=True)
@@ -327,8 +403,7 @@ class AddMoreSquadsModal(discord.ui.Modal, title="Add More Squads"):
         except ValueError:
             return await interaction.response.send_message("Please enter valid numbers.", ephemeral=True)
             
-        data = ensure_file_exists(POSTS_FILE, {})
-        post = data.get(str(self.message_id))
+        post = get_post_data(self.message_id)
         
         if not post:
             return await interaction.response.send_message("Post not found.", ephemeral=True)
@@ -345,22 +420,20 @@ class AddMoreSquadsModal(discord.ui.Modal, title="Add More Squads"):
             post["squads"][available_names[i]] = []
             
         post["max_per_squad"] = players_per
-        data[str(self.message_id)] = post
-        save_json(POSTS_FILE, data)
+        update_post_data(self.message_id, post)
         
         # Update the message
         cog = interaction.client.get_cog("SquadUp")
         embed = cog.build_embed(post)
         
-        # Create a new view with updated squad buttons
-        new_view = SquadSignupView(
+        # Get or create updated view with new squads
+        new_view = get_or_create_view(
             interaction.client, 
-            int(self.message_id), 
+            self.message_id, 
             post["op_id"], 
             multi=True, 
             squad_names=list(post["squads"].keys())
         )
-        new_view.message_id = int(self.message_id)
         
         try:
             channel = interaction.channel
@@ -418,8 +491,7 @@ class AddMoreTanksModal(discord.ui.Modal, title="Add More Tanks"):
         except ValueError:
             return await interaction.response.send_message("Please enter valid numbers.", ephemeral=True)
             
-        data = ensure_file_exists(POSTS_FILE, {})
-        post = data.get(str(self.message_id))
+        post = get_post_data(self.message_id)
         
         if not post:
             return await interaction.response.send_message("Post not found.", ephemeral=True)
@@ -466,22 +538,20 @@ class AddMoreTanksModal(discord.ui.Modal, title="Add More Tanks"):
         for name in new_squad_names:
             post["squads"][name] = {"Tank Commander": None, "Gunner": None, "Driver": None}
             
-        data[str(self.message_id)] = post
-        save_json(POSTS_FILE, data)
+        update_post_data(self.message_id, post)
         
         # Update the message
         cog = interaction.client.get_cog("SquadUp")
         embed = cog.build_embed(post)
         
-        # Create a new view with updated squad buttons
-        new_view = SquadSignupView(
+        # Get or create updated view with new squads
+        new_view = get_or_create_view(
             interaction.client, 
-            int(self.message_id), 
+            self.message_id, 
             post["op_id"], 
             multi=True, 
             squad_names=list(post["squads"].keys())
         )
-        new_view.message_id = int(self.message_id)
         
         try:
             channel = interaction.channel
@@ -510,29 +580,48 @@ class SquadSignupView(discord.ui.View):
             self.add_item(RemoveMeButton())
         self.add_item(CloseButton())
         
-        # Add the "Add More Squads" button that only the OP can use
+        # Add the "Add More Squads" button that only the OP can see
         if multi:
             self.add_item(AddMoreSquadsButton())
 
 class SquadUp(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.posts_data = ensure_file_exists(POSTS_FILE, {})
+        # Initialize caches
         self.config_data = ensure_file_exists(CONFIG_FILE, {"allowed_roles": ["Squad Leader", "Admin"], "default_squad_size": 6})
-        bot.loop.create_task(self._register_persistent_views())
-
-    async def _register_persistent_views(self):
+        
+        # Load all posts into cache for faster access
+        global POST_CACHE
+        POST_CACHE = ensure_file_exists(POSTS_FILE, {})
+        
+        # Set up periodic tasks
+        self.bg_task = bot.loop.create_task(self._background_tasks())
+        
+    async def _background_tasks(self):
+        """Background task to handle periodic saving and view registration"""
         await self.bot.wait_until_ready()
-        data = ensure_file_exists(POSTS_FILE, {})
-        for msg_id, post in data.items():
+        
+        # Register persistent views
+        for msg_id, post in POST_CACHE.items():
             if not post.get("closed", False):
                 if post.get("multi"):
                     squad_names = list(post["squads"].keys())
-                    view = SquadSignupView(self.bot, int(msg_id), post["op_id"], multi=True, squad_names=squad_names)
+                    view = get_or_create_view(self.bot, int(msg_id), post["op_id"], multi=True, squad_names=squad_names)
                 else:
-                    view = SquadSignupView(self.bot, int(msg_id), post["op_id"], multi=False)
-                view.message_id = int(msg_id)
+                    view = get_or_create_view(self.bot, int(msg_id), post["op_id"], multi=False)
                 self.bot.add_view(view, message_id=int(msg_id))
+        
+        # Periodic save task
+        while not self.bot.is_closed():
+            check_and_save_posts()
+            await asyncio.sleep(10)  # Check every 10 seconds
+
+    def cog_unload(self):
+        """Called when cog is unloaded"""
+        # Save all data before unloading
+        save_all_posts()
+        if self.bg_task:
+            self.bg_task.cancel()
 
     def user_has_allowed_role(self, member):
         allowed_roles = self.config_data.get("allowed_roles", [])
@@ -607,7 +696,7 @@ class SquadUp(commands.Cog):
         }
         
         embed = self.build_embed(post_data)
-        view = SquadSignupView(self.bot, None, interaction.user.id, multi=False)
+        view = get_or_create_view(self.bot, None, interaction.user.id, multi=False)
         
         # Handle image attachment if provided
         if image:
@@ -619,8 +708,8 @@ class SquadUp(commands.Cog):
             
         view.message_id = message.id
 
-        self.posts_data[str(message.id)] = post_data
-        save_json(POSTS_FILE, self.posts_data)
+        update_post_data(message.id, post_data)
+        save_all_posts()  # Force save new posts immediately
         await interaction.response.send_message("✅ SquadUp post created.", ephemeral=True)
 
     @app_commands.command(name="squadupmulti", description="Create multi-squad signup")
@@ -655,7 +744,7 @@ class SquadUp(commands.Cog):
         }
 
         embed = self.build_embed(post_data)
-        view = SquadSignupView(self.bot, None, interaction.user.id, multi=True, squad_names=squad_names)
+        view = get_or_create_view(self.bot, None, interaction.user.id, multi=True, squad_names=squad_names)
         
         # Handle image attachment if provided
         if image:
@@ -667,8 +756,8 @@ class SquadUp(commands.Cog):
             
         view.message_id = message.id
 
-        self.posts_data[str(message.id)] = post_data
-        save_json(POSTS_FILE, self.posts_data)
+        update_post_data(message.id, post_data)
+        save_all_posts()  # Force save new posts immediately
         await interaction.response.send_message("✅ Multi-squad post created.", ephemeral=True)
 
     @app_commands.command(name="crewup", description="Create tank crew signups where each tank has TC, Gunner, and Driver roles")
@@ -732,7 +821,7 @@ class SquadUp(commands.Cog):
         }
 
         embed = self.build_embed(post_data)
-        view = SquadSignupView(self.bot, None, interaction.user.id, multi=True, squad_names=squad_names)
+        view = get_or_create_view(self.bot, None, interaction.user.id, multi=True, squad_names=squad_names)
         
         # Handle image attachment if provided
         if image:
@@ -744,8 +833,8 @@ class SquadUp(commands.Cog):
             
         view.message_id = message.id
 
-        self.posts_data[str(message.id)] = post_data
-        save_json(POSTS_FILE, self.posts_data)
+        update_post_data(message.id, post_data)
+        save_all_posts()  # Force save new posts immediately
         await interaction.response.send_message("✅ CrewUp post created.", ephemeral=True)
 
 async def setup(bot):
