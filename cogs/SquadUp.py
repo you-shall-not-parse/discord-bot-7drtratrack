@@ -4,6 +4,7 @@ from discord.ext import commands
 import json
 import os
 from typing import Optional
+import io
 
 DATA_FOLDER = "data"
 POSTS_FILE = os.path.join(DATA_FOLDER, "squadup_posts.json")
@@ -263,6 +264,233 @@ class CloseButton(discord.ui.Button):
         await interaction.message.edit(view=view)
         await interaction.response.send_message("✅ Signups closed.", ephemeral=True)
 
+class AddMoreSquadsButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Add More Squads", style=discord.ButtonStyle.primary, custom_id="squadup_add_more_squads")
+    
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        data = ensure_file_exists(POSTS_FILE, {})
+        post = data.get(str(view.message_id))
+        
+        if not post:
+            await interaction.response.send_message("Post not found.", ephemeral=True)
+            return
+            
+        if interaction.user.id != post["op_id"]:
+            await interaction.response.send_message("Only the organizer can add more squads.", ephemeral=True)
+            return
+            
+        if post.get("closed", False):
+            await interaction.response.send_message("Signups are closed.", ephemeral=True)
+            return
+            
+        # Create modal based on post type
+        if is_role_based(post):
+            modal = AddMoreTanksModal(view.message_id)
+        else:
+            modal = AddMoreSquadsModal(view.message_id)
+            
+        await interaction.response.send_modal(modal)
+
+class AddMoreSquadsModal(discord.ui.Modal, title="Add More Squads"):
+    num_squads = discord.ui.TextInput(
+        label="Number of Squads to Add",
+        placeholder="Enter a number (1-10)",
+        required=True,
+        default="1",
+        min_length=1,
+        max_length=2
+    )
+    
+    players_per_squad = discord.ui.TextInput(
+        label="Players Per Squad",
+        placeholder="Enter the number of slots per squad",
+        required=True,
+        default="6"
+    )
+    
+    def __init__(self, message_id):
+        super().__init__()
+        self.message_id = message_id
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            num_to_add = int(self.num_squads.value)
+            players_per = int(self.players_per_squad.value)
+            
+            if num_to_add < 1 or num_to_add > 10:
+                return await interaction.response.send_message("Please enter a number between 1 and 10.", ephemeral=True)
+                
+            if players_per < 1:
+                return await interaction.response.send_message("Players per squad must be at least 1.", ephemeral=True)
+        except ValueError:
+            return await interaction.response.send_message("Please enter valid numbers.", ephemeral=True)
+            
+        data = ensure_file_exists(POSTS_FILE, {})
+        post = data.get(str(self.message_id))
+        
+        if not post:
+            return await interaction.response.send_message("Post not found.", ephemeral=True)
+            
+        # Get current squads and find unused NATO squad names
+        current_squads = list(post["squads"].keys())
+        available_names = [name for name in NATO_SQUAD_NAMES if name not in current_squads]
+        
+        if len(available_names) < num_to_add:
+            return await interaction.response.send_message(f"Cannot add {num_to_add} squads. Only {len(available_names)} names available.", ephemeral=True)
+            
+        # Add new squads
+        for i in range(num_to_add):
+            post["squads"][available_names[i]] = []
+            
+        post["max_per_squad"] = players_per
+        data[str(self.message_id)] = post
+        save_json(POSTS_FILE, data)
+        
+        # Update the message
+        cog = interaction.client.get_cog("SquadUp")
+        embed = cog.build_embed(post)
+        
+        # Create a new view with updated squad buttons
+        new_view = SquadSignupView(
+            interaction.client, 
+            int(self.message_id), 
+            post["op_id"], 
+            multi=True, 
+            squad_names=list(post["squads"].keys())
+        )
+        new_view.message_id = int(self.message_id)
+        
+        try:
+            channel = interaction.channel
+            message = await channel.fetch_message(int(self.message_id))
+            await message.edit(embed=embed, view=new_view)
+            await interaction.response.send_message(f"Added {num_to_add} new squads!", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"Error updating message: {str(e)}", ephemeral=True)
+
+class AddMoreTanksModal(discord.ui.Modal, title="Add More Tanks"):
+    anysize = discord.ui.TextInput(
+        label="Any Size Tanks",
+        placeholder="Enter number to add",
+        required=False,
+        default="0"
+    )
+    
+    lights = discord.ui.TextInput(
+        label="Light Tanks",
+        placeholder="Enter number to add",
+        required=False,
+        default="0"
+    )
+    
+    mediums = discord.ui.TextInput(
+        label="Medium Tanks",
+        placeholder="Enter number to add",
+        required=False,
+        default="0"
+    )
+    
+    heavies = discord.ui.TextInput(
+        label="Heavy Tanks",
+        placeholder="Enter number to add",
+        required=False,
+        default="0"
+    )
+    
+    def __init__(self, message_id):
+        super().__init__()
+        self.message_id = message_id
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            anysize_count = int(self.anysize.value or "0")
+            lights_count = int(self.lights.value or "0")
+            mediums_count = int(self.mediums.value or "0")
+            heavies_count = int(self.heavies.value or "0")
+            
+            total_to_add = anysize_count + lights_count + mediums_count + heavies_count
+            
+            if total_to_add < 1:
+                return await interaction.response.send_message("Please add at least one tank.", ephemeral=True)
+                
+        except ValueError:
+            return await interaction.response.send_message("Please enter valid numbers.", ephemeral=True)
+            
+        data = ensure_file_exists(POSTS_FILE, {})
+        post = data.get(str(self.message_id))
+        
+        if not post:
+            return await interaction.response.send_message("Post not found.", ephemeral=True)
+            
+        # Get current squads
+        current_squads = list(post["squads"].keys())
+        
+        # Calculate new squad names
+        new_squad_names = []
+        
+        # Count existing types to continue numbering
+        existing_anysize = sum(1 for name in current_squads if any(creative in name for creative in ANYSIZE_CREATIVE_NAMES))
+        existing_lights = sum(1 for name in current_squads if name.startswith("Light "))
+        existing_mediums = sum(1 for name in current_squads if name.startswith("Medium "))
+        existing_heavies = sum(1 for name in current_squads if name.startswith("Heavy "))
+        
+        # Add new Any Size tanks
+        for idx in range(anysize_count):
+            base_idx = existing_anysize + idx
+            base = ANYSIZE_CREATIVE_NAMES[base_idx % len(ANYSIZE_CREATIVE_NAMES)]
+            number = (base_idx // len(ANYSIZE_CREATIVE_NAMES)) + 1
+            new_squad_names.append(f"{base} {number}")
+            
+        # Add new Light tanks
+        for i in range(1, lights_count + 1):
+            new_squad_names.append(f"Light {existing_lights + i}")
+            
+        # Add new Medium tanks
+        for i in range(1, mediums_count + 1):
+            new_squad_names.append(f"Medium {existing_mediums + i}")
+            
+        # Add new Heavy tanks
+        for i in range(1, heavies_count + 1):
+            new_squad_names.append(f"Heavy {existing_heavies + i}")
+        
+        # Check the total number of tanks after adding
+        if len(current_squads) + len(new_squad_names) > 23:
+            return await interaction.response.send_message(
+                f"Cannot add {total_to_add} tanks. Maximum of 23 total tanks allowed (you have {len(current_squads)} already).", 
+                ephemeral=True
+            )
+            
+        # Add new tanks to the post
+        for name in new_squad_names:
+            post["squads"][name] = {"Tank Commander": None, "Gunner": None, "Driver": None}
+            
+        data[str(self.message_id)] = post
+        save_json(POSTS_FILE, data)
+        
+        # Update the message
+        cog = interaction.client.get_cog("SquadUp")
+        embed = cog.build_embed(post)
+        
+        # Create a new view with updated squad buttons
+        new_view = SquadSignupView(
+            interaction.client, 
+            int(self.message_id), 
+            post["op_id"], 
+            multi=True, 
+            squad_names=list(post["squads"].keys())
+        )
+        new_view.message_id = int(self.message_id)
+        
+        try:
+            channel = interaction.channel
+            message = await channel.fetch_message(int(self.message_id))
+            await message.edit(embed=embed, view=new_view)
+            await interaction.response.send_message(f"Added {total_to_add} new tanks!", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"Error updating message: {str(e)}", ephemeral=True)
+
 class SquadSignupView(discord.ui.View):
     def __init__(self, bot, message_id, op_id, multi=False, squad_names=None):
         super().__init__(timeout=None)
@@ -281,6 +509,10 @@ class SquadSignupView(discord.ui.View):
             self.add_item(MaybeButton())
             self.add_item(RemoveMeButton())
         self.add_item(CloseButton())
+        
+        # Add the "Add More Squads" button that only the OP can use
+        if multi:
+            self.add_item(AddMoreSquadsButton())
 
 class SquadUp(commands.Cog):
     def __init__(self, bot):
@@ -312,6 +544,16 @@ class SquadUp(commands.Cog):
             description=(post_data.get("description") or None),
             color=discord.Color.green()
         )
+        
+        # Add organizer field
+        organizer_id = post_data.get("op_id")
+        if organizer_id:
+            embed.add_field(
+                name="Organizer",
+                value=f"<@{organizer_id}>",
+                inline=False
+            )
+            
         if post_data.get("multi"):
             # multi-mode: could be list-based or role-based
             if is_role_based(post_data):
@@ -337,12 +579,21 @@ class SquadUp(commands.Cog):
                 members = [f"<@{uid}>" for uid in post_data.get(status, [])]
                 emoji = "✅" if status=="yes" else "🤔"
                 embed.add_field(name=f"{emoji} {status.capitalize()} ({len(members)})", value="\n".join(members) or "—", inline=True)
+                
+        # Set image if there is one
+        if post_data.get("image_url"):
+            embed.set_image(url=post_data["image_url"])
+            
         if post_data.get("closed"):
             embed.set_footer(text="Signups closed.")
         return embed
 
     @app_commands.command(name="squadup", description="Create a simple one-squad signup")
-    async def squadup(self, interaction: discord.Interaction, title: str):
+    @app_commands.describe(
+        title="The title of your squad up",
+        image="Optional image to attach to the squad up post"
+    )
+    async def squadup(self, interaction: discord.Interaction, title: str, image: Optional[discord.Attachment] = None):
         if not self.user_has_allowed_role(interaction.user):
             return await interaction.response.send_message("❌ You do not have permission.", ephemeral=True)
 
@@ -354,9 +605,18 @@ class SquadUp(commands.Cog):
             "maybe": [],
             "closed": False
         }
+        
         embed = self.build_embed(post_data)
         view = SquadSignupView(self.bot, None, interaction.user.id, multi=False)
-        message = await interaction.channel.send(embed=embed, view=view)
+        
+        # Handle image attachment if provided
+        if image:
+            post_data["image_url"] = f"attachment://{image.filename}"
+            file = await image.to_file()
+            message = await interaction.channel.send(embed=embed, file=file, view=view)
+        else:
+            message = await interaction.channel.send(embed=embed, view=view)
+            
         view.message_id = message.id
 
         self.posts_data[str(message.id)] = post_data
@@ -365,9 +625,19 @@ class SquadUp(commands.Cog):
 
     @app_commands.command(name="squadupmulti", description="Create multi-squad signup")
     @app_commands.describe(
-        details="Optional text shown under the title"
+        title="The title of your multi-squad up",
+        number_of_squads="Number of squads to create",
+        players_per_squad="Number of players per squad",
+        details="Optional text shown under the title",
+        image="Optional image to attach to the squad up post"
     )
-    async def squadupmulti(self, interaction: discord.Interaction, title: str, number_of_squads: int, players_per_squad: int = 6, details: Optional[str] = None):
+    async def squadupmulti(self, 
+                          interaction: discord.Interaction, 
+                          title: str, 
+                          number_of_squads: int, 
+                          players_per_squad: int = 6, 
+                          details: Optional[str] = None,
+                          image: Optional[discord.Attachment] = None):
         if not self.user_has_allowed_role(interaction.user):
             return await interaction.response.send_message("❌ You do not have permission.", ephemeral=True)
 
@@ -386,7 +656,15 @@ class SquadUp(commands.Cog):
 
         embed = self.build_embed(post_data)
         view = SquadSignupView(self.bot, None, interaction.user.id, multi=True, squad_names=squad_names)
-        message = await interaction.channel.send(embed=embed, view=view)
+        
+        # Handle image attachment if provided
+        if image:
+            post_data["image_url"] = f"attachment://{image.filename}"
+            file = await image.to_file()
+            message = await interaction.channel.send(embed=embed, file=file, view=view)
+        else:
+            message = await interaction.channel.send(embed=embed, view=view)
+            
         view.message_id = message.id
 
         self.posts_data[str(message.id)] = post_data
@@ -395,11 +673,13 @@ class SquadUp(commands.Cog):
 
     @app_commands.command(name="crewup", description="Create tank crew signups where each tank has TC, Gunner, and Driver roles")
     @app_commands.describe(
+        title="The title of your crew up",
         anysize="Number of tanks of any size (each has 3 slots)",
         lights="Number of light tanks (each has 3 slots)",
         mediums="Number of medium tanks (each has 3 slots)",
         heavies="Number of heavy tanks (each has 3 slots)",
-        details="Optional text shown under the title"
+        details="Optional text shown under the title",
+        image="Optional image to attach to the crew up post"
     )
     async def crewup(
         self,
@@ -409,7 +689,8 @@ class SquadUp(commands.Cog):
         lights: app_commands.Range[int, 0, 23] = 0,
         mediums: app_commands.Range[int, 0, 23] = 0,
         heavies: app_commands.Range[int, 0, 23] = 0,
-        details: Optional[str] = None
+        details: Optional[str] = None,
+        image: Optional[discord.Attachment] = None
     ):
         if not self.user_has_allowed_role(interaction.user):
             return await interaction.response.send_message("❌ You do not have permission.", ephemeral=True)
@@ -452,7 +733,15 @@ class SquadUp(commands.Cog):
 
         embed = self.build_embed(post_data)
         view = SquadSignupView(self.bot, None, interaction.user.id, multi=True, squad_names=squad_names)
-        message = await interaction.channel.send(embed=embed, view=view)
+        
+        # Handle image attachment if provided
+        if image:
+            post_data["image_url"] = f"attachment://{image.filename}"
+            file = await image.to_file()
+            message = await interaction.channel.send(embed=embed, file=file, view=view)
+        else:
+            message = await interaction.channel.send(embed=embed, view=view)
+            
         view.message_id = message.id
 
         self.posts_data[str(message.id)] = post_data
