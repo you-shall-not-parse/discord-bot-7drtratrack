@@ -6,7 +6,7 @@ from discord import app_commands
 COMMAND_NAME = "getbackdemon"  # Change this to rename the slash command
 
 # -------- Guild ID (replace with your server's ID) --------
-GUILD_ID = 123456789012345678  # 👈 Put your guild/server ID here
+GUILD_ID = 1097913605082579024  # 👈 Put your guild/server ID here
 
 # -------- Options (choice name -> dict with text + optional gif + optional color + optional author) --------
 TEXT_OPTIONS = {
