@@ -10,7 +10,7 @@ GUILD_ID = 1097913605082579024
 TEXT_OPTIONS = {
     "Disarm Demon": {
         "text": "Demon disarmed, armless fuck",
-        "gif": "https://tenor.com/view/exorcism-priest-exorcist-ritual-gif-8Nmq",
+        "gif": "https://media1.tenor.com/m/3zTr3DW-OJ0AAAAd/not-today-satan-nope.gif",
         "color": 0xFF0000,
         "author": None
     },
@@ -34,7 +34,7 @@ class GetBackDemon(commands.Cog):
 
     @app_commands.command(
         name=COMMAND_NAME,
-        description="Post a preset text (with optional GIF, custom color, and author)."
+        description="Post a preset text (with sometimes GIF, custom color, and author)."
     )
     @app_commands.describe(
         choice="Pick a response option."
@@ -50,7 +50,7 @@ class GetBackDemon(commands.Cog):
         interaction: discord.Interaction,
         choice: app_commands.Choice[str],
     ):
-        """Slash command that posts a chosen text response with optional GIF, custom color, and optional author."""
+        """Slash command that posts a chosen text response with occasional GIF, custom color, and optional author."""
         option = TEXT_OPTIONS.get(choice.value)
         if not option:
             await interaction.response.send_message("Invalid choice.", ephemeral=True)
