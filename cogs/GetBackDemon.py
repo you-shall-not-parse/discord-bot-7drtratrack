@@ -10,15 +10,15 @@ GUILD_ID = 1097913605082579024
 TEXT_OPTIONS = {
     "Disarm Demon": {
         "text": "Demon disarmed, armless fuck",
-        "gif": "https://media.giphy.com/media/3oriO0OEd9QIDdllqo/giphy.gif",
+        "gif": "https://tenor.com/8Nmq.gif",
         "color": 0xFF0000,
         "author": None
     },
     "Banish Demon": {
         "text": "Demon banished, back to the void",
-        "gif": "https://media.giphy.com/media/l41YxH9zV2Q0k6dny/giphy.gif",
+        "gif": "https://tenor.com/bRVAx.gif",
         "color": 0x800080,
-        "author": "Exorcist chants"
+        "author": "Exorcist {user.display_name} chants"
     },
     "Mock Demon": {
         "text": "Demon mocked into submission, no GIF needed",
