@@ -10,7 +10,7 @@ GUILD_ID = 1097913605082579024
 TEXT_OPTIONS = {
     "Disarm Demon": {
         "text": "Demon disarmed, armless fuck",
-        "gif": "https://media1.tenor.com/images/3zTr3DW-OJ0AAAAd/not-today-satan-nope.gif",
+        "gif": "https://media.tenor.com/3zTr3DW-OJ0AAAAd/not-today-satan-nope.gif",
         "color": 0xFF0000,
         "author": None
     },
