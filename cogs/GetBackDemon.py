@@ -10,15 +10,15 @@ GUILD_ID = 1097913605082579024
 TEXT_OPTIONS = {
     "Disarm Demon": {
         "text": "Demon disarmed, armless fuck",
-        "gif": "https://tenor.com/8Nmq.gif",
+        "gif": "https://media.tenor.com/8s9M5QTL5JsAAAAM/demon-slayer-tanjiro.gif",
         "color": 0xFF0000,
         "author": None
     },
     "Banish Demon": {
         "text": "Demon banished, back to the void",
-        "gif": "https://tenor.com/bRVAx.gif",
+        "gif": "https://media.tenor.com/5WX5PLQJmugAAAAM/exorcist-demon.gif",
         "color": 0x800080,
-        "author": "Exorcist {user.display_name} chants"
+        "author": "Exorcist {user_name} chants"
     },
     "Mock Demon": {
         "text": "Demon mocked into submission, no GIF needed",
@@ -57,7 +57,11 @@ class GetBackDemon(commands.Cog):
             return
 
         embed_color = option.get("color", 0xFF0000)  # Default red
-        author_name = option.get("author") or f"{interaction.user.display_name} says:"
+        author_template = option.get("author")
+        if author_template:
+            author_name = author_template.format(user_name=interaction.user.display_name)
+        else:
+            author_name = f"{interaction.user.display_name} says:"
 
         embed = discord.Embed(
             description=option["text"],
