@@ -3,28 +3,26 @@ from discord.ext import commands
 from discord import app_commands
 
 # -------- Customisable Command Name --------
-COMMAND_NAME = "getbackdemon"  # Change this to rename the slash command
-
-# -------- Guild ID (replace with your server's ID) --------
-GUILD_ID = 1097913605082579024  # 👈 Put your guild/server ID here
+COMMAND_NAME = "getbackdemon"
+GUILD_ID = 1097913605082579024
 
 # -------- Options (choice name -> dict with text + optional gif + optional color + optional author) --------
 TEXT_OPTIONS = {
     "Disarm Demon": {
         "text": "Demon disarmed, armless fuck",
         "gif": "https://media.giphy.com/media/3oriO0OEd9QIDdllqo/giphy.gif",
-        "color": 0xFF0000,  # Red
-        "author": None  # None = shows user display name
+        "color": 0xFF0000,
+        "author": None
     },
     "Banish Demon": {
         "text": "Demon banished, back to the void",
         "gif": "https://media.giphy.com/media/l41YxH9zV2Q0k6dny/giphy.gif",
-        "color": 0x800080,  # Purple
+        "color": 0x800080,
         "author": "Exorcist chants"
     },
     "Mock Demon": {
         "text": "Demon mocked into submission, no GIF needed",
-        "color": 0x00FF00,  # Green
+        "color": 0x00FF00,
         "author": None
     },
 }
@@ -74,13 +72,5 @@ class GetBackDemon(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
-    cog = GetBackDemon(bot)
-    await bot.add_cog(cog)
-
-    # --- Sync to guild (instant) ---
-    guild = discord.Object(id=GUILD_ID)
-    bot.tree.add_command(cog.getbackdemon, guild=guild)
-    await bot.tree.sync(guild=guild)
-
-    # --- Sync globally (takes up to 1 hour) ---
-    await bot.tree.sync()
+    # ONLY add the cog, don't try to sync commands here
+    await bot.add_cog(GetBackDemon(bot))
