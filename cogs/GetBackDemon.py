@@ -10,15 +10,15 @@ GUILD_ID = 1097913605082579024
 TEXT_OPTIONS = {
     "Disarm Demon": {
         "text": "Demon disarmed, armless fuck",
-        "gif": "https://tenor.com/8Nmq.gif",
+        "gif": "https://tenor.com/view/exorcism-priest-exorcist-ritual-gif-8Nmq",
         "color": 0xFF0000,
         "author": None
     },
     "Banish Demon": {
         "text": "Demon banished, back to the void",
-        "gif": "https://tenor.com/bRVAx.gif",
+        "gif": "https://tenor.com/view/begone-demon-holy-water-sprinkle-exorcism-holy-gif-bRVAx",
         "color": 0x800080,
-        "author": "Exorcist {user.display_name} chants"
+        "author": "Exorcist user_name chants"
     },
     "Mock Demon": {
         "text": "Demon mocked into submission, no GIF needed",
@@ -57,7 +57,14 @@ class GetBackDemon(commands.Cog):
             return
 
         embed_color = option.get("color", 0xFF0000)  # Default red
-        author_name = option.get("author") or f"{interaction.user.display_name} says:"
+        
+        # Handle author name with proper user reference
+        user_name = interaction.user.display_name
+        author_text = option.get("author")
+        if author_text and "user_name" in author_text:
+            author_name = author_text.replace("user_name", user_name)
+        else:
+            author_name = f"{user_name} says:"
 
         embed = discord.Embed(
             description=option["text"],
@@ -66,6 +73,7 @@ class GetBackDemon(commands.Cog):
         embed.set_author(name=author_name)
 
         if option.get("gif"):
+            # Use direct tenor GIF URLs for better compatibility
             embed.set_image(url=option["gif"])
 
         await interaction.response.send_message(embed=embed)
