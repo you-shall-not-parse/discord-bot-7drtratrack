@@ -17,7 +17,7 @@ TEXT_OPTIONS = {
     },
     "Banish Demon": {
         "text": "Demon banished, back to the void",
-        "gif_file": "banish.gif",
+        "gif_file": "tenor.gif",
         "color": 0x800080,
         "author": "Exorcist user_name chants"
     },
@@ -35,7 +35,7 @@ class GetBackDemon(commands.Cog):
 
     @app_commands.command(
         name=COMMAND_NAME,
-        description="Post a preset text (with optional local GIF, color, and author)."
+        description="Post a preset text with optional local GIF, color, and author."
     )
     @app_commands.describe(choice="Pick a response option.")
     @app_commands.choices(
@@ -60,6 +60,8 @@ class GetBackDemon(commands.Cog):
         gif_file_name = option.get("gif_file")
         if gif_file_name:
             gif_path = os.path.join(os.path.dirname(__file__), "gifs", gif_file_name)
+            # Use attachment://filename.gif to embed local file
+            embed.set_image(url=f"attachment://{gif_file_name}")
             await interaction.followup.send(embed=embed, file=discord.File(gif_path))
         else:
             await interaction.followup.send(embed=embed)
