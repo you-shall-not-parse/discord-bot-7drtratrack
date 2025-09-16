@@ -1,32 +1,33 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
+import os
 
 # -------- Customisable Command Name --------
 COMMAND_NAME = "getbackdemon"
 GUILD_ID = 1097913605082579024
 
-# -------- Options (choice name -> dict with text + optional gif + optional color + optional author) --------
+# -------- Options (choice name -> dict with text + optional local GIF file + optional color + optional author) --------
 TEXT_OPTIONS = {
     "Disarm Demon": {
         "text": "Demon disarmed, armless fuck",
-        "gif": "https://media.tenor.com/3zTr3DW-OJ0AAAAd/not-today-satan-nope.gif",
+        "gif_file": "disarm.gif",  # Stored in cogs/gifs/
         "color": 0xFF0000,
         "author": None
     },
     "Banish Demon": {
         "text": "Demon banished, back to the void",
-        "gif": "https://media.tenor.com/images/bRVAx/gif",
+        "gif_file": "banish.gif",
         "color": 0x800080,
         "author": "Exorcist user_name chants"
     },
     "Mock Demon": {
         "text": "Demon mocked into submission, no GIF needed",
+        "gif_file": None,
         "color": 0x00FF00,
         "author": None
     },
 }
-
 
 class GetBackDemon(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -34,50 +35,34 @@ class GetBackDemon(commands.Cog):
 
     @app_commands.command(
         name=COMMAND_NAME,
-        description="Post a preset text (with sometimes GIF, custom color, and author)."
+        description="Post a preset text (with optional local GIF, color, and author)."
     )
-    @app_commands.describe(
-        choice="Pick a response option."
-    )
+    @app_commands.describe(choice="Pick a response option.")
     @app_commands.choices(
-        choice=[
-            app_commands.Choice(name=key, value=key)
-            for key in TEXT_OPTIONS.keys()
-        ]
+        choice=[app_commands.Choice(name=key, value=key) for key in TEXT_OPTIONS.keys()]
     )
-    async def getbackdemon(
-        self,
-        interaction: discord.Interaction,
-        choice: app_commands.Choice[str],
-    ):
-        """Slash command that posts a chosen text response with optional GIF, color, and author."""
+    async def getbackdemon(self, interaction: discord.Interaction, choice: app_commands.Choice[str]):
         option = TEXT_OPTIONS.get(choice.value)
         if not option:
             await interaction.response.send_message("Invalid choice.", ephemeral=True)
             return
 
-        # Defer in case sending takes a moment
         await interaction.response.defer()
 
-        embed_color = option.get("color", 0x808080)  # Default gray
         user_name = interaction.user.display_name
-
-        # Handle author
         author_text = option.get("author")
         author_name = author_text.replace("user_name", user_name) if author_text else None
 
-        embed = discord.Embed(
-            description=option["text"],
-            color=embed_color
-        )
+        embed = discord.Embed(description=option["text"], color=option.get("color", 0x808080))
         if author_name:
             embed.set_author(name=author_name)
 
-        if option.get("gif"):
-            embed.set_image(url=option["gif"])
-
-        await interaction.followup.send(embed=embed)
-
+        gif_file_name = option.get("gif_file")
+        if gif_file_name:
+            gif_path = os.path.join(os.path.dirname(__file__), "gifs", gif_file_name)
+            await interaction.followup.send(embed=embed, file=discord.File(gif_path))
+        else:
+            await interaction.followup.send(embed=embed)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(GetBackDemon(bot))
