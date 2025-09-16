@@ -10,13 +10,13 @@ GUILD_ID = 1097913605082579024
 TEXT_OPTIONS = {
     "Disarm Demon": {
         "text": "Demon disarmed, armless fuck",
-        "gif": "https://media1.tenor.com/m/3zTr3DW-OJ0AAAAd/not-today-satan-nope.gif",
+        "gif": "https://media1.tenor.com/images/3zTr3DW-OJ0AAAAd/not-today-satan-nope.gif",
         "color": 0xFF0000,
         "author": None
     },
     "Banish Demon": {
         "text": "Demon banished, back to the void",
-        "gif": "https://tenor.com/view/begone-demon-holy-water-sprinkle-exorcism-holy-gif-bRVAx",
+        "gif": "https://media.tenor.com/images/bRVAx/gif",
         "color": 0x800080,
         "author": "Exorcist user_name chants"
     },
@@ -50,35 +50,34 @@ class GetBackDemon(commands.Cog):
         interaction: discord.Interaction,
         choice: app_commands.Choice[str],
     ):
-        """Slash command that posts a chosen text response with occasional GIF, custom color, and optional author."""
+        """Slash command that posts a chosen text response with optional GIF, color, and author."""
         option = TEXT_OPTIONS.get(choice.value)
         if not option:
             await interaction.response.send_message("Invalid choice.", ephemeral=True)
             return
 
-        embed_color = option.get("color", 0xFF0000)  # Default red
-        
-        # Handle author name with proper user reference
+        # Defer in case sending takes a moment
+        await interaction.response.defer()
+
+        embed_color = option.get("color", 0x808080)  # Default gray
         user_name = interaction.user.display_name
+
+        # Handle author
         author_text = option.get("author")
-        if author_text and "user_name" in author_text:
-            author_name = author_text.replace("user_name", user_name)
-        else:
-            author_name = f"{user_name} says:"
+        author_name = author_text.replace("user_name", user_name) if author_text else None
 
         embed = discord.Embed(
             description=option["text"],
             color=embed_color
         )
-        embed.set_author(name=author_name)
+        if author_name:
+            embed.set_author(name=author_name)
 
         if option.get("gif"):
-            # Use direct tenor GIF URLs for better compatibility
             embed.set_image(url=option["gif"])
 
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
 
 async def setup(bot: commands.Bot):
-    # ONLY add the cog, don't try to sync commands here
     await bot.add_cog(GetBackDemon(bot))
