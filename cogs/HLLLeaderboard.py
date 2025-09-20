@@ -30,7 +30,7 @@ STATS = ["Kills", "Artillery Kills", "Vehicles Destroyed", "Killstreak", "Satche
 LEADERBOARD_DESCRIPTION = (
     f"Submit your scores using the selector below. Submissions are community-reported in <#{1419010992578363564}> and will be reviewed.\n\n"
     "**You must have a screenshot to back up your submissions, it is requested on a random basis and if called upon you must post it "
-    "in <#{1419010992578363564}> otherwise your scores will be revoked.**\n\n"
+    f"in <#{1419010992578363564}> otherwise your scores will be revoked.**\n\n"
     "Admins and SNCO can use /hllstatsadmin to change your stats anytime as required."
 )
 LEADERBOARD_DESCRIPTION_MONTHLY = (
