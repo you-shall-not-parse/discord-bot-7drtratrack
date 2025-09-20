@@ -1,5 +1,3 @@
-# Requires: pip install aiosqlite
-
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -12,9 +10,18 @@ import datetime
 GUILD_ID = 1097913605082579024  # replace with your guild ID
 LEADERBOARD_CHANNEL_ID = 1419010804832800859  # replace with your leaderboard channel
 SUBMISSIONS_CHANNEL_ID = 1419010992578363564  # replace with your submissions channel
+ADMIN_ROLE_ID = 1213495462632361994  # replace with your admin role ID
 DB_FILE = "leaderboard.db"
 
 STATS = ["Kills", "Artillery Kills", "Vehicles Destroyed", "Killstreak", "Satchel Kills"]
+
+# Text shown under the embed title
+LEADERBOARD_DESCRIPTION = (
+    "Submit your scores using the selector below. Submissions are community-reported in #hll-leaderboard-submissions and will be reviewed. **You must have a screenshot to back up your submissions, it is requested on a random basis and if called upon you must post it in #hll-leaderboard-submissions otherwise your scores will be revoked**"
+)
+LEADERBOARD_DESCRIPTION_MONTHLY = (
+    "Showing totals for the current month. Use /hlltopscores to view all-time leaders."
+)
 
 # ---------------- Database (async with aiosqlite) ----------------
 async def init_db():
@@ -85,6 +92,8 @@ class HLLLeaderboard(commands.Cog):
             title="Hell Let Loose Leaderboard" + (" - This Month" if monthly else ""),
             color=discord.Color.dark_gold(),
         )
+        # Add descriptive text under the title
+        embed.description = LEADERBOARD_DESCRIPTION_MONTHLY if monthly else LEADERBOARD_DESCRIPTION
 
         async with aiosqlite.connect(DB_FILE) as db:
             for stat in STATS:
@@ -179,6 +188,86 @@ class HLLLeaderboard(commands.Cog):
     async def hllmonthtopscores(self, interaction: discord.Interaction):
         embed = await self.build_leaderboard_embed(monthly=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # ---------------- Admin: Adjust Scores ----------------
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    @app_commands.choices(
+        stat=[app_commands.Choice(name=s, value=s) for s in STATS],
+        mode=[
+            app_commands.Choice(name="Add (delta)", value="add"),
+            app_commands.Choice(name="Set total", value="set"),
+        ],
+    )
+    @app_commands.command(
+        name="hllstatsadmin",
+        description="Admin: change a user's HLL stat totals (add delta or set total)."
+    )
+    async def hllstatsadmin(
+        self,
+        interaction: discord.Interaction,
+        user: discord.Member,
+        stat: app_commands.Choice[str],
+        mode: app_commands.Choice[str],
+        value: int,
+    ):
+        # Permission check: must have the admin role
+        invoker = interaction.user
+        has_admin_role = False
+        try:
+            # interaction.user is a Member in guild commands
+            has_admin_role = any(r.id == ADMIN_ROLE_ID for r in getattr(invoker, "roles", []))
+        except Exception:
+            has_admin_role = False
+
+        if not has_admin_role:
+            await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
+            return
+
+        # Basic validation
+        if mode.value == "set" and value < 0:
+            await interaction.response.send_message("Total value cannot be negative.", ephemeral=True)
+            return
+
+        # Compute current total
+        try:
+            async with aiosqlite.connect(DB_FILE) as db:
+                cursor = await db.execute(
+                    "SELECT SUM(value) FROM submissions WHERE user_id=? AND stat=?",
+                    (user.id, stat.value),
+                )
+                row = await cursor.fetchone()
+                current_total = row[0] if row and row[0] is not None else 0
+
+                if mode.value == "add":
+                    delta = value  # can be negative to subtract
+                    new_total = current_total + delta
+                else:  # set
+                    delta = value - current_total
+                    new_total = value
+
+                # Insert an adjustment entry
+                await db.execute(
+                    "INSERT INTO submissions(user_id, stat, value, submitted_at) VALUES(?, ?, ?, ?)",
+                    (user.id, stat.value, int(delta), datetime.datetime.utcnow().isoformat()),
+                )
+                await db.commit()
+        except Exception as e:
+            await interaction.response.send_message(f"Failed to adjust score: {e}", ephemeral=True)
+            return
+
+        # Update leaderboard message
+        await self.update_leaderboard()
+
+        # Respond
+        mode_label = "added" if mode.value == "add" else "set"
+        details = (
+            f"Adjusted {stat.value} for {user.mention}.\n"
+            f"Mode: {mode_label}\n"
+            f"Delta: {delta:+d}\n"
+            f"New total (all-time): {new_total}"
+        )
+        # Note: This adjustment also affects the current month's leaderboard.
+        await interaction.response.send_message(details, ephemeral=True)
 
 # ---------------- Submission Modal ----------------
 class SubmissionModal(Modal):
