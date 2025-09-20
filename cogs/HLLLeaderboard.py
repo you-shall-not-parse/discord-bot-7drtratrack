@@ -1,8 +1,10 @@
+# Requires: pip install aiosqlite
+# Note: on_message requires appropriate Intents in your bot (message content / guild messages).
+
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 from discord.ui import View, Select, Modal, TextInput
-from discord.ext import tasks
 import aiosqlite
 import random
 import datetime
@@ -11,7 +13,14 @@ import datetime
 GUILD_ID = 1097913605082579024  # replace with your guild ID
 LEADERBOARD_CHANNEL_ID = 1419010804832800859  # replace with your leaderboard channel
 SUBMISSIONS_CHANNEL_ID = 1419010992578363564  # replace with your submissions channel
-ADMIN_ROLE_ID = 1213495462632361994, 1097915860322091090, 1097946543065137183  # replace with your admin role ID
+
+# Support multiple admin roles
+ADMIN_ROLE_IDS = {
+    1213495462632361994,
+    1097915860322091090,
+    1097946543065137183,
+}
+
 DB_FILE = "leaderboard.db"
 
 # Minutes allowed to provide a screenshot when one is required
@@ -21,9 +30,10 @@ STATS = ["Kills", "Artillery Kills", "Vehicles Destroyed", "Killstreak", "Satche
 
 # Text shown under the embed title
 LEADERBOARD_DESCRIPTION = (
-    "Submit your scores using the selector below. Submissions are community-reported in #hll-leaderboard-submissions and will be reviewed. \n\n "
-    "**You must have a screenshot to back up your submissions, it is requested on a random basis and if called upon you must post it in #hll-leaderboard-submissions otherwise your scores will be revoked**"
-    "\n\n Admins and SNCO can use \hllstatsadmin to change your stats anytime as required. "
+    f"Submit your scores using the selector below. Submissions are community-reported in <#{1419010992578363564}> and will be reviewed.\n\n"
+    "**You must have a screenshot to back up your submissions; it is requested on a random basis and if called upon you must post it in "
+    f"<#{1419010992578363564}> otherwise your scores will be revoked.**\n\n"
+    "Admins and SNCO can use /hllstatsadmin to change your stats anytime as required."
 )
 LEADERBOARD_DESCRIPTION_MONTHLY = (
     "Showing totals for the current month. Use /hlltopscores to view all-time leaders."
@@ -47,7 +57,7 @@ async def init_db():
                 value TEXT
             )
         """)
-        # Add columns for screenshot proof flow if missing (safe to run each start)
+        # Add columns for screenshot proof flow if missing (safe to run on every start)
         try:
             await db.execute("ALTER TABLE submissions ADD COLUMN needs_proof INTEGER DEFAULT 0")
         except Exception:
@@ -238,15 +248,9 @@ class HLLLeaderboard(commands.Cog):
         mode: app_commands.Choice[str],
         value: int,
     ):
-        # Permission check: must have the admin role
+        # Permission check: must have one of the admin roles
         invoker = interaction.user
-        has_admin_role = False
-        try:
-            # interaction.user is a Member in guild commands
-            has_admin_role = any(r.id == ADMIN_ROLE_ID for r in getattr(invoker, "roles", []))
-        except Exception:
-            has_admin_role = False
-
+        has_admin_role = any(r.id in ADMIN_ROLE_IDS for r in getattr(invoker, "roles", []))
         if not has_admin_role:
             await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
             return
@@ -256,7 +260,7 @@ class HLLLeaderboard(commands.Cog):
             await interaction.response.send_message("Total value cannot be negative.", ephemeral=True)
             return
 
-        # Compute current total
+        # Compute current total and apply change
         try:
             async with aiosqlite.connect(DB_FILE) as db:
                 cursor = await db.execute(
@@ -273,9 +277,9 @@ class HLLLeaderboard(commands.Cog):
                     delta = value - current_total
                     new_total = value
 
-                # Insert an adjustment entry
+                # Insert an adjustment entry (always verified and no proof needed)
                 await db.execute(
-                    "INSERT INTO submissions(user_id, stat, value, submitted_at) VALUES(?, ?, ?, ?)",
+                    "INSERT INTO submissions(user_id, stat, value, submitted_at, needs_proof, proof_verified) VALUES(?, ?, ?, ?, 0, 1)",
                     (user.id, stat.value, int(delta), datetime.datetime.utcnow().isoformat()),
                 )
                 await db.commit()
