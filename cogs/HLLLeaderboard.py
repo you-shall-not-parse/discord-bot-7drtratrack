@@ -5,6 +5,7 @@ from discord.ui import View, Select, Modal, TextInput
 import aiosqlite
 import random
 import datetime
+import math
 
 # ---------------- Config ----------------
 GUILD_ID = 1097913605082579024  # replace with your guild ID
@@ -29,7 +30,7 @@ STATS = ["Kills", "Artillery Kills", "Vehicles Destroyed", "Killstreak", "Satche
 LEADERBOARD_DESCRIPTION = (
     f"Submit your scores using the selector below. Submissions are community-reported in <#{1419010992578363564}> and will be reviewed.\n\n"
     "**You must have a screenshot to back up your submissions; it is requested on a random basis and if called upon you must post it in "
-    f"<#{1419010992578363564}> otherwise your scores will be revoked.**\n\n"
+    f"<#{S1419010992578363564}> otherwise your scores will be revoked.**\n\n"
     "Admins and SNCO can use /hllstatsadmin to change your stats anytime as required."
 )
 LEADERBOARD_DESCRIPTION_MONTHLY = (
@@ -175,6 +176,22 @@ class HLLLeaderboard(commands.Cog):
                 await self.set_leaderboard_message(new_msg.id)
             except Exception as e:
                 print(f"HLLLeaderboard: Failed to send leaderboard message: {e}")
+
+    # Helper: Check for an active (non-expired) pending proof for a user
+    async def get_active_pending_proof(self, user_id: int):
+        now_iso = datetime.datetime.utcnow().isoformat()
+        async with aiosqlite.connect(DB_FILE) as db:
+            cursor = await db.execute(
+                """
+                SELECT id, proof_deadline FROM submissions
+                WHERE user_id=? AND needs_proof=1 AND proof_verified=0
+                  AND (proof_deadline IS NULL OR proof_deadline >= ?)
+                ORDER BY submitted_at ASC
+                LIMIT 1
+                """,
+                (user_id, now_iso),
+            )
+            return await cursor.fetchone()
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -412,6 +429,27 @@ class SubmissionModal(Modal):
         self.add_item(self.value_input)
 
     async def on_submit(self, interaction: discord.Interaction):
+        # Hard block: user cannot submit while a pending proof exists and hasn't timed out
+        pending = await self.cog.get_active_pending_proof(self.user.id)
+        if pending:
+            sub_id, deadline_iso = pending
+            remaining_txt = ""
+            try:
+                if deadline_iso:
+                    deadline = datetime.datetime.fromisoformat(deadline_iso)
+                    secs = (deadline - datetime.datetime.utcnow()).total_seconds()
+                    if secs > 0:
+                        mins = math.ceil(secs / 60)
+                        remaining_txt = f" (~{mins} minute(s) remaining)"
+            except Exception:
+                pass
+            await interaction.response.send_message(
+                f"You already have a submission pending screenshot verification (#{sub_id}). "
+                f"Please upload an image in <#{SUBMISSIONS_CHANNEL_ID}> or wait for the timeout{remaining_txt} before submitting again.",
+                ephemeral=True,
+            )
+            return
+
         # Validate integer
         try:
             value = int(str(self.value_input.value).strip())
@@ -487,6 +525,27 @@ class StatSelect(Select):
         super().__init__(placeholder="Select stat to submit", options=options, custom_id="hll_stat_select")
 
     async def callback(self, interaction: discord.Interaction):
+        # Early block: prevent opening the modal if user has a pending proof
+        pending = await self.cog.get_active_pending_proof(interaction.user.id)
+        if pending:
+            sub_id, deadline_iso = pending
+            remaining_txt = ""
+            try:
+                if deadline_iso:
+                    deadline = datetime.datetime.fromisoformat(deadline_iso)
+                    secs = (deadline - datetime.datetime.utcnow()).total_seconds()
+                    if secs > 0:
+                        mins = math.ceil(secs / 60)
+                        remaining_txt = f" (~{mins} minute(s) remaining)"
+            except Exception:
+                pass
+            await interaction.response.send_message(
+                f"You already have a submission pending screenshot verification (#{sub_id}). "
+                f"Please upload an image in <#{SUBMISSIONS_CHANNEL_ID}> or wait for the timeout{remaining_txt} before submitting again.",
+                ephemeral=True,
+            )
+            return
+
         stat = self.values[0]
         await interaction.response.send_modal(SubmissionModal(self.cog, stat, interaction.user))
 
