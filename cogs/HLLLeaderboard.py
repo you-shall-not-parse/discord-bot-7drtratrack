@@ -9,9 +9,9 @@ import random
 import datetime
 
 # ---------------- Config ----------------
-GUILD_ID = 123456789012345678  # replace with your guild ID
-LEADERBOARD_CHANNEL_ID = 123456789012345678  # replace with your leaderboard channel
-SUBMISSIONS_CHANNEL_ID = 123456789012345678  # replace with your submissions channel
+GUILD_ID = 1097913605082579024  # replace with your guild ID
+LEADERBOARD_CHANNEL_ID = 1419010804832800859  # replace with your leaderboard channel
+SUBMISSIONS_CHANNEL_ID = 1419010992578363564  # replace with your submissions channel
 DB_FILE = "leaderboard.db"
 
 STATS = ["Kills", "Artillery Kills", "Vehicles Destroyed", "Killstreak", "Satchel Kills"]
