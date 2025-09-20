@@ -2,7 +2,10 @@ import discord from discord.ext import commands from discord import app_commands
 
 ---------------- Config ----------------
 
-GUILD_ID = 123456789012345678  # replace with your guild ID LEADERBOARD_CHANNEL_ID = 123456789012345678  # replace with your leaderboard channel SUBMISSIONS_CHANNEL_ID = 123456789012345678  # replace with your submissions channel DB_FILE = "leaderboard.db"
+GUILD_ID = 123456789012345678
+LEADERBOARD_CHANNEL_ID = 123456789012345678
+SUBMISSIONS_CHANNEL_ID = 123456789012345678  
+DB_FILE = "leaderboard.db"
 
 STATS = ["Kills", "Artillery Kills", "Vehicles Destroyed", "Killstreak", "Satchel Kills"]
 
