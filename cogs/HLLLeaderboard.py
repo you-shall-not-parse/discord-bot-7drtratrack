@@ -1,7 +1,10 @@
+# Requires: pip install aiosqlite
+
 import discord
 from discord.ext import commands
 from discord import app_commands
 from discord.ui import View, Select, Modal, TextInput
+from discord.ext import tasks
 import aiosqlite
 import random
 import datetime
@@ -10,14 +13,19 @@ import datetime
 GUILD_ID = 1097913605082579024  # replace with your guild ID
 LEADERBOARD_CHANNEL_ID = 1419010804832800859  # replace with your leaderboard channel
 SUBMISSIONS_CHANNEL_ID = 1419010992578363564  # replace with your submissions channel
-ADMIN_ROLE_ID = 1213495462632361994  # replace with your admin role ID
+ADMIN_ROLE_ID = 1213495462632361994, 1097915860322091090, 1097946543065137183  # replace with your admin role ID
 DB_FILE = "leaderboard.db"
+
+# Minutes allowed to provide a screenshot when one is required
+PROOF_TIMEOUT_MINUTES = 5
 
 STATS = ["Kills", "Artillery Kills", "Vehicles Destroyed", "Killstreak", "Satchel Kills"]
 
 # Text shown under the embed title
 LEADERBOARD_DESCRIPTION = (
-    "Submit your scores using the selector below. Submissions are community-reported in #hll-leaderboard-submissions and will be reviewed. **You must have a screenshot to back up your submissions, it is requested on a random basis and if called upon you must post it in #hll-leaderboard-submissions otherwise your scores will be revoked**"
+    "Submit your scores using the selector below. Submissions are community-reported in #hll-leaderboard-submissions and will be reviewed. \n\n "
+    "**You must have a screenshot to back up your submissions, it is requested on a random basis and if called upon you must post it in #hll-leaderboard-submissions otherwise your scores will be revoked**
+    "\n\n Admins and SNCO can use \hllstatsadmin to change your stats anytime as required. "
 )
 LEADERBOARD_DESCRIPTION_MONTHLY = (
     "Showing totals for the current month. Use /hlltopscores to view all-time leaders."
@@ -41,6 +49,19 @@ async def init_db():
                 value TEXT
             )
         """)
+        # Add columns for screenshot proof flow if missing (safe to run each start)
+        try:
+            await db.execute("ALTER TABLE submissions ADD COLUMN needs_proof INTEGER DEFAULT 0")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE submissions ADD COLUMN proof_verified INTEGER DEFAULT 1")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE submissions ADD COLUMN proof_deadline TEXT")
+        except Exception:
+            pass
         await db.commit()
 
 # ---------------- Cog ----------------
@@ -50,6 +71,7 @@ class HLLLeaderboard(commands.Cog):
         self._synced = False       # ensure we sync app commands once
         self._db_initialized = False
         self._view_registered = False  # persistent view registered once
+        self._cleanup_started = False  # start proof cleanup loop once
 
     async def _get_channel(self, channel_id: int):
         """Try cache first, then API as a fallback."""
@@ -175,6 +197,14 @@ class HLLLeaderboard(commands.Cog):
             except Exception as e:
                 print(f"HLLLeaderboard: Command sync failed: {e}")
 
+        # Start cleanup loop
+        if not self._cleanup_started:
+            try:
+                self.proof_cleanup.start()
+                self._cleanup_started = True
+            except Exception as e:
+                print(f"HLLLeaderboard: Failed to start cleanup loop: {e}")
+
         await self.update_leaderboard()
 
     @app_commands.command(name="hlltopscores", description="Show all-time top scores")
@@ -269,6 +299,108 @@ class HLLLeaderboard(commands.Cog):
         # Note: This adjustment also affects the current month's leaderboard.
         await interaction.response.send_message(details, ephemeral=True)
 
+    # ---------------- Listener: Capture proof uploads (no reply needed) ----------------
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        # Only watch the submissions channel for messages with image attachments
+        if message.author.bot:
+            return
+        if message.channel.id != SUBMISSIONS_CHANNEL_ID:
+            return
+        if not message.attachments:
+            return
+
+        # Check if any attachment looks like an image
+        def is_image(att: discord.Attachment) -> bool:
+            ct = (att.content_type or "").lower()
+            if ct.startswith("image/"):
+                return True
+            name = att.filename.lower()
+            return name.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"))
+
+        if not any(is_image(a) for a in message.attachments):
+            return
+
+        try:
+            now_iso = datetime.datetime.utcnow().isoformat()
+            async with aiosqlite.connect(DB_FILE) as db:
+                # Oldest pending submission still within deadline
+                cursor = await db.execute(
+                    """
+                    SELECT id FROM submissions
+                    WHERE user_id=? AND needs_proof=1 AND proof_verified=0
+                      AND (proof_deadline IS NULL OR proof_deadline >= ?)
+                    ORDER BY submitted_at ASC
+                    LIMIT 1
+                    """,
+                    (message.author.id, now_iso),
+                )
+                row = await cursor.fetchone()
+                if not row:
+                    return
+
+                submission_id = row[0]
+                await db.execute(
+                    "UPDATE submissions SET needs_proof=0, proof_verified=1 WHERE id=?",
+                    (submission_id,),
+                )
+                await db.commit()
+
+            try:
+                await message.add_reaction("✅")
+                await message.channel.send(
+                    f"Thanks {message.author.mention}, your screenshot has been verified for submission #{submission_id}."
+                )
+            except Exception:
+                pass
+
+            # Pending already counted; refresh keeps things in sync
+            await self.update_leaderboard()
+
+        except Exception as e:
+            print(f"HLLLeaderboard: on_message proof handling failed: {e}")
+
+    # ---------------- Background: Cleanup expired pending proofs ----------------
+    @tasks.loop(minutes=1)
+    async def proof_cleanup(self):
+        try:
+            async with aiosqlite.connect(DB_FILE) as db:
+                now_iso = datetime.datetime.utcnow().isoformat()
+                cursor = await db.execute(
+                    """
+                    SELECT id, user_id, stat, value
+                    FROM submissions
+                    WHERE needs_proof=1 AND proof_verified=0 AND proof_deadline IS NOT NULL AND proof_deadline < ?
+                    """,
+                    (now_iso,),
+                )
+                rows = await cursor.fetchall()
+
+                if rows:
+                    # Delete expired pending submissions
+                    await db.executemany("DELETE FROM submissions WHERE id=?", [(r[0],) for r in rows])
+                    await db.commit()
+
+                    # Notify channel and refresh leaderboard
+                    channel = await self._get_channel(SUBMISSIONS_CHANNEL_ID)
+                    if channel:
+                        for sid, uid, stat, val in rows:
+                            try:
+                                await channel.send(
+                                    f"<@{uid}> your submission #{sid} ({val} {stat}) was removed "
+                                    f"due to missing screenshot within {PROOF_TIMEOUT_MINUTES} minutes."
+                                )
+                            except Exception:
+                                pass
+
+                    await self.update_leaderboard()
+        except Exception as e:
+            print(f"HLLLeaderboard: proof cleanup failed: {e}")
+
+    @proof_cleanup.before_loop
+    async def before_proof_cleanup(self):
+        await self.bot.wait_until_ready()
+
 # ---------------- Submission Modal ----------------
 class SubmissionModal(Modal):
     def __init__(self, cog: HLLLeaderboard, stat: str, user: discord.abc.User):
@@ -288,30 +420,53 @@ class SubmissionModal(Modal):
             await interaction.response.send_message("Please enter a valid integer.", ephemeral=True)
             return
 
-        # Insert into DB (async)
+        # Insert into DB (async) and get submission ID (pending counts immediately)
         try:
             async with aiosqlite.connect(DB_FILE) as db:
-                await db.execute(
-                    "INSERT INTO submissions(user_id, stat, value, submitted_at) VALUES(?, ?, ?, ?)",
+                cursor = await db.execute(
+                    """
+                    INSERT INTO submissions(user_id, stat, value, submitted_at, needs_proof, proof_verified)
+                    VALUES(?, ?, ?, ?, 0, 1)
+                    """,
                     (self.user.id, self.stat, value, datetime.datetime.utcnow().isoformat()),
                 )
+                submission_id = cursor.lastrowid
                 await db.commit()
         except Exception as e:
             await interaction.response.send_message(f"Failed to record submission: {e}", ephemeral=True)
             return
 
-        # Update leaderboard message
+        # Update leaderboard message (counts immediately; may be removed later if proof not provided)
         await self.cog.update_leaderboard()
 
-        # Optional screenshot requirement message
+        # Decide if screenshot is required
         submissions_channel = await self.cog._get_channel(SUBMISSIONS_CHANNEL_ID)
+        require_ss = random.choice([True, False])
+
         if submissions_channel:
             try:
-                require_ss = random.choice([True, False])
-                msg = f"{self.user.mention} submitted {value} {self.stat}!"
                 if require_ss:
-                    msg += " Screenshot required!"
-                await submissions_channel.send(msg)
+                    # Mark as needing proof with a deadline
+                    deadline = datetime.datetime.utcnow() + datetime.timedelta(minutes=PROOF_TIMEOUT_MINUTES)
+                    try:
+                        async with aiosqlite.connect(DB_FILE) as db:
+                            await db.execute(
+                                "UPDATE submissions SET needs_proof=1, proof_verified=0, proof_deadline=? WHERE id=?",
+                                (deadline.isoformat(), submission_id),
+                            )
+                            await db.commit()
+                    except Exception:
+                        pass
+
+                    await submissions_channel.send(
+                        f"{self.user.mention} submitted {value} {self.stat}. Screenshot required.\n"
+                        f"Please upload an image in this channel within {PROOF_TIMEOUT_MINUTES} minutes.\n"
+                        f"Submission ID: #{submission_id}"
+                    )
+                else:
+                    await submissions_channel.send(
+                        f"{self.user.mention} submitted {value} {self.stat}! No screenshot required this time."
+                    )
             except Exception:
                 pass  # Non-fatal for the user interaction
 
