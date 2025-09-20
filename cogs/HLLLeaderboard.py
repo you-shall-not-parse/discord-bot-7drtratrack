@@ -1,6 +1,3 @@
-# Requires: pip install aiosqlite
-# Note: on_message requires appropriate Intents in your bot (message content / guild messages).
-
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
