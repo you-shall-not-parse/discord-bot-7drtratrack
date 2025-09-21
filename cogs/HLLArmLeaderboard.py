@@ -93,7 +93,7 @@ async def init_db():
         await db.commit()
 
 # ---------------- Cog ----------------
-class HLLTankLeaderboard(commands.Cog):
+class HLLArmLeaderboard(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._synced = False
@@ -220,11 +220,11 @@ class HLLTankLeaderboard(commands.Cog):
 
     async def update_leaderboard(self):
         if TANK_LEADERBOARD_CHANNEL_ID == 0:
-            print("HLLTankLeaderboard: TANK_LEADERBOARD_CHANNEL_ID not set. Skipping update.")
+            print("HLLArmLeaderboard: TANK_LEADERBOARD_CHANNEL_ID not set. Skipping update.")
             return
         channel = await self._get_channel(TANK_LEADERBOARD_CHANNEL_ID)
         if not channel:
-            print("HLLTankLeaderboard: TANK_LEADERBOARD_CHANNEL_ID not found. Skipping update.")
+            print("HLLArmLeaderboard: TANK_LEADERBOARD_CHANNEL_ID not found. Skipping update.")
             return
 
         embed = await self.build_leaderboard_embed(monthly=False)
@@ -234,13 +234,13 @@ class HLLTankLeaderboard(commands.Cog):
             try:
                 await msg.edit(embed=embed, view=TankLeaderboardView(self))
             except Exception as e:
-                print(f"HLLTankLeaderboard: Failed to edit leaderboard message: {e}")
+                print(f"HLLArmLeaderboard: Failed to edit leaderboard message: {e}")
         else:
             try:
                 new_msg = await channel.send(embed=embed, view=TankLeaderboardView(self))
                 await self.set_leaderboard_message(new_msg.id)
             except Exception as e:
-                print(f"HLLTankLeaderboard: Failed to send leaderboard message: {e}")
+                print(f"HLLArmLeaderboard: Failed to send leaderboard message: {e}")
 
     # ---------- Pending proof helper ----------
     async def get_active_pending_proof(self, submitter_id: int):
@@ -266,28 +266,28 @@ class HLLTankLeaderboard(commands.Cog):
                 await init_db()
                 self._db_initialized = True
             except Exception as e:
-                print(f"HLLTankLeaderboard: DB init failed: {e}")
+                print(f"HLLArmLeaderboard: DB init failed: {e}")
 
         if not self._view_registered:
             try:
                 self.bot.add_view(TankLeaderboardView(self))  # persistent
                 self._view_registered = True
             except Exception as e:
-                print(f"HLLTankLeaderboard: Failed to register persistent view: {e}")
+                print(f"HLLArmLeaderboard: Failed to register persistent view: {e}")
 
         if not self._synced:
             try:
                 await self.bot.tree.sync(guild=discord.Object(id=GUILD_ID))
                 self._synced = True
             except Exception as e:
-                print(f"HLLTankLeaderboard: Command sync failed: {e}")
+                print(f"HLLArmLeaderboard: Command sync failed: {e}")
 
         if not self._cleanup_started:
             try:
                 self.proof_cleanup.start()
                 self._cleanup_started = True
             except Exception as e:
-                print(f"HLLTankLeaderboard: Failed to start cleanup loop: {e}")
+                print(f"HLLArmLeaderboard: Failed to start cleanup loop: {e}")
 
         await self.update_leaderboard()
 
@@ -421,7 +421,7 @@ class HLLTankLeaderboard(commands.Cog):
             await self.update_leaderboard()
 
         except Exception as e:
-            print(f"HLLTankLeaderboard: on_message proof handling failed: {e}")
+            print(f"HLLArmLeaderboard: on_message proof handling failed: {e}")
 
     # ---------- Background: Cleanup expired pending proofs ----------
     @tasks.loop(minutes=1)
@@ -456,7 +456,7 @@ class HLLTankLeaderboard(commands.Cog):
 
                     await self.update_leaderboard()
         except Exception as e:
-            print(f"HLLTankLeaderboard: proof cleanup failed: {e}")
+            print(f"HLLArmLeaderboard: proof cleanup failed: {e}")
 
     @proof_cleanup.before_loop
     async def before_proof_cleanup(self):
@@ -464,7 +464,7 @@ class HLLTankLeaderboard(commands.Cog):
 
 # ---------------- Submission Modal ----------------
 class TankSubmissionModal(Modal):
-    def __init__(self, cog: HLLTankLeaderboard, stat: str, submitter: discord.abc.User, crew_key: str):
+    def __init__(self, cog: HLLArmLeaderboard, stat: str, submitter: discord.abc.User, crew_key: str):
         super().__init__(title=f"Submit {stat} (Tank Crew)")
         self.cog = cog
         self.stat = stat
@@ -557,14 +557,14 @@ class TankSubmissionModal(Modal):
 
 # ---------------- Two-step crew selection view ----------------
 class CrewSelectView(View):
-    def __init__(self, cog: HLLTankLeaderboard, stat: str):
+    def __init__(self, cog: HLLArmLeaderboard, stat: str):
         super().__init__(timeout=180)  # 3 minutes
         self.cog = cog
         self.stat = stat
         self.add_item(CrewUserSelect(cog, stat))
 
 class CrewUserSelect(UserSelect):
-    def __init__(self, cog: HLLTankLeaderboard, stat: str):
+    def __init__(self, cog: HLLArmLeaderboard, stat: str):
         super().__init__(placeholder="Select 1–3 crew members", min_values=1, max_values=3)
         self.cog = cog
         self.stat = stat
@@ -606,13 +606,13 @@ class CrewUserSelect(UserSelect):
 
 # ---------------- Persistent view (stat select) ----------------
 class TankLeaderboardView(View):
-    def __init__(self, cog: HLLTankLeaderboard):
+    def __init__(self, cog: HLLArmLeaderboard):
         super().__init__(timeout=None)
         self.cog = cog
         self.add_item(TankStatSelect(cog))
 
 class TankStatSelect(Select):
-    def __init__(self, cog: HLLTankLeaderboard):
+    def __init__(self, cog: HLLArmLeaderboard):
         self.cog = cog
         options = [discord.SelectOption(label=stat, value=stat) for stat in STATS_TANK]
         # custom_id for persistence
@@ -650,4 +650,4 @@ class TankStatSelect(Select):
 
 # ---------------- Setup ----------------
 async def setup(bot: commands.Bot):
-    await bot.add_cog(HLLTankLeaderboard(bot))
+    await bot.add_cog(HLLArmLeaderboard(bot))
