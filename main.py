@@ -56,6 +56,7 @@ async def main():
         await bot.load_extension("cogs.CalendarCog")
         await bot.load_extension("cogs.HLLInfLeaderboard")
         await bot.load_extension("cogs.HLLRecLeaderboard")
+        await bot.load_extension("cogs.HLLRArmLeaderboard")
         await bot.load_extension("cogs.GameMonCog")
         await bot.load_extension("cogs.GetBackDemon")
         await bot.load_extension("cogs.trainee_tracker")
