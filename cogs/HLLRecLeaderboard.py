@@ -35,7 +35,7 @@ LEADERBOARD_DESCRIPTION = (
     "Admins and SNCO can use /hllrecstatsadmin to change your stats anytime as required."
 )
 LEADERBOARD_DESCRIPTION_MONTHLY = (
-    "Showing highest single verified submissions for the current month. Use /hlltopscores to view all-time leaders."
+    "Showing highest single verified submissions for the current month. Use /hllrectopscores to view all-time leaders."
 )
 
 # ---------------- Database (async with aiosqlite) ----------------
@@ -276,15 +276,15 @@ class HLLRecLeaderboard(commands.Cog):
 
         await self.update_leaderboard()
 
-    @app_commands.command(name="hlltopscores", description="Show all-time top scores")
+    @app_commands.command(name="hllrectopscores", description="Show all-time top scores")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
-    async def hlltopscores(self, interaction: discord.Interaction):
+    async def hllrectopscores(self, interaction: discord.Interaction):
         embed = await self.build_leaderboard_embed(monthly=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="hllmonthtopscores", description="Show top scores for this month")
+    @app_commands.command(name="hllrecmonthtopscores", description="Show top scores for this month")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
-    async def hllmonthtopscores(self, interaction: discord.Interaction):
+    async def hllrecmonthtopscores(self, interaction: discord.Interaction):
         embed = await self.build_leaderboard_embed(monthly=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -297,7 +297,7 @@ class HLLRecLeaderboard(commands.Cog):
         stat=[app_commands.Choice(name=s, value=s) for s in STATS],
     )
     @app_commands.guilds(discord.Object(id=GUILD_ID))
-    async def hllstatsadmin(
+    async def hllrecstatsadmin(
         self,
         interaction: discord.Interaction,
         user: discord.Member,
