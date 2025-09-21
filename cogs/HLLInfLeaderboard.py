@@ -32,7 +32,7 @@ LEADERBOARD_DESCRIPTION = (
     "**You must have a screenshot to back up your submissions, it is requested on a random basis and if called upon you must post it "
     f"in <#{1419010992578363564}> otherwise your scores will be revoked.**\n\n"
     "Leaderboard shows the highest single verified submissions (pending proofs are excluded). "
-    "Admins and SNCO can use /hllstatsadmin to change your stats anytime as required."
+    "Admins and SNCO can use /hllinfstatsadmin to change your stats anytime as required."
 )
 LEADERBOARD_DESCRIPTION_MONTHLY = (
     "Showing highest single verified submissions for the current month. Use /hlltopscores to view all-time leaders."
@@ -72,7 +72,7 @@ async def init_db():
         await db.commit()
 
 # ---------------- Cog ----------------
-class HLLLeaderboard(commands.Cog):
+class HLLInfLeaderboard(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._synced = False       # ensure we sync app commands once
@@ -206,7 +206,7 @@ class HLLLeaderboard(commands.Cog):
     async def update_leaderboard(self):
         channel = await self._get_channel(LEADERBOARD_CHANNEL_ID)
         if not channel:
-            print("HLLLeaderboard: LEADERBOARD_CHANNEL_ID not found. Skipping update.")
+            print("HLLInfLeaderboard: LEADERBOARD_CHANNEL_ID not found. Skipping update.")
             return
 
         embed = await self.build_leaderboard_embed(monthly=False)
@@ -216,13 +216,13 @@ class HLLLeaderboard(commands.Cog):
             try:
                 await msg.edit(embed=embed, view=LeaderboardView(self))
             except Exception as e:
-                print(f"HLLLeaderboard: Failed to edit leaderboard message: {e}")
+                print(f"HLLInfLeaderboard: Failed to edit leaderboard message: {e}")
         else:
             try:
                 new_msg = await channel.send(embed=embed, view=LeaderboardView(self))
                 await self.set_leaderboard_message(new_msg.id)
             except Exception as e:
-                print(f"HLLLeaderboard: Failed to send leaderboard message: {e}")
+                print(f"HLLInfLeaderboard: Failed to send leaderboard message: {e}")
 
     # Helper: Check for an active (non-expired) pending proof for a user
     async def get_active_pending_proof(self, user_id: int):
@@ -248,7 +248,7 @@ class HLLLeaderboard(commands.Cog):
                 await init_db()
                 self._db_initialized = True
             except Exception as e:
-                print(f"HLLLeaderboard: DB init failed: {e}")
+                print(f"HLLInfLeaderboard: DB init failed: {e}")
 
         # Register persistent view once so interactions work after restart
         if not self._view_registered:
@@ -256,7 +256,7 @@ class HLLLeaderboard(commands.Cog):
                 self.bot.add_view(LeaderboardView(self))  # persistent (timeout=None + custom_id)
                 self._view_registered = True
             except Exception as e:
-                print(f"HLLLeaderboard: Failed to register persistent view: {e}")
+                print(f"HLLInfLeaderboard: Failed to register persistent view: {e}")
 
         # Sync slash commands for this guild (do once)
         if not self._synced:
@@ -264,7 +264,7 @@ class HLLLeaderboard(commands.Cog):
                 await self.bot.tree.sync(guild=discord.Object(id=GUILD_ID))
                 self._synced = True
             except Exception as e:
-                print(f"HLLLeaderboard: Command sync failed: {e}")
+                print(f"HLLInfLeaderboard: Command sync failed: {e}")
 
         # Start cleanup loop
         if not self._cleanup_started:
@@ -272,7 +272,7 @@ class HLLLeaderboard(commands.Cog):
                 self.proof_cleanup.start()
                 self._cleanup_started = True
             except Exception as e:
-                print(f"HLLLeaderboard: Failed to start cleanup loop: {e}")
+                print(f"HLLInfLeaderboard: Failed to start cleanup loop: {e}")
 
         await self.update_leaderboard()
 
@@ -290,7 +290,7 @@ class HLLLeaderboard(commands.Cog):
 
     # ---------------- Admin: Single-mode overwrite ----------------
     @app_commands.command(
-        name="hllstatsadmin",
+        name="hllinfstatsadmin",
         description="Admin: set a user's high score for a stat (overwrites previous submissions for that user and stat)."
     )
     @app_commands.choices(
@@ -410,7 +410,7 @@ class HLLLeaderboard(commands.Cog):
             await self.update_leaderboard()
 
         except Exception as e:
-            print(f"HLLLeaderboard: on_message proof handling failed: {e}")
+            print(f"HLLInfLeaderboard: on_message proof handling failed: {e}")
 
     # ---------------- Background: Cleanup expired pending proofs ----------------
     @tasks.loop(minutes=1)
@@ -447,7 +447,7 @@ class HLLLeaderboard(commands.Cog):
 
                     await self.update_leaderboard()
         except Exception as e:
-            print(f"HLLLeaderboard: proof cleanup failed: {e}")
+            print(f"HLLInfLeaderboard: proof cleanup failed: {e}")
 
     @proof_cleanup.before_loop
     async def before_proof_cleanup(self):
@@ -455,7 +455,7 @@ class HLLLeaderboard(commands.Cog):
 
 # ---------------- Submission Modal ----------------
 class SubmissionModal(Modal):
-    def __init__(self, cog: HLLLeaderboard, stat: str, user: discord.abc.User):
+    def __init__(self, cog: HLLInfLeaderboard, stat: str, user: discord.abc.User):
         super().__init__(title=f"Submit {stat}")
         self.cog = cog
         self.stat = stat
@@ -549,14 +549,14 @@ class SubmissionModal(Modal):
 
 # ---------------- Views (persistent) ----------------
 class LeaderboardView(View):
-    def __init__(self, cog: HLLLeaderboard):
+    def __init__(self, cog: HLLInfLeaderboard):
         # Persistent view: timeout=None; items need fixed custom_id
         super().__init__(timeout=None)
         self.cog = cog
         self.add_item(StatSelect(cog))
 
 class StatSelect(Select):
-    def __init__(self, cog: HLLLeaderboard):
+    def __init__(self, cog: HLLInfLeaderboard):
         self.cog = cog
         options = [discord.SelectOption(label=stat, value=stat) for stat in STATS]
         # custom_id is required for persistent components
@@ -589,4 +589,4 @@ class StatSelect(Select):
 
 # ---------------- Setup ----------------
 async def setup(bot: commands.Bot):
-    await bot.add_cog(HLLLeaderboard(bot))
+    await bot.add_cog(HLLInfLeaderboard(bot))
