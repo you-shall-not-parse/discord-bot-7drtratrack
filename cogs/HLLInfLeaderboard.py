@@ -291,7 +291,7 @@ class HLLInfLeaderboard(commands.Cog):
     # ---------------- Admin: Single-mode overwrite ----------------
     @app_commands.command(
         name="hllinfstatsadmin",
-        description="Admin: set a user's high score for a stat (overwrites previous submissions for that user and stat)."
+        description="Admin: set a user's high score for a stat (overwrites previous submissions for that user and stat). Set value to 0 to remove them from this stat's leaderboard."
     )
     @app_commands.choices(
         stat=[app_commands.Choice(name=s, value=s) for s in STATS],
@@ -328,6 +328,17 @@ class HLLInfLeaderboard(commands.Cog):
                 )
                 row = await cursor.fetchone()
                 prev_best = row[0] if row and row[0] is not None else 0
+
+                # If value is 0, remove the user from this stat's leaderboard (delete all records, do not insert)
+                if value == 0:
+                    await db.execute("DELETE FROM submissions WHERE user_id=? AND stat=?", (user.id, stat))
+                    await db.commit()
+                    await self.update_leaderboard()
+                    await interaction.response.send_message(
+                        f"Removed {user.mention} from the {stat} leaderboard. Previous verified best was {prev_best}.",
+                        ephemeral=True,
+                    )
+                    return
 
                 # Overwrite: delete all existing rows (verified or pending) for this user+stat
                 await db.execute("DELETE FROM submissions WHERE user_id=? AND stat=?", (user.id, stat))
