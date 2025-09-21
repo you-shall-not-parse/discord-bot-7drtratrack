@@ -315,7 +315,7 @@ class HLLArmLeaderboard(commands.Cog):
     # Admin: overwrite a crew's record for a stat (unique command name)
     @app_commands.command(
         name="hllarmstatsadmin",
-        description="Admin: set an armour crew's high score for a stat (overwrites previous submissions for that crew and stat)."
+        description="Admin: set a crew's high score for a stat (overwrites previous submissions)."
     )
     @app_commands.choices(
         stat=[app_commands.Choice(name=s, value=s) for s in STATS_ARM],
