@@ -24,15 +24,15 @@ DB_FILE = "leaderboard.db"
 # Minutes allowed to provide a screenshot when one is required
 PROOF_TIMEOUT_MINUTES = 5
 
-STATS = ["Most Kills", "Most Artillery Kills", "Most Vehicles Destroyed", "Highest Killstreak", "Most Satchel Kills"]
+STATS = ["Kills", "Artillery Kills", "Vehicles Destroyed", "Killstreak", "Satchel Kills"]
 
 # Text shown under the embed title
 LEADERBOARD_DESCRIPTION = (
-    f"Submit your scores using the selector below, we're looking for your high scores across one game of 2hr 30mins or less of Hell Let Loose. Submissions are community-reported in <#{1419010992578363564}> and will be reviewed.\n\n"
+    f"Submit your scores using the selector below. Submissions are community-reported in <#{1419010992578363564}> and will be reviewed.\n\n"
     "**You must have a screenshot to back up your submissions, it is requested on a random basis and if called upon you must post it "
     f"in <#{1419010992578363564}> otherwise your scores will be revoked.**\n\n"
     "Leaderboard shows the highest single verified submissions (pending proofs are excluded). "
-    "Admins and SNCO can use /hllstatsadmin to change or revoke your stats anytime as required."
+    "Admins and SNCO can use /hllstatsadmin to change your stats anytime as required."
 )
 LEADERBOARD_DESCRIPTION_MONTHLY = (
     "Showing highest single verified submissions for the current month. Use /hlltopscores to view all-time leaders."
@@ -187,14 +187,6 @@ class HLLLeaderboard(commands.Cog):
                     for idx, (user_id, best, first_achieved_at) in enumerate(rows, 1):
                         user = self.bot.get_user(user_id)
                         name = user.mention if user else f"<@{user_id}>"
-                        # Optionally show the date achieved; comment out if you don't want it visible
-                        # achieved_str = ""
-                        # if first_achieved_at:
-                        #     try:
-                        #         dt = datetime.datetime.fromisoformat(first_achieved_at)
-                        #         achieved_str = f" (on {dt.strftime('%Y-%m-%d')})"
-                        #     except Exception:
-                        #         pass
                         lines.append(f"**{idx}.** {name} — {best}")
                     embed.add_field(name=stat, value="\n".join(lines), inline=False)
                 else:
@@ -290,7 +282,10 @@ class HLLLeaderboard(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # ---------------- Admin: Adjust Scores (best single score; keep history) ----------------
-    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    @app_commands.command(
+        name="hllstatsadmin",
+        description="Admin: submit a score or set a user's high score (keeps history; leaderboard uses best single verified score)."
+    )
     @app_commands.choices(
         stat=[app_commands.Choice(name=s, value=s) for s in STATS],
         mode=[
@@ -298,16 +293,13 @@ class HLLLeaderboard(commands.Cog):
             app_commands.Choice(name="Set high score (keep history)", value="set"),
         ],
     )
-    @app_commands.command(
-        name="hllstatsadmin",
-        description="Admin: submit a score or set a user's high score (keeps history; leaderboard uses best single verified score)."
-    )
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
     async def hllstatsadmin(
         self,
         interaction: discord.Interaction,
         user: discord.Member,
-        stat: app_commands.Choice[str],
-        mode: app_commands.Choice[str],
+        stat: str,
+        mode: str,
         value: int,
     ):
         # Permission check: must have one of the admin roles
@@ -315,6 +307,14 @@ class HLLLeaderboard(commands.Cog):
         has_admin_role = any(r.id in ADMIN_ROLE_IDS for r in getattr(invoker, "roles", []))
         if not has_admin_role:
             await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
+            return
+
+        # Enforce choices at runtime (defensive)
+        if stat not in STATS:
+            await interaction.response.send_message("Invalid stat.", ephemeral=True)
+            return
+        if mode not in {"submit", "set"}:
+            await interaction.response.send_message("Invalid mode.", ephemeral=True)
             return
 
         # Basic validation
@@ -327,7 +327,7 @@ class HLLLeaderboard(commands.Cog):
                 # Current best (verified only, for info)
                 cursor = await db.execute(
                     "SELECT MAX(value) FROM submissions WHERE user_id=? AND stat=? AND proof_verified=1",
-                    (user.id, stat.value),
+                    (user.id, stat),
                 )
                 row = await cursor.fetchone()
                 current_best = row[0] if row and row[0] is not None else 0
@@ -337,7 +337,7 @@ class HLLLeaderboard(commands.Cog):
                 # Both 'submit' and 'set' insert a verified record; 'set' no longer deletes history
                 await db.execute(
                     "INSERT INTO submissions(user_id, stat, value, submitted_at, needs_proof, proof_verified) VALUES(?, ?, ?, ?, 0, 1)",
-                    (user.id, stat.value, int(value), now_iso),
+                    (user.id, stat, int(value), now_iso),
                 )
 
                 await db.commit()
@@ -345,7 +345,7 @@ class HLLLeaderboard(commands.Cog):
                 # New best after change (verified only)
                 cursor = await db.execute(
                     "SELECT MAX(value) FROM submissions WHERE user_id=? AND stat=? AND proof_verified=1",
-                    (user.id, stat.value),
+                    (user.id, stat),
                 )
                 row = await cursor.fetchone()
                 new_best = row[0] if row and row[0] is not None else 0
@@ -358,15 +358,15 @@ class HLLLeaderboard(commands.Cog):
         await self.update_leaderboard()
 
         # Respond
-        if mode.value == "submit":
+        if mode == "submit":
             details = (
-                f"Submitted score {value} for {user.mention} — {stat.value}.\n"
+                f"Submitted score {value} for {user.mention} — {stat}.\n"
                 f"Previous verified best: {current_best}\n"
                 f"New verified best (all-time): {new_best}"
             )
         else:
             details = (
-                f"Set high score for {user.mention} — {stat.value} to {value} (history kept).\n"
+                f"Set high score for {user.mention} — {stat} to {value} (history kept).\n"
                 f"Previous verified best: {current_best}\n"
                 f"New verified best (all-time): {new_best}"
             )
