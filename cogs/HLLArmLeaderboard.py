@@ -6,13 +6,14 @@ import aiosqlite
 import random
 import datetime
 import math
+from typing import Optional
 
 # ---------------- Config ----------------
 GUILD_ID = 1097913605082579024  # replace with your guild ID
 
-# TODO: Set these to the appropriate channels for the tank leaderboard and submissions
-TANK_LEADERBOARD_CHANNEL_ID = 1419010804832800859  # e.g., 123456789012345678
-TANK_SUBMISSIONS_CHANNEL_ID = 1419010992578363564  # e.g., 123456789012345678
+# Channel IDs for the armour leaderboard and submissions
+ARM_LEADERBOARD_CHANNEL_ID = 1419010804832800859
+ARM_SUBMISSIONS_CHANNEL_ID = 1419010992578363564
 
 # Support multiple admin roles (reuse your existing IDs)
 ADMIN_ROLE_IDS = {
@@ -26,21 +27,28 @@ DB_FILE = "armleaderboard.db"
 # Minutes allowed to provide a screenshot when one is required
 PROOF_TIMEOUT_MINUTES = 5
 
-# Tank crew stats (adjust as needed)
-STATS_TANK = ["Most Infantry Kills", "Longest Armour Kill (meters) value-only no units", "Most Vehicles Destroyed", "Most Killstreak", "Longest Life As Armour", "Most Garrisons Destroyed"]
+# Armour crew stats (adjust as needed)
+STATS_ARM = [
+    "Most Infantry Kills",
+    "Longest Armour Kill (meters) value-only no units",
+    "Most Vehicles Destroyed",
+    "Most Killstreak",
+    "Longest Life As Armour",
+    "Most Garrisons Destroyed",
+]
 
 # Text shown under the embed title
 LEADERBOARD_DESCRIPTION = (
-    f"Submit your tank crew high scores using the selector below (whole match, up to 2h 30m). "
+    f"Submit your armour crew high scores using the selector below (whole match, up to 2h 30m). "
     f"After choosing a stat, you will select 1–3 crew members via a user selector. "
-    f"Submissions are community-reported in <#{TANK_SUBMISSIONS_CHANNEL_ID}> and will be reviewed.\n\n"
+    f"Submissions are community-reported in <#{ARM_SUBMISSIONS_CHANNEL_ID}> and will be reviewed.\n\n"
     "**You must have a screenshot to back up your submissions, it is requested on a random basis and if called upon you must post it "
-    f"in <#{TANK_SUBMISSIONS_CHANNEL_ID}> otherwise your scores will be revoked.**\n\n"
+    f"in <#{ARM_SUBMISSIONS_CHANNEL_ID}> otherwise your scores will be revoked.**\n\n"
     "Leaderboard shows the highest single verified submissions by crew (pending proofs are excluded). "
-    "Admins and SNCO can use /hlltankstatsadmin to set a crew's stats."
+    "Admins and SNCO can use /hllarmstatsadmin to set a crew's stats."
 )
 LEADERBOARD_DESCRIPTION_MONTHLY = (
-    "Showing highest single verified submissions for the current month (by crew). Use /hlltanktopscores to view all-time leaders."
+    "Showing highest single verified submissions for the current month (by crew). Use /hllarmtopscores to view all-time leaders."
 )
 
 # ---------------- Helpers ----------------
@@ -70,9 +78,9 @@ def crew_mentions_from_key(bot: commands.Bot, crew_key: str) -> str:
 # ---------------- Database (async with aiosqlite) ----------------
 async def init_db():
     async with aiosqlite.connect(DB_FILE) as db:
-        # Crew-based tank submissions table
+        # Crew-based armour submissions table (unique to this cog)
         await db.execute("""
-            CREATE TABLE IF NOT EXISTS submissions_tank (
+            CREATE TABLE IF NOT EXISTS submissions_arm (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 submitter_id INTEGER,
                 crew_key TEXT,
@@ -110,14 +118,14 @@ class HLLArmLeaderboard(commands.Cog):
                 channel = None
         return channel
 
-    # ---------- Metadata for tank leaderboard message ----------
+    # ---------- Metadata for armour leaderboard message ----------
     async def get_leaderboard_message(self):
         async with aiosqlite.connect(DB_FILE) as db:
-            cur = await db.execute("SELECT value FROM metadata WHERE key = ?", ("tank_leaderboard_message_id",))
+            cur = await db.execute("SELECT value FROM metadata WHERE key = ?", ("arm_leaderboard_message_id",))
             row = await cur.fetchone()
         if not row:
             return None
-        channel = await self._get_channel(TANK_LEADERBOARD_CHANNEL_ID)
+        channel = await self._get_channel(ARM_LEADERBOARD_CHANNEL_ID)
         if not channel:
             return None
         try:
@@ -130,34 +138,34 @@ class HLLArmLeaderboard(commands.Cog):
             await db.execute(
                 "INSERT INTO metadata(key, value) VALUES(?, ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                ("tank_leaderboard_message_id", str(message_id)),
+                ("arm_leaderboard_message_id", str(message_id)),
             )
             await db.commit()
 
     # ---------- Build embeds ----------
     async def build_leaderboard_embed(self, monthly: bool = False):
         embed = discord.Embed(
-            title="Hell Let Loose Tank Crew Leaderboard" + (" - This Month" if monthly else ""),
+            title="Hell Let Loose Armour Crew Leaderboard" + (" - This Month" if monthly else ""),
             color=discord.Color.blurple(),
         )
         embed.description = LEADERBOARD_DESCRIPTION_MONTHLY if monthly else LEADERBOARD_DESCRIPTION
 
         async with aiosqlite.connect(DB_FILE) as db:
-            for stat in STATS_TANK:
+            for stat in STATS_ARM:
                 if monthly:
                     now = datetime.datetime.utcnow()
                     start_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
                     query = """
                     WITH bests AS (
                         SELECT crew_key, MAX(value) AS best
-                        FROM submissions_tank
+                        FROM submissions_arm
                         WHERE stat = ? AND proof_verified = 1 AND submitted_at >= ?
                         GROUP BY crew_key
                     ),
                     achieved AS (
                         SELECT s.crew_key, b.best,
                                MIN(s.submitted_at) AS first_achieved_at
-                        FROM submissions_tank s
+                        FROM submissions_arm s
                         JOIN bests b
                           ON b.crew_key = s.crew_key
                          AND s.value = b.best
@@ -174,14 +182,14 @@ class HLLArmLeaderboard(commands.Cog):
                     query = """
                     WITH bests AS (
                         SELECT crew_key, MAX(value) AS best
-                        FROM submissions_tank
+                        FROM submissions_arm
                         WHERE stat = ? AND proof_verified = 1
                         GROUP BY crew_key
                     ),
                     achieved AS (
                         SELECT s.crew_key, b.best,
                                MIN(s.submitted_at) AS first_achieved_at
-                        FROM submissions_tank s
+                        FROM submissions_arm s
                         JOIN bests b
                           ON b.crew_key = s.crew_key
                          AND s.value = b.best
@@ -219,12 +227,12 @@ class HLLArmLeaderboard(commands.Cog):
         return embed
 
     async def update_leaderboard(self):
-        if TANK_LEADERBOARD_CHANNEL_ID == 0:
-            print("HLLArmLeaderboard: TANK_LEADERBOARD_CHANNEL_ID not set. Skipping update.")
+        if ARM_LEADERBOARD_CHANNEL_ID == 0:
+            print("HLLArmLeaderboard: ARM_LEADERBOARD_CHANNEL_ID not set. Skipping update.")
             return
-        channel = await self._get_channel(TANK_LEADERBOARD_CHANNEL_ID)
+        channel = await self._get_channel(ARM_LEADERBOARD_CHANNEL_ID)
         if not channel:
-            print("HLLArmLeaderboard: TANK_LEADERBOARD_CHANNEL_ID not found. Skipping update.")
+            print("HLLArmLeaderboard: ARM_LEADERBOARD_CHANNEL_ID not found. Skipping update.")
             return
 
         embed = await self.build_leaderboard_embed(monthly=False)
@@ -232,12 +240,12 @@ class HLLArmLeaderboard(commands.Cog):
 
         if msg:
             try:
-                await msg.edit(embed=embed, view=TankLeaderboardView(self))
+                await msg.edit(embed=embed, view=ArmLeaderboardView(self))
             except Exception as e:
                 print(f"HLLArmLeaderboard: Failed to edit leaderboard message: {e}")
         else:
             try:
-                new_msg = await channel.send(embed=embed, view=TankLeaderboardView(self))
+                new_msg = await channel.send(embed=embed, view=ArmLeaderboardView(self))
                 await self.set_leaderboard_message(new_msg.id)
             except Exception as e:
                 print(f"HLLArmLeaderboard: Failed to send leaderboard message: {e}")
@@ -248,7 +256,7 @@ class HLLArmLeaderboard(commands.Cog):
         async with aiosqlite.connect(DB_FILE) as db:
             cur = await db.execute(
                 """
-                SELECT id, proof_deadline FROM submissions_tank
+                SELECT id, proof_deadline FROM submissions_arm
                 WHERE submitter_id=? AND needs_proof=1 AND proof_verified=0
                   AND (proof_deadline IS NULL OR proof_deadline >= ?)
                 ORDER BY submitted_at ASC
@@ -270,7 +278,7 @@ class HLLArmLeaderboard(commands.Cog):
 
         if not self._view_registered:
             try:
-                self.bot.add_view(TankLeaderboardView(self))  # persistent
+                self.bot.add_view(ArmLeaderboardView(self))  # persistent
                 self._view_registered = True
             except Exception as e:
                 print(f"HLLArmLeaderboard: Failed to register persistent view: {e}")
@@ -291,36 +299,36 @@ class HLLArmLeaderboard(commands.Cog):
 
         await self.update_leaderboard()
 
-    # ---------- Slash commands ----------
-    @app_commands.command(name="hlltanktopscores", description="Show all-time tank crew top scores")
+    # ---------- Slash commands (unique names for this cog) ----------
+    @app_commands.command(name="hllarmtopscores", description="Show all-time armour crew top scores")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
-    async def hlltanktopscores(self, interaction: discord.Interaction):
+    async def hllarmtopscores(self, interaction: discord.Interaction):
         embed = await self.build_leaderboard_embed(monthly=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="hlltankmonthtopscores", description="Show this month's tank crew top scores")
+    @app_commands.command(name="hllarmmonthtopscores", description="Show this month's armour crew top scores")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
-    async def hlltankmonthtopscores(self, interaction: discord.Interaction):
+    async def hllarmmonthtopscores(self, interaction: discord.Interaction):
         embed = await self.build_leaderboard_embed(monthly=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    # Admin: overwrite a crew's record for a stat
+    # Admin: overwrite a crew's record for a stat (unique command name)
     @app_commands.command(
-        name="hlltankstatsadmin",
-        description="Admin: set a tank crew's high score for a stat (overwrites previous submissions for that crew and stat)."
+        name="hllarmstatsadmin",
+        description="Admin: set an armour crew's high score for a stat (overwrites previous submissions for that crew and stat)."
     )
     @app_commands.choices(
-        stat=[app_commands.Choice(name=s, value=s) for s in STATS_TANK],
+        stat=[app_commands.Choice(name=s, value=s) for s in STATS_ARM],
     )
     @app_commands.guilds(discord.Object(id=GUILD_ID))
-    async def hlltankstatsadmin(
+    async def hllarmstatsadmin(
         self,
         interaction: discord.Interaction,
         user1: discord.Member,
         stat: str,
         value: int,
-        user2: discord.Member | None = None,
-        user3: discord.Member | None = None,
+        user2: Optional[discord.Member] = None,
+        user3: Optional[discord.Member] = None,
     ):
         invoker = interaction.user
         has_admin_role = any(r.id in ADMIN_ROLE_IDS for r in getattr(invoker, "roles", []))
@@ -328,7 +336,7 @@ class HLLArmLeaderboard(commands.Cog):
             await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
             return
 
-        if stat not in STATS_TANK:
+        if stat not in STATS_ARM:
             await interaction.response.send_message("Invalid stat.", ephemeral=True)
             return
         if value < 0:
@@ -347,11 +355,11 @@ class HLLArmLeaderboard(commands.Cog):
         try:
             async with aiosqlite.connect(DB_FILE) as db:
                 # Overwrite existing rows for this crew+stat
-                await db.execute("DELETE FROM submissions_tank WHERE crew_key=? AND stat=?", (crew_key, stat))
+                await db.execute("DELETE FROM submissions_arm WHERE crew_key=? AND stat=?", (crew_key, stat))
                 now_iso = datetime.datetime.utcnow().isoformat()
                 # Use invoker as submitter_id for admin action
                 await db.execute(
-                    "INSERT INTO submissions_tank(submitter_id, crew_key, stat, value, submitted_at, needs_proof, proof_verified) VALUES(?, ?, ?, ?, ?, 0, 1)",
+                    "INSERT INTO submissions_arm(submitter_id, crew_key, stat, value, submitted_at, needs_proof, proof_verified) VALUES(?, ?, ?, ?, ?, 0, 1)",
                     (invoker.id, crew_key, stat, int(value), now_iso),
                 )
                 await db.commit()
@@ -366,12 +374,12 @@ class HLLArmLeaderboard(commands.Cog):
             ephemeral=True,
         )
 
-    # ---------- Listener: proof uploads for tank submissions ----------
+    # ---------- Listener: proof uploads for armour submissions ----------
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.author.bot:
             return
-        if TANK_SUBMISSIONS_CHANNEL_ID == 0 or message.channel.id != TANK_SUBMISSIONS_CHANNEL_ID:
+        if ARM_SUBMISSIONS_CHANNEL_ID == 0 or message.channel.id != ARM_SUBMISSIONS_CHANNEL_ID:
             return
         if not message.attachments:
             return
@@ -391,7 +399,7 @@ class HLLArmLeaderboard(commands.Cog):
             async with aiosqlite.connect(DB_FILE) as db:
                 cur = await db.execute(
                     """
-                    SELECT id FROM submissions_tank
+                    SELECT id FROM submissions_arm
                     WHERE submitter_id=? AND needs_proof=1 AND proof_verified=0
                       AND (proof_deadline IS NULL OR proof_deadline >= ?)
                     ORDER BY submitted_at ASC
@@ -405,7 +413,7 @@ class HLLArmLeaderboard(commands.Cog):
 
                 submission_id = row[0]
                 await db.execute(
-                    "UPDATE submissions_tank SET needs_proof=0, proof_verified=1 WHERE id=?",
+                    "UPDATE submissions_arm SET needs_proof=0, proof_verified=1 WHERE id=?",
                     (submission_id,),
                 )
                 await db.commit()
@@ -413,7 +421,7 @@ class HLLArmLeaderboard(commands.Cog):
             try:
                 await message.add_reaction("✅")
                 await message.channel.send(
-                    f"Thanks {message.author.mention}, your screenshot has been verified for tank crew submission #{submission_id}."
+                    f"Thanks {message.author.mention}, your screenshot has been verified for armour crew submission #{submission_id}."
                 )
             except Exception:
                 pass
@@ -432,7 +440,7 @@ class HLLArmLeaderboard(commands.Cog):
                 cur = await db.execute(
                     """
                     SELECT id, submitter_id, stat, value
-                    FROM submissions_tank
+                    FROM submissions_arm
                     WHERE needs_proof=1 AND proof_verified=0 AND proof_deadline IS NOT NULL AND proof_deadline < ?
                     """,
                     (now_iso,),
@@ -440,15 +448,15 @@ class HLLArmLeaderboard(commands.Cog):
                 rows = await cur.fetchall()
 
                 if rows:
-                    await db.executemany("DELETE FROM submissions_tank WHERE id=?", [(r[0],) for r in rows])
+                    await db.executemany("DELETE FROM submissions_arm WHERE id=?", [(r[0],) for r in rows])
                     await db.commit()
 
-                    channel = await self._get_channel(TANK_SUBMISSIONS_CHANNEL_ID)
+                    channel = await self._get_channel(ARM_SUBMISSIONS_CHANNEL_ID)
                     if channel:
                         for sid, uid, stat, val in rows:
                             try:
                                 await channel.send(
-                                    f"<@{uid}> your tank crew submission #{sid} ({val} {stat}) was removed "
+                                    f"<@{uid}> your armour crew submission #{sid} ({val} {stat}) was removed "
                                     f"due to missing screenshot within {PROOF_TIMEOUT_MINUTES} minutes."
                                 )
                             except Exception:
@@ -463,9 +471,9 @@ class HLLArmLeaderboard(commands.Cog):
         await self.bot.wait_until_ready()
 
 # ---------------- Submission Modal ----------------
-class TankSubmissionModal(Modal):
+class ArmSubmissionModal(Modal):
     def __init__(self, cog: HLLArmLeaderboard, stat: str, submitter: discord.abc.User, crew_key: str):
-        super().__init__(title=f"Submit {stat} (Tank Crew)")
+        super().__init__(title=f"Submit {stat} (Armour Crew)")
         self.cog = cog
         self.stat = stat
         self.submitter = submitter
@@ -490,8 +498,8 @@ class TankSubmissionModal(Modal):
             except Exception:
                 pass
             await interaction.response.send_message(
-                f"You already have a tank crew submission pending screenshot verification (#{sub_id}). "
-                f"Please upload an image in <#{TANK_SUBMISSIONS_CHANNEL_ID}> or wait for the timeout{remaining_txt} before submitting again.",
+                f"You already have an armour crew submission pending screenshot verification (#{sub_id}). "
+                f"Please upload an image in <#{ARM_SUBMISSIONS_CHANNEL_ID}> or wait for the timeout{remaining_txt} before submitting again.",
                 ephemeral=True,
             )
             return
@@ -508,7 +516,7 @@ class TankSubmissionModal(Modal):
             async with aiosqlite.connect(DB_FILE) as db:
                 cur = await db.execute(
                     """
-                    INSERT INTO submissions_tank(submitter_id, crew_key, stat, value, submitted_at, needs_proof, proof_verified)
+                    INSERT INTO submissions_arm(submitter_id, crew_key, stat, value, submitted_at, needs_proof, proof_verified)
                     VALUES(?, ?, ?, ?, ?, 0, 1)
                     """,
                     (self.submitter.id, self.crew_key, self.stat, value, datetime.datetime.utcnow().isoformat()),
@@ -522,7 +530,7 @@ class TankSubmissionModal(Modal):
         await self.cog.update_leaderboard()
 
         # Decide if screenshot is required
-        submissions_channel = await self.cog._get_channel(TANK_SUBMISSIONS_CHANNEL_ID)
+        submissions_channel = await self.cog._get_channel(ARM_SUBMISSIONS_CHANNEL_ID)
         require_ss = random.choice([True, False])
 
         if submissions_channel:
@@ -532,7 +540,7 @@ class TankSubmissionModal(Modal):
                     try:
                         async with aiosqlite.connect(DB_FILE) as db:
                             await db.execute(
-                                "UPDATE submissions_tank SET needs_proof=1, proof_verified=0, proof_deadline=? WHERE id=?",
+                                "UPDATE submissions_arm SET needs_proof=1, proof_verified=0, proof_deadline=? WHERE id=?",
                                 (deadline.isoformat(), submission_id),
                             )
                             await db.commit()
@@ -553,7 +561,7 @@ class TankSubmissionModal(Modal):
             except Exception:
                 pass
 
-        await interaction.response.send_message("Tank crew submission recorded!", ephemeral=True)
+        await interaction.response.send_message("Armour crew submission recorded!", ephemeral=True)
 
 # ---------------- Two-step crew selection view ----------------
 class CrewSelectView(View):
@@ -595,28 +603,28 @@ class CrewUserSelect(UserSelect):
             except Exception:
                 pass
             await interaction.response.send_message(
-                f"You already have a tank crew submission pending screenshot verification (#{sub_id}). "
-                f"Please upload an image in <#{TANK_SUBMISSIONS_CHANNEL_ID}> or wait for the timeout{remaining_txt} before submitting again.",
+                f"You already have an armour crew submission pending screenshot verification (#{sub_id}). "
+                f"Please upload an image in <#{ARM_SUBMISSIONS_CHANNEL_ID}> or wait for the timeout{remaining_txt} before submitting again.",
                 ephemeral=True,
             )
             return
 
         # Open score modal with chosen crew
-        await interaction.response.send_modal(TankSubmissionModal(self.cog, self.stat, interaction.user, crew_key))
+        await interaction.response.send_modal(ArmSubmissionModal(self.cog, self.stat, interaction.user, crew_key))
 
 # ---------------- Persistent view (stat select) ----------------
-class TankLeaderboardView(View):
+class ArmLeaderboardView(View):
     def __init__(self, cog: HLLArmLeaderboard):
         super().__init__(timeout=None)
         self.cog = cog
-        self.add_item(TankStatSelect(cog))
+        self.add_item(ArmStatSelect(cog))
 
-class TankStatSelect(Select):
+class ArmStatSelect(Select):
     def __init__(self, cog: HLLArmLeaderboard):
         self.cog = cog
-        options = [discord.SelectOption(label=stat, value=stat) for stat in STATS_TANK]
-        # custom_id for persistence
-        super().__init__(placeholder="Select tank stat to submit", options=options, custom_id="hll_tank_stat_select")
+        options = [discord.SelectOption(label=stat, value=stat) for stat in STATS_ARM]
+        # custom_id for persistence (unique to this cog)
+        super().__init__(placeholder="Select armour stat to submit", options=options, custom_id="hll_arm_stat_select")
 
     async def callback(self, interaction: discord.Interaction):
         # Early block: prevent starting if submitter has a pending proof
@@ -634,8 +642,8 @@ class TankStatSelect(Select):
             except Exception:
                 pass
             await interaction.response.send_message(
-                f"You already have a tank crew submission pending screenshot verification (#{sub_id}). "
-                f"Please upload an image in <#{TANK_SUBMISSIONS_CHANNEL_ID}> or wait for the timeout{remaining_txt} before submitting again.",
+                f"You already have an armour crew submission pending screenshot verification (#{sub_id}). "
+                f"Please upload an image in <#{ARM_SUBMISSIONS_CHANNEL_ID}> or wait for the timeout{remaining_txt} before submitting again.",
                 ephemeral=True,
             )
             return
