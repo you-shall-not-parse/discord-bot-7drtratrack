@@ -24,11 +24,11 @@ DB_FILE = "leaderboard.db"
 # Minutes allowed to provide a screenshot when one is required
 PROOF_TIMEOUT_MINUTES = 5
 
-STATS = ["Kills", "Artillery Kills", "Vehicles Destroyed", "Killstreak", "Satchel Kills"]
+STATS = ["Most Kills", "Most Artillery Kills", "Most Vehicles Destroyed", "Most Killstreak", "Most Satchel Kills"]
 
 # Text shown under the embed title
 LEADERBOARD_DESCRIPTION = (
-    f"Submit your scores using the selector below. Submissions are community-reported in <#{1419010992578363564}> and will be reviewed.\n\n"
+    f"Submit your high scores using the selector below, from a whole game of max 2hr 30 min Hell Let Loose. Submissions are community-reported in <#{1419010992578363564}> and will be reviewed.\n\n"
     "**You must have a screenshot to back up your submissions, it is requested on a random basis and if called upon you must post it "
     f"in <#{1419010992578363564}> otherwise your scores will be revoked.**\n\n"
     "Leaderboard shows the highest single verified submissions (pending proofs are excluded). "
@@ -187,7 +187,14 @@ class HLLLeaderboard(commands.Cog):
                     for idx, (user_id, best, first_achieved_at) in enumerate(rows, 1):
                         user = self.bot.get_user(user_id)
                         name = user.mention if user else f"<@{user_id}>"
-                        lines.append(f"**{idx}.** {name} — {best}")
+                        achieved_str = ""
+                        if first_achieved_at:
+                            try:
+                                dt = datetime.datetime.fromisoformat(first_achieved_at)
+                                achieved_str = f" (on {dt.strftime('%Y-%m-%d')})"
+                            except Exception:
+                                pass
+                        lines.append(f"**{idx}.** {name} — {best}{achieved_str}")
                     embed.add_field(name=stat, value="\n".join(lines), inline=False)
                 else:
                     embed.add_field(name=stat, value="No data yet", inline=False)
@@ -281,17 +288,13 @@ class HLLLeaderboard(commands.Cog):
         embed = await self.build_leaderboard_embed(monthly=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    # ---------------- Admin: Adjust Scores (best single score; keep history) ----------------
+    # ---------------- Admin: Single-mode overwrite ----------------
     @app_commands.command(
         name="hllstatsadmin",
-        description="Admin: submit a score or set a user's high score (keeps history; leaderboard uses best single verified score)."
+        description="Admin: set a user's high score for a stat (overwrites previous submissions for that user and stat)."
     )
     @app_commands.choices(
         stat=[app_commands.Choice(name=s, value=s) for s in STATS],
-        mode=[
-            app_commands.Choice(name="Submit new score", value="submit"),
-            app_commands.Choice(name="Set high score (keep history)", value="set"),
-        ],
     )
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     async def hllstatsadmin(
@@ -299,7 +302,6 @@ class HLLLeaderboard(commands.Cog):
         interaction: discord.Interaction,
         user: discord.Member,
         stat: str,
-        mode: str,
         value: int,
     ):
         # Permission check: must have one of the admin roles
@@ -309,69 +311,45 @@ class HLLLeaderboard(commands.Cog):
             await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
             return
 
-        # Enforce choices at runtime (defensive)
+        # Validate inputs
         if stat not in STATS:
             await interaction.response.send_message("Invalid stat.", ephemeral=True)
             return
-        if mode not in {"submit", "set"}:
-            await interaction.response.send_message("Invalid mode.", ephemeral=True)
-            return
-
-        # Basic validation
         if value < 0:
             await interaction.response.send_message("Score value cannot be negative.", ephemeral=True)
             return
 
         try:
             async with aiosqlite.connect(DB_FILE) as db:
-                # Current best (verified only, for info)
+                # Capture prev best (verified) for info
                 cursor = await db.execute(
                     "SELECT MAX(value) FROM submissions WHERE user_id=? AND stat=? AND proof_verified=1",
                     (user.id, stat),
                 )
                 row = await cursor.fetchone()
-                current_best = row[0] if row and row[0] is not None else 0
+                prev_best = row[0] if row and row[0] is not None else 0
 
+                # Overwrite: delete all existing rows (verified or pending) for this user+stat
+                await db.execute("DELETE FROM submissions WHERE user_id=? AND stat=?", (user.id, stat))
+
+                # Insert the new authoritative verified record
                 now_iso = datetime.datetime.utcnow().isoformat()
-
-                # Both 'submit' and 'set' insert a verified record; 'set' no longer deletes history
                 await db.execute(
                     "INSERT INTO submissions(user_id, stat, value, submitted_at, needs_proof, proof_verified) VALUES(?, ?, ?, ?, 0, 1)",
                     (user.id, stat, int(value), now_iso),
                 )
-
                 await db.commit()
 
-                # New best after change (verified only)
-                cursor = await db.execute(
-                    "SELECT MAX(value) FROM submissions WHERE user_id=? AND stat=? AND proof_verified=1",
-                    (user.id, stat),
-                )
-                row = await cursor.fetchone()
-                new_best = row[0] if row and row[0] is not None else 0
-
         except Exception as e:
-            await interaction.response.send_message(f"Failed to record admin action: {e}", ephemeral=True)
+            await interaction.response.send_message(f"Failed to set high score: {e}", ephemeral=True)
             return
 
-        # Update leaderboard message
         await self.update_leaderboard()
 
-        # Respond
-        if mode == "submit":
-            details = (
-                f"Submitted score {value} for {user.mention} — {stat}.\n"
-                f"Previous verified best: {current_best}\n"
-                f"New verified best (all-time): {new_best}"
-            )
-        else:
-            details = (
-                f"Set high score for {user.mention} — {stat} to {value} (history kept).\n"
-                f"Previous verified best: {current_best}\n"
-                f"New verified best (all-time): {new_best}"
-            )
-        # Note: This also affects the current month's leaderboard.
-        await interaction.response.send_message(details, ephemeral=True)
+        await interaction.response.send_message(
+            f"Set {user.mention}'s {stat} high score to {value}. Previous verified best was {prev_best}.",
+            ephemeral=True,
+        )
 
     # ---------------- Listener: Capture proof uploads (no reply needed) ----------------
     @commands.Cog.listener()
