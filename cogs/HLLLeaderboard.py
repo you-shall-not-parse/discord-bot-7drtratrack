@@ -28,13 +28,14 @@ STATS = ["Kills", "Artillery Kills", "Vehicles Destroyed", "Killstreak", "Satche
 
 # Text shown under the embed title
 LEADERBOARD_DESCRIPTION = (
-    f"Submit your scores using the selector below. Submissions are community-reported in <#{1419010992578363564}> and will be reviewed.\n\n"
+    f"Submit your scores using the selector below, we're looking for your high scores across one game of 2hr 30mins or less of Hell Let Loose. Submissions are community-reported in <#{1419010992578363564}> and will be reviewed.\n\n"
     "**You must have a screenshot to back up your submissions, it is requested on a random basis and if called upon you must post it "
     f"in <#{1419010992578363564}> otherwise your scores will be revoked.**\n\n"
-    "Admins and SNCO can use /hllstatsadmin to change your stats anytime as required."
+    "Leaderboard shows the highest single verified submissions (pending proofs are excluded). "
+    "Admins and SNCO can use /hllstatsadmin to change or revoke your stats anytime as required."
 )
 LEADERBOARD_DESCRIPTION_MONTHLY = (
-    "Showing totals for the current month. Use /hlltopscores to view all-time leaders."
+    "Showing highest single verified submissions for the current month. Use /hlltopscores to view all-time leaders."
 )
 
 # ---------------- Database (async with aiosqlite) ----------------
@@ -127,27 +128,74 @@ class HLLLeaderboard(commands.Cog):
             for stat in STATS:
                 if monthly:
                     now = datetime.datetime.utcnow()
-                    start_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-                    cursor = await db.execute(
-                        "SELECT user_id, SUM(value) FROM submissions "
-                        "WHERE stat=? AND submitted_at>=? "
-                        "GROUP BY user_id ORDER BY SUM(value) DESC LIMIT 5",
-                        (stat, start_month.isoformat()),
+                    start_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+                    # Count only verified submissions; tie-break by earliest achievement, then user_id
+                    query = """
+                    WITH bests AS (
+                        SELECT user_id, MAX(value) AS best
+                        FROM submissions
+                        WHERE stat = ? AND proof_verified = 1 AND submitted_at >= ?
+                        GROUP BY user_id
+                    ),
+                    achieved AS (
+                        SELECT s.user_id, b.best,
+                               MIN(s.submitted_at) AS first_achieved_at
+                        FROM submissions s
+                        JOIN bests b
+                          ON b.user_id = s.user_id
+                         AND s.value = b.best
+                        WHERE s.stat = ? AND s.proof_verified = 1 AND s.submitted_at >= ?
+                        GROUP BY s.user_id
                     )
+                    SELECT user_id, best, first_achieved_at
+                    FROM achieved
+                    ORDER BY best DESC, first_achieved_at ASC, user_id ASC
+                    LIMIT 5
+                    """
+                    params = (stat, start_month, stat, start_month)
                 else:
-                    cursor = await db.execute(
-                        "SELECT user_id, SUM(value) FROM submissions "
-                        "WHERE stat=? GROUP BY user_id ORDER BY SUM(value) DESC LIMIT 5",
-                        (stat,),
+                    # All-time: only verified; tie-break by earliest achievement, then user_id
+                    query = """
+                    WITH bests AS (
+                        SELECT user_id, MAX(value) AS best
+                        FROM submissions
+                        WHERE stat = ? AND proof_verified = 1
+                        GROUP BY user_id
+                    ),
+                    achieved AS (
+                        SELECT s.user_id, b.best,
+                               MIN(s.submitted_at) AS first_achieved_at
+                        FROM submissions s
+                        JOIN bests b
+                          ON b.user_id = s.user_id
+                         AND s.value = b.best
+                        WHERE s.stat = ? AND s.proof_verified = 1
+                        GROUP BY s.user_id
                     )
+                    SELECT user_id, best, first_achieved_at
+                    FROM achieved
+                    ORDER BY best DESC, first_achieved_at ASC, user_id ASC
+                    LIMIT 5
+                    """
+                    params = (stat, stat)
 
+                cursor = await db.execute(query, params)
                 rows = await cursor.fetchall()
+
                 if rows:
                     lines = []
-                    for idx, (user_id, total) in enumerate(rows, 1):
+                    for idx, (user_id, best, first_achieved_at) in enumerate(rows, 1):
                         user = self.bot.get_user(user_id)
                         name = user.mention if user else f"<@{user_id}>"
-                        lines.append(f"**{idx}.** {name} — {total}")
+                        # Optionally show the date achieved; comment out if you don't want it visible
+                        # achieved_str = ""
+                        # if first_achieved_at:
+                        #     try:
+                        #         dt = datetime.datetime.fromisoformat(first_achieved_at)
+                        #         achieved_str = f" (on {dt.strftime('%Y-%m-%d')})"
+                        #     except Exception:
+                        #         pass
+                        lines.append(f"**{idx}.** {name} — {best}")
                     embed.add_field(name=stat, value="\n".join(lines), inline=False)
                 else:
                     embed.add_field(name=stat, value="No data yet", inline=False)
@@ -241,18 +289,18 @@ class HLLLeaderboard(commands.Cog):
         embed = await self.build_leaderboard_embed(monthly=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    # ---------------- Admin: Adjust Scores ----------------
+    # ---------------- Admin: Adjust Scores (best single score; keep history) ----------------
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.choices(
         stat=[app_commands.Choice(name=s, value=s) for s in STATS],
         mode=[
-            app_commands.Choice(name="Add (delta)", value="add"),
-            app_commands.Choice(name="Set total", value="set"),
+            app_commands.Choice(name="Submit new score", value="submit"),
+            app_commands.Choice(name="Set high score (keep history)", value="set"),
         ],
     )
     @app_commands.command(
         name="hllstatsadmin",
-        description="Admin: change a user's HLL stat totals (add delta or set total)."
+        description="Admin: submit a score or set a user's high score (keeps history; leaderboard uses best single verified score)."
     )
     async def hllstatsadmin(
         self,
@@ -270,53 +318,63 @@ class HLLLeaderboard(commands.Cog):
             return
 
         # Basic validation
-        if mode.value == "set" and value < 0:
-            await interaction.response.send_message("Total value cannot be negative.", ephemeral=True)
+        if value < 0:
+            await interaction.response.send_message("Score value cannot be negative.", ephemeral=True)
             return
 
-        # Compute current total and apply change
         try:
             async with aiosqlite.connect(DB_FILE) as db:
+                # Current best (verified only, for info)
                 cursor = await db.execute(
-                    "SELECT SUM(value) FROM submissions WHERE user_id=? AND stat=?",
+                    "SELECT MAX(value) FROM submissions WHERE user_id=? AND stat=? AND proof_verified=1",
                     (user.id, stat.value),
                 )
                 row = await cursor.fetchone()
-                current_total = row[0] if row and row[0] is not None else 0
+                current_best = row[0] if row and row[0] is not None else 0
 
-                if mode.value == "add":
-                    delta = value  # can be negative to subtract
-                    new_total = current_total + delta
-                else:  # set
-                    delta = value - current_total
-                    new_total = value
+                now_iso = datetime.datetime.utcnow().isoformat()
 
-                # Insert an adjustment entry (always verified and no proof needed)
+                # Both 'submit' and 'set' insert a verified record; 'set' no longer deletes history
                 await db.execute(
                     "INSERT INTO submissions(user_id, stat, value, submitted_at, needs_proof, proof_verified) VALUES(?, ?, ?, ?, 0, 1)",
-                    (user.id, stat.value, int(delta), datetime.datetime.utcnow().isoformat()),
+                    (user.id, stat.value, int(value), now_iso),
                 )
+
                 await db.commit()
+
+                # New best after change (verified only)
+                cursor = await db.execute(
+                    "SELECT MAX(value) FROM submissions WHERE user_id=? AND stat=? AND proof_verified=1",
+                    (user.id, stat.value),
+                )
+                row = await cursor.fetchone()
+                new_best = row[0] if row and row[0] is not None else 0
+
         except Exception as e:
-            await interaction.response.send_message(f"Failed to adjust score: {e}", ephemeral=True)
+            await interaction.response.send_message(f"Failed to record admin action: {e}", ephemeral=True)
             return
 
         # Update leaderboard message
         await self.update_leaderboard()
 
         # Respond
-        mode_label = "added" if mode.value == "add" else "set"
-        details = (
-            f"Adjusted {stat.value} for {user.mention}.\n"
-            f"Mode: {mode_label}\n"
-            f"Delta: {delta:+d}\n"
-            f"New total (all-time): {new_total}"
-        )
-        # Note: This adjustment also affects the current month's leaderboard.
+        if mode.value == "submit":
+            details = (
+                f"Submitted score {value} for {user.mention} — {stat.value}.\n"
+                f"Previous verified best: {current_best}\n"
+                f"New verified best (all-time): {new_best}"
+            )
+        else:
+            details = (
+                f"Set high score for {user.mention} — {stat.value} to {value} (history kept).\n"
+                f"Previous verified best: {current_best}\n"
+                f"New verified best (all-time): {new_best}"
+            )
+        # Note: This also affects the current month's leaderboard.
         await interaction.response.send_message(details, ephemeral=True)
 
     # ---------------- Listener: Capture proof uploads (no reply needed) ----------------
-    @commands.Cog.listener()
+    @commands.Cog.listener())
     async def on_message(self, message: discord.Message):
         # Only watch the submissions channel for messages with image attachments
         if message.author.bot:
@@ -370,7 +428,7 @@ class HLLLeaderboard(commands.Cog):
             except Exception:
                 pass
 
-            # Pending already counted; refresh keeps things in sync
+            # Refresh leaderboard (only verified count now, so this matters)
             await self.update_leaderboard()
 
         except Exception as e:
@@ -457,7 +515,7 @@ class SubmissionModal(Modal):
             await interaction.response.send_message("Please enter a valid integer.", ephemeral=True)
             return
 
-        # Insert into DB (async) and get submission ID (pending counts immediately)
+        # Insert into DB (async) and get submission ID (insert verified, then maybe flip to pending)
         try:
             async with aiosqlite.connect(DB_FILE) as db:
                 cursor = await db.execute(
@@ -473,7 +531,7 @@ class SubmissionModal(Modal):
             await interaction.response.send_message(f"Failed to record submission: {e}", ephemeral=True)
             return
 
-        # Update leaderboard message (counts immediately; may be removed later if proof not provided)
+        # Since leaderboard counts only verified, it already includes this; it may be removed if proof is requested and not provided
         await self.cog.update_leaderboard()
 
         # Decide if screenshot is required
@@ -483,7 +541,7 @@ class SubmissionModal(Modal):
         if submissions_channel:
             try:
                 if require_ss:
-                    # Mark as needing proof with a deadline
+                    # Mark as needing proof with a deadline (flip to unverified until proof arrives)
                     deadline = datetime.datetime.utcnow() + datetime.timedelta(minutes=PROOF_TIMEOUT_MINUTES)
                     try:
                         async with aiosqlite.connect(DB_FILE) as db:
@@ -500,6 +558,8 @@ class SubmissionModal(Modal):
                         f"Please upload an image in this channel within {PROOF_TIMEOUT_MINUTES} minutes.\n"
                         f"Submission ID: #{submission_id}"
                     )
+                    # Since we flipped to unverified, refresh to exclude it until verified
+                    await self.cog.update_leaderboard()
                 else:
                     await submissions_channel.send(
                         f"{self.user.mention} submitted {value} {self.stat}! No screenshot required this time."
