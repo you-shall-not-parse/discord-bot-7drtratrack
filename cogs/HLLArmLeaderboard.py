@@ -11,8 +11,8 @@ import math
 GUILD_ID = 1097913605082579024  # replace with your guild ID
 
 # TODO: Set these to the appropriate channels for the tank leaderboard and submissions
-TANK_LEADERBOARD_CHANNEL_ID = 0  # e.g., 123456789012345678
-TANK_SUBMISSIONS_CHANNEL_ID = 0  # e.g., 123456789012345678
+TANK_LEADERBOARD_CHANNEL_ID = 1419010804832800859  # e.g., 123456789012345678
+TANK_SUBMISSIONS_CHANNEL_ID = 1419010992578363564  # e.g., 123456789012345678
 
 # Support multiple admin roles (reuse your existing IDs)
 ADMIN_ROLE_IDS = {
@@ -21,13 +21,13 @@ ADMIN_ROLE_IDS = {
     1097946543065137183,
 }
 
-DB_FILE = "leaderboard.db"
+DB_FILE = "armleaderboard.db"
 
 # Minutes allowed to provide a screenshot when one is required
 PROOF_TIMEOUT_MINUTES = 5
 
 # Tank crew stats (adjust as needed)
-STATS_TANK = ["Most Kills", "Most Artillery Kills", "Most Vehicles Destroyed", "Most Killstreak", "Most Satchel Kills"]
+STATS_TANK = ["Most Infantry Kills", "Longest Armour Kill", "Most Vehicles Destroyed", "Most Killstreak", "Longest Life As Armour", "Most Garrisons Destroyed"]
 
 # Text shown under the embed title
 LEADERBOARD_DESCRIPTION = (
