@@ -191,7 +191,7 @@ class HLLLeaderboard(commands.Cog):
                         if first_achieved_at:
                             try:
                                 dt = datetime.datetime.fromisoformat(first_achieved_at)
-                                achieved_str = f" (on {dt.strftime('%Y-%m-%d')})"
+                                achieved_str = f" (on {dt.strftime('%d/%m/%y')})"
                             except Exception:
                                 pass
                         lines.append(f"**{idx}.** {name} — {best}{achieved_str}")
@@ -199,7 +199,7 @@ class HLLLeaderboard(commands.Cog):
                 else:
                     embed.add_field(name=stat, value="No data yet", inline=False)
 
-        now_str = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M GMT")
+        now_str = datetime.datetime.utcnow().strftime("%d/%m/%y %H:%M GMT")
         embed.set_footer(text=f"Last updated: {now_str}")
         return embed
 
