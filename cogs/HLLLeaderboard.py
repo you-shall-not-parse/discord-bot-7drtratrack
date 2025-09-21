@@ -374,7 +374,7 @@ class HLLLeaderboard(commands.Cog):
         await interaction.response.send_message(details, ephemeral=True)
 
     # ---------------- Listener: Capture proof uploads (no reply needed) ----------------
-    @commands.Cog.listener())
+    @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         # Only watch the submissions channel for messages with image attachments
         if message.author.bot:
