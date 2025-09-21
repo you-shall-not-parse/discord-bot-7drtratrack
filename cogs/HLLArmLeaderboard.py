@@ -27,7 +27,7 @@ DB_FILE = "armleaderboard.db"
 PROOF_TIMEOUT_MINUTES = 5
 
 # Tank crew stats (adjust as needed)
-STATS_TANK = ["Most Infantry Kills", "Longest Armour Kill", "Most Vehicles Destroyed", "Most Killstreak", "Longest Life As Armour", "Most Garrisons Destroyed"]
+STATS_TANK = ["Most Infantry Kills", "Longest Armour Kill (meters) value-only no units", "Most Vehicles Destroyed", "Most Killstreak", "Longest Life As Armour", "Most Garrisons Destroyed"]
 
 # Text shown under the embed title
 LEADERBOARD_DESCRIPTION = (
@@ -37,7 +37,7 @@ LEADERBOARD_DESCRIPTION = (
     "**You must have a screenshot to back up your submissions, it is requested on a random basis and if called upon you must post it "
     f"in <#{TANK_SUBMISSIONS_CHANNEL_ID}> otherwise your scores will be revoked.**\n\n"
     "Leaderboard shows the highest single verified submissions by crew (pending proofs are excluded). "
-    "Admins and SNCO can use /hlltankadmin to set a crew's stats."
+    "Admins and SNCO can use /hlltankstatsadmin to set a crew's stats."
 )
 LEADERBOARD_DESCRIPTION_MONTHLY = (
     "Showing highest single verified submissions for the current month (by crew). Use /hlltanktopscores to view all-time leaders."
@@ -306,14 +306,14 @@ class HLLArmLeaderboard(commands.Cog):
 
     # Admin: overwrite a crew's record for a stat
     @app_commands.command(
-        name="hlltankadmin",
+        name="hlltankstatsadmin",
         description="Admin: set a tank crew's high score for a stat (overwrites previous submissions for that crew and stat)."
     )
     @app_commands.choices(
         stat=[app_commands.Choice(name=s, value=s) for s in STATS_TANK],
     )
     @app_commands.guilds(discord.Object(id=GUILD_ID))
-    async def hlltankadmin(
+    async def hlltankstatsadmin(
         self,
         interaction: discord.Interaction,
         user1: discord.Member,
