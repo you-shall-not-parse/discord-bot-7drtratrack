@@ -240,7 +240,7 @@ class HLLRecLeaderboard(commands.Cog):
             )
             return await cursor.fetchone()
 
-    @commands.Cog.listener())
+    @commands.Cog.listener()
     async def on_ready(self):
         # Initialize DB once (async)
         if not self._db_initialized:
