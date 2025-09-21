@@ -315,7 +315,7 @@ class HLLArmLeaderboard(commands.Cog):
     # Admin: overwrite a crew's record for a stat (unique command name)
     @app_commands.command(
         name="hllarmstatsadmin",
-        description="Admin: set a crew's high score for a stat (overwrites previous submissions)."
+        description="Admin: set a crew's high score for a stat (overwrites previous submissions). Set value to 0 to remove this crew from the stat's leaderboard."
     )
     @app_commands.choices(
         stat=[app_commands.Choice(name=s, value=s) for s in STATS_ARM],
@@ -354,6 +354,26 @@ class HLLArmLeaderboard(commands.Cog):
 
         try:
             async with aiosqlite.connect(DB_FILE) as db:
+                # Capture previous verified best for this crew+stat
+                cur = await db.execute(
+                    "SELECT MAX(value) FROM submissions_arm WHERE crew_key=? AND stat=? AND proof_verified=1",
+                    (crew_key, stat),
+                )
+                row = await cur.fetchone()
+                prev_best = row[0] if row and row[0] is not None else 0
+
+                # If value is 0, remove crew from this stat's leaderboard (delete all, do not insert)
+                if value == 0:
+                    await db.execute("DELETE FROM submissions_arm WHERE crew_key=? AND stat=?", (crew_key, stat))
+                    await db.commit()
+                    await self.update_leaderboard()
+                    crew_str = ", ".join(m.mention for m in [user1, user2, user3] if m)
+                    await interaction.response.send_message(
+                        f"Removed {crew_str} from the {stat} leaderboard. Previous verified best was {prev_best}.",
+                        ephemeral=True,
+                    )
+                    return
+
                 # Overwrite existing rows for this crew+stat
                 await db.execute("DELETE FROM submissions_arm WHERE crew_key=? AND stat=?", (crew_key, stat))
                 now_iso = datetime.datetime.utcnow().isoformat()
@@ -370,7 +390,7 @@ class HLLArmLeaderboard(commands.Cog):
         await self.update_leaderboard()
         crew_str = ", ".join(m.mention for m in [user1, user2, user3] if m)
         await interaction.response.send_message(
-            f"Set {crew_str}'s {stat} high score to {value}.",
+            f"Set {crew_str}'s {stat} high score to {value}. Previous verified best was {prev_best}.",
             ephemeral=True,
         )
 
