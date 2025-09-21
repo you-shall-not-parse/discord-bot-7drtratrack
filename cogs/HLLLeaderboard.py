@@ -191,7 +191,7 @@ class HLLLeaderboard(commands.Cog):
                         if first_achieved_at:
                             try:
                                 dt = datetime.datetime.fromisoformat(first_achieved_at)
-                                achieved_str = f" (on {dt.strftime('%d/%m/%y')})"
+                                achieved_str = f" ({dt.strftime('%d/%m/%y')})"
                             except Exception:
                                 pass
                         lines.append(f"**{idx}.** {name} — {best}{achieved_str}")
