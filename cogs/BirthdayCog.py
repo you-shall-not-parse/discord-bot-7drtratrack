@@ -8,6 +8,7 @@ import pytz
 # ---------------- Config ----------------
 BIRTHDAY_CHANNEL_ID = 1099248200776421406   # channel for birthday embed & daily messages
 SUMMARY_CHANNEL_ID = 1098333222540152944    # channel for monthly summaries
+GUILD_ID = 123456789012345678              # your testing server ID
 TIMEZONE = "Europe/London"
 DB_FILE = "birthdays.db"
 # ----------------------------------------
@@ -15,6 +16,7 @@ DB_FILE = "birthdays.db"
 class BirthdayCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self.guild = discord.Object(id=GUILD_ID)
 
         # Database setup
         self.conn = sqlite3.connect(DB_FILE)
@@ -149,7 +151,6 @@ class BirthdayCog(commands.Cog):
     # ---------------- Tasks ----------------
     @tasks.loop(time=time(hour=9, minute=0))
     async def check_birthdays(self):
-        """Daily birthday announcements at 9:00 only if someone has a birthday today."""
         tz = pytz.timezone(TIMEZONE)
         now = datetime.now(tz).date()
         for guild in self.bot.guilds:
@@ -173,7 +174,6 @@ class BirthdayCog(commands.Cog):
 
     @tasks.loop(time=time(hour=9, minute=5))
     async def post_monthly_summary(self):
-        """Posts a monthly summary on the 1st of each month."""
         tz = pytz.timezone(TIMEZONE)
         now = datetime.now(tz)
         if now.day != 1:
@@ -206,7 +206,6 @@ class BirthdayCog(commands.Cog):
 
     # ---------------- Auto Embed ----------------
     async def ensure_embed_posted(self):
-        """Ensure the birthday info embed exists in the birthday channel."""
         await self.bot.wait_until_ready()
         for guild in self.bot.guilds:
             channel = guild.get_channel(BIRTHDAY_CHANNEL_ID)
@@ -230,7 +229,13 @@ class BirthdayCog(commands.Cog):
                 )
                 await channel.send(embed=embed)
 
+    # ---------------- Cog Load ----------------
+    async def cog_load(self):
+        # Add commands guild-scoped for instant availability
+        self.bot.tree.add_command(self.setbirthday, guild=self.guild)
+        self.bot.tree.add_command(self.removebirthday, guild=self.guild)
+        self.bot.tree.add_command(self.birthdaysplease, guild=self.guild)
+
 
 async def setup(bot: commands.Bot):
-    cog = BirthdayCog(bot)
-    await bot.add_cog(cog)
+    await bot.add_cog(BirthdayCog(bot))
