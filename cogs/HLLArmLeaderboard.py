@@ -33,7 +33,6 @@ STATS_ARM = [
     "Longest Armour Kill",
     "Most Vehicles Destroyed",
     "Most Killstreak",
-    "Longest Life As Armour",
     "Most Garrisons Destroyed",
 ]
 
