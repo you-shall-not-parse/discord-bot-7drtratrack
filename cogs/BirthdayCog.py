@@ -233,14 +233,9 @@ class BirthdayCog(commands.Cog):
                 )
                 await channel.send(embed=embed)
 
-    # ---------------- Cog Load for Guild ----------------
-    async def cog_load(self):
-        # Register commands instantly for the guild
-        self.bot.tree.add_command(self.setbirthday, guild=self.guild)
-        self.bot.tree.add_command(self.removebirthday, guild=self.guild)
-        self.bot.tree.add_command(self.birthdaysplease, guild=self.guild)
-        
-        # Sync commands with Discord - THIS IS THE NEW LINE
+    # Add this method to sync commands after the bot is ready
+    @commands.Cog.listener()
+    async def on_ready(self):
         await self.bot.tree.sync(guild=self.guild)
 
 
