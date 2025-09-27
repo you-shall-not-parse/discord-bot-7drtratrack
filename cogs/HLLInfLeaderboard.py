@@ -291,7 +291,7 @@ class HLLInfLeaderboard(commands.Cog):
     # ---------------- Admin: Single-mode overwrite ----------------
     @app_commands.command(
         name="hllinfstatsadmin",
-        description="Admin: set a user's high score for a stat (overwrites previous submissions for that user and stat). Set value to 0 to remove them from this stat's leaderboard."
+        description="Admin: set a user's high score for a stat (overwrites previous submissions for that user and stat)."
     )
     @app_commands.choices(
         stat=[app_commands.Choice(name=s, value=s) for s in STATS],
