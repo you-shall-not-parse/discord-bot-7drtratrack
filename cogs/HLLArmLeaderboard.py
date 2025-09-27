@@ -30,7 +30,7 @@ PROOF_TIMEOUT_MINUTES = 5
 # Armour crew stats (adjust as needed)
 STATS_ARM = [
     "Most Infantry Kills",
-    "Longest Armour Kill (number only)",
+    "Longest Armour Kill (number)",
     "Most Vehicles Destroyed",
     "Most Killstreak",
     "Longest Life As Armour",
