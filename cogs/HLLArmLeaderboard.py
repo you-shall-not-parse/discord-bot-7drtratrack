@@ -311,7 +311,7 @@ class HLLArmLeaderboard(commands.Cog):
         embed = await self.build_leaderboard_embed(monthly=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    # Admin: overwrite a crew's record for a stat (unique command name)
+       # Admin: overwrite a crew's record for a stat (unique command name)
     @app_commands.command(
         name="hllarmstatsadmin",
         description="Admin: set a crew's high score for a stat. Set value to 0 to remove this crew from leaderboard."
@@ -326,20 +326,17 @@ class HLLArmLeaderboard(commands.Cog):
         user2: Optional[discord.Member] = None,
         user3: Optional[discord.Member] = None,
     ):
-        # Defer to avoid 3s timeout
-        await interaction.response.defer(ephemeral=True)
-
         invoker = interaction.user
         has_admin_role = any(r.id in ADMIN_ROLE_IDS for r in getattr(invoker, "roles", []))
         if not has_admin_role:
-            await interaction.followup.send("You don't have permission to use this command.", ephemeral=True)
+            await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
             return
 
         if stat not in STATS_ARM:
-            await interaction.followup.send("Invalid stat.", ephemeral=True)
+            await interaction.response.send_message("Invalid stat.", ephemeral=True)
             return
         if value < 0:
-            await interaction.followup.send("Score value cannot be negative.", ephemeral=True)
+            await interaction.response.send_message("Score value cannot be negative.", ephemeral=True)
             return
 
         crew_ids = [user1.id]
@@ -347,7 +344,7 @@ class HLLArmLeaderboard(commands.Cog):
         if user3: crew_ids.append(user3.id)
         crew_ids = normalize_crew_ids(crew_ids)
         if not (1 <= len(crew_ids) <= 3):
-            await interaction.followup.send("Crew must contain 1 to 3 unique members.", ephemeral=True)
+            await interaction.response.send_message("Crew must contain 1 to 3 unique members.", ephemeral=True)
             return
         crew_key = crew_key_from_ids(crew_ids)
 
@@ -367,7 +364,7 @@ class HLLArmLeaderboard(commands.Cog):
                     await db.commit()
                     await self.update_leaderboard()
                     crew_str = ", ".join(m.mention for m in [user1, user2, user3] if m)
-                    await interaction.followup.send(
+                    await interaction.response.send_message(
                         f"Removed {crew_str} from the {stat} leaderboard. Previous verified best was {prev_best}.",
                         ephemeral=True,
                     )
@@ -383,12 +380,12 @@ class HLLArmLeaderboard(commands.Cog):
                 )
                 await db.commit()
         except Exception as e:
-            await interaction.followup.send(f"Failed to set high score: {e}", ephemeral=True)
+            await interaction.response.send_message(f"Failed to set high score: {e}", ephemeral=True)
             return
 
         await self.update_leaderboard()
         crew_str = ", ".join(m.mention for m in [user1, user2, user3] if m)
-        await interaction.followup.send(
+        await interaction.response.send_message(
             f"Set {crew_str}'s {stat} high score to {value}. Previous verified best was {prev_best}.",
             ephemeral=True,
         )
@@ -404,6 +401,7 @@ class HLLArmLeaderboard(commands.Cog):
             app_commands.Choice(name=s, value=s)
             for s in STATS_ARM if current.lower() in s.lower()
         ][:25]  # max 25 choices allowed
+
 
     # ---------- Listener: proof uploads for armour submissions ----------
     @commands.Cog.listener()
@@ -501,7 +499,6 @@ class HLLArmLeaderboard(commands.Cog):
     async def before_proof_cleanup(self):
         await self.bot.wait_until_ready()
 
-
 # ---------------- Submission Modal ----------------
 class ArmSubmissionModal(Modal):
     def __init__(self, cog: HLLArmLeaderboard, stat: str, submitter: discord.abc.User, crew_key: str):
@@ -515,9 +512,6 @@ class ArmSubmissionModal(Modal):
         self.add_item(self.value_input)
 
     async def on_submit(self, interaction: discord.Interaction):
-        # Defer to avoid 3s timeout
-        await interaction.response.defer(ephemeral=True)
-
         # Safety: block if submitter has a pending proof
         pending = await self.cog.get_active_pending_proof(self.submitter.id)
         if pending:
@@ -532,84 +526,164 @@ class ArmSubmissionModal(Modal):
                         remaining_txt = f" (~{mins} minute(s) remaining)"
             except Exception:
                 pass
-            await interaction.followup.send(
-                f"You already have an armour crew submission pending screenshot verification #{sub_id}{remaining_txt}.",
+            await interaction.response.send_message(
+                f"You already have an armour crew submission pending screenshot verification (#{sub_id}). "
+                f"Please upload an image in <#{ARM_SUBMISSIONS_CHANNEL_ID}> or wait for the timeout{remaining_txt} before submitting again.",
                 ephemeral=True,
             )
             return
 
+        # Validate integer
         try:
-            value = int(self.value_input.value)
-            if value < 0:
-                raise ValueError()
-        except ValueError:
-            await interaction.followup.send("Invalid score value.", ephemeral=True)
+            value = int(str(self.value_input.value).strip())
+        except (TypeError, ValueError):
+            await interaction.response.send_message("Please enter a valid integer.", ephemeral=True)
             return
 
+        # Insert submission as verified; may be flipped to pending if proof required
         try:
-            now_iso = datetime.datetime.utcnow().isoformat()
-            proof_deadline = (datetime.datetime.utcnow() + datetime.timedelta(minutes=PROOF_TIMEOUT_MINUTES)).isoformat()
             async with aiosqlite.connect(DB_FILE) as db:
-                await db.execute(
-                    "INSERT INTO submissions_arm(submitter_id, crew_key, stat, value, submitted_at, needs_proof, proof_verified, proof_deadline) "
-                    "VALUES(?, ?, ?, ?, ?, 1, 0, ?)",
-                    (self.submitter.id, self.crew_key, self.stat, value, now_iso, proof_deadline),
+                cur = await db.execute(
+                    """
+                    INSERT INTO submissions_arm(submitter_id, crew_key, stat, value, submitted_at, needs_proof, proof_verified)
+                    VALUES(?, ?, ?, ?, ?, 0, 1)
+                    """,
+                    (self.submitter.id, self.crew_key, self.stat, value, datetime.datetime.utcnow().isoformat()),
                 )
+                submission_id = cur.lastrowid
                 await db.commit()
         except Exception as e:
-            await interaction.followup.send(f"Failed to submit your score: {e}", ephemeral=True)
+            await interaction.response.send_message(f"Failed to record submission: {e}", ephemeral=True)
             return
 
-        await interaction.followup.send(
-            f"Thanks {self.submitter.mention}! Your {self.stat} submission ({value}) is pending screenshot verification.",
-            ephemeral=True,
-        )
         await self.cog.update_leaderboard()
 
+        # Decide if screenshot is required
+        submissions_channel = await self.cog._get_channel(ARM_SUBMISSIONS_CHANNEL_ID)
+        require_ss = random.choice([True, False])
 
-# ---------------- Leaderboard View ----------------
+        if submissions_channel:
+            try:
+                if require_ss:
+                    deadline = datetime.datetime.utcnow() + datetime.timedelta(minutes=PROOF_TIMEOUT_MINUTES)
+                    try:
+                        async with aiosqlite.connect(DB_FILE) as db:
+                            await db.execute(
+                                "UPDATE submissions_arm SET needs_proof=1, proof_verified=0, proof_deadline=? WHERE id=?",
+                                (deadline.isoformat(), submission_id),
+                            )
+                            await db.commit()
+                    except Exception:
+                        pass
+
+                    await submissions_channel.send(
+                        f"{self.submitter.mention} submitted {value} {self.stat} for crew: {crew_mentions_from_key(self.cog.bot, self.crew_key)}. "
+                        f"Screenshot required.\nPlease upload an image in this channel within {PROOF_TIMEOUT_MINUTES} minutes.\n"
+                        f"Submission ID: #{submission_id}"
+                    )
+                    await self.cog.update_leaderboard()
+                else:
+                    await submissions_channel.send(
+                        f"{self.submitter.mention} submitted {value} {self.stat} for crew: {crew_mentions_from_key(self.cog.bot, self.crew_key)}! "
+                        f"No screenshot required this time."
+                    )
+            except Exception:
+                pass
+
+        await interaction.response.send_message("Armour crew submission recorded!", ephemeral=True)
+
+# ---------------- Two-step crew selection view ----------------
+class CrewSelectView(View):
+    def __init__(self, cog: HLLArmLeaderboard, stat: str):
+        super().__init__(timeout=180)  # 3 minutes
+        self.cog = cog
+        self.stat = stat
+        self.add_item(CrewUserSelect(cog, stat))
+
+class CrewUserSelect(UserSelect):
+    def __init__(self, cog: HLLArmLeaderboard, stat: str):
+        super().__init__(placeholder="Select 1–3 crew members", min_values=1, max_values=3)
+        self.cog = cog
+        self.stat = stat
+
+    async def callback(self, interaction: discord.Interaction):
+        # Validate selection (no bots)
+        selected_users = [u for u in self.values if not getattr(u, "bot", False)]
+        if len(selected_users) != len(self.values):
+            await interaction.response.send_message("Bots cannot be part of a crew. Please select human members only.", ephemeral=True)
+            return
+
+        crew_ids = [u.id for u in selected_users]
+        crew_ids = normalize_crew_ids(crew_ids)
+        crew_key = crew_key_from_ids(crew_ids)
+
+        # Optional safety: block if pending
+        pending = await self.cog.get_active_pending_proof(interaction.user.id)
+        if pending:
+            sub_id, deadline_iso = pending
+            remaining_txt = ""
+            try:
+                if deadline_iso:
+                    deadline = datetime.datetime.fromisoformat(deadline_iso)
+                    secs = (deadline - datetime.datetime.utcnow()).total_seconds()
+                    if secs > 0:
+                        mins = math.ceil(secs / 60)
+                        remaining_txt = f" (~{mins} minute(s) remaining)"
+            except Exception:
+                pass
+            await interaction.response.send_message(
+                f"You already have an armour crew submission pending screenshot verification (#{sub_id}). "
+                f"Please upload an image in <#{ARM_SUBMISSIONS_CHANNEL_ID}> or wait for the timeout{remaining_txt} before submitting again.",
+                ephemeral=True,
+            )
+            return
+
+        # Open score modal with chosen crew
+        await interaction.response.send_modal(ArmSubmissionModal(self.cog, self.stat, interaction.user, crew_key))
+
+# ---------------- Persistent view (stat select) ----------------
 class ArmLeaderboardView(View):
     def __init__(self, cog: HLLArmLeaderboard):
         super().__init__(timeout=None)
         self.cog = cog
         self.add_item(ArmStatSelect(cog))
 
-
 class ArmStatSelect(Select):
     def __init__(self, cog: HLLArmLeaderboard):
-        options = [
-            discord.SelectOption(label=s, description=f"Submit {s} score") for s in STATS_ARM
-        ]
-        super().__init__(placeholder="Select stat to submit...", min_values=1, max_values=1, options=options)
         self.cog = cog
+        options = [discord.SelectOption(label=stat, value=stat) for stat in STATS_ARM]
+        # custom_id for persistence (unique to this cog)
+        super().__init__(placeholder="Select armour stat to submit", options=options, custom_id="hll_arm_stat_select")
 
     async def callback(self, interaction: discord.Interaction):
+        # Early block: prevent starting if submitter has a pending proof
+        pending = await self.cog.get_active_pending_proof(interaction.user.id)
+        if pending:
+            sub_id, deadline_iso = pending
+            remaining_txt = ""
+            try:
+                if deadline_iso:
+                    deadline = datetime.datetime.fromisoformat(deadline_iso)
+                    secs = (deadline - datetime.datetime.utcnow()).total_seconds()
+                    if secs > 0:
+                        mins = math.ceil(secs / 60)
+                        remaining_txt = f" (~{mins} minute(s) remaining)"
+            except Exception:
+                pass
+            await interaction.response.send_message(
+                f"You already have an armour crew submission pending screenshot verification (#{sub_id}). "
+                f"Please upload an image in <#{ARM_SUBMISSIONS_CHANNEL_ID}> or wait for the timeout{remaining_txt} before submitting again.",
+                ephemeral=True,
+            )
+            return
+
         stat = self.values[0]
-        await interaction.response.send_message("Select crew members...", ephemeral=True, view=ArmCrewSelectView(self.cog, stat, interaction.user))
-
-
-class ArmCrewSelectView(View):
-    def __init__(self, cog: HLLArmLeaderboard, stat: str, submitter: discord.User):
-        super().__init__(timeout=120)
-        self.cog = cog
-        self.stat = stat
-        self.submitter = submitter
-        self.add_item(ArmCrewSelect(cog, stat, submitter))
-
-
-class ArmCrewSelect(UserSelect):
-    def __init__(self, cog: HLLArmLeaderboard, stat: str, submitter: discord.User):
-        super().__init__(placeholder="Select 1–3 crew members", min_values=1, max_values=3)
-        self.cog = cog
-        self.stat = stat
-        self.submitter = submitter
-
-    async def callback(self, interaction: discord.Interaction):
-        crew_ids = [u.id for u in self.values]
-        crew_key = crew_key_from_ids(crew_ids)
-        modal = ArmSubmissionModal(self.cog, self.stat, self.submitter, crew_key)
-        await interaction.response.send_modal(modal)
-
+        # Start two-step: send ephemeral crew selection view
+        await interaction.response.send_message(
+            f"Selected: {stat}\nNow select your crew members (1–3).",
+            view=CrewSelectView(self.cog, stat),
+            ephemeral=True,
+        )
 
 # ---------------- Setup ----------------
 async def setup(bot: commands.Bot):
