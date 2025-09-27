@@ -12,7 +12,7 @@ from typing import Optional
 GUILD_ID = 1097913605082579024  # replace with your guild ID
 
 # Channel IDs for the armour leaderboard and submissions
-ARM_LEADERBOARD_CHANNEL_ID = 1419010804832800859
+ARM_LEADERBOARD_CHANNEL_ID = 1214971219246325851
 ARM_SUBMISSIONS_CHANNEL_ID = 1419010992578363564
 
 # Support multiple admin roles (reuse your existing IDs)
