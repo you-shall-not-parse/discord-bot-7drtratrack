@@ -315,7 +315,7 @@ class HLLArmLeaderboard(commands.Cog):
        # Admin: overwrite a crew's record for a stat (unique command name)
     @app_commands.command(
         name="hllarmstatsadmin",
-        description="Admin: set a crew's high score for a stat (overwrites previous submissions). Set value to 0 to remove this crew from the stat's leaderboard."
+        description="Admin: set a crew's high score for a stat. Set value to 0 to remove this crew from leaderboard."
     )
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     async def hllarmstatsadmin(
