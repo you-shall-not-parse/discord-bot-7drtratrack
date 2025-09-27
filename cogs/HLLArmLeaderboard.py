@@ -145,7 +145,7 @@ class HLLArmLeaderboard(commands.Cog):
     # ---------- Build embeds ----------
     async def build_leaderboard_embed(self, monthly: bool = False):
         embed = discord.Embed(
-            title="Hell Let Loose Armour Crew Leaderboard" + (" - This Month" if monthly else ""),
+            title="Hell Let Loose Armour Leaderboard" + (" - This Month" if monthly else ""),
             color=discord.Color.blurple(),
         )
         embed.description = LEADERBOARD_DESCRIPTION_MONTHLY if monthly else LEADERBOARD_DESCRIPTION
