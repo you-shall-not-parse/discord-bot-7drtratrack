@@ -11,7 +11,7 @@ GUILD_ID = 1097913605082579024
 TEXT_OPTIONS = {
     "Disarm Demon": {
         "text": "Demon disarmed, armless fuck",
-        "gif_file": "disarm.gif",  # Stored in cogs/gifs/
+        "gif_file": "disarm.gif",  # Stored in cogs/demongifs/
         "color": 0xFF0000,
         "author": None
     },
@@ -59,7 +59,7 @@ class GetBackDemon(commands.Cog):
 
         gif_file_name = option.get("gif_file")
         if gif_file_name:
-            gif_path = os.path.join(os.path.dirname(__file__), "gifs", gif_file_name)
+            gif_path = os.path.join(os.path.dirname(__file__), "demongifs", gif_file_name)
             # Use attachment://filename.gif to embed local file
             embed.set_image(url=f"attachment://{gif_file_name}")
             await interaction.followup.send(embed=embed, file=discord.File(gif_path))
