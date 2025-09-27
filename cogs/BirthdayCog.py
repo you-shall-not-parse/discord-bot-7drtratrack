@@ -239,6 +239,9 @@ class BirthdayCog(commands.Cog):
         self.bot.tree.add_command(self.setbirthday, guild=self.guild)
         self.bot.tree.add_command(self.removebirthday, guild=self.guild)
         self.bot.tree.add_command(self.birthdaysplease, guild=self.guild)
+        
+        # Sync commands with Discord - THIS IS THE NEW LINE
+        await self.bot.tree.sync(guild=self.guild)
 
 
 async def setup(bot: commands.Bot):
