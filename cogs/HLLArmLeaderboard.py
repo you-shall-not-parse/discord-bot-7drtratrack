@@ -312,13 +312,10 @@ class HLLArmLeaderboard(commands.Cog):
         embed = await self.build_leaderboard_embed(monthly=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    # Admin: overwrite a crew's record for a stat (unique command name)
+       # Admin: overwrite a crew's record for a stat (unique command name)
     @app_commands.command(
         name="hllarmstatsadmin",
         description="Admin: set a crew's high score for a stat (overwrites previous submissions). Set value to 0 to remove this crew from the stat's leaderboard."
-    )
-    @app_commands.choices(
-        stat=[app_commands.Choice(name=s, value=s) for s in STATS_ARM],
     )
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     async def hllarmstatsadmin(
@@ -393,6 +390,19 @@ class HLLArmLeaderboard(commands.Cog):
             f"Set {crew_str}'s {stat} high score to {value}. Previous verified best was {prev_best}.",
             ephemeral=True,
         )
+
+    # --- Autocomplete for "stat" argument ---
+    @hllarmstatsadmin.autocomplete("stat")
+    async def stat_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str
+    ):
+        return [
+            app_commands.Choice(name=s, value=s)
+            for s in STATS_ARM if current.lower() in s.lower()
+        ][:25]  # max 25 choices allowed
+
 
     # ---------- Listener: proof uploads for armour submissions ----------
     @commands.Cog.listener()
