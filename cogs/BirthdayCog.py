@@ -6,8 +6,8 @@ from datetime import datetime, time
 import pytz
 
 # ---------------- Config ----------------
-BIRTHDAY_CHANNEL_ID = 1099248200776421406   # channel for interactive birthday embed & daily messages
-SUMMARY_CHANNEL_ID = 1098333222540152944    # channel for monthly summaries
+BIRTHDAY_CHANNEL_ID = 1099248200776421406  # channel for interactive birthday embed & daily messages
+SUMMARY_CHANNEL_ID = 1098333222540152944   # channel for monthly summaries
 BIRTHDAY_MESSAGE = "🎉 Happy Birthday to {mention}! 🎂"
 TIMEZONE = "Europe/London"
 DB_FILE = "birthdays.db"
@@ -65,13 +65,18 @@ class BirthdayCog(commands.Cog):
             super().__init__(timeout=None)
             self.cog = cog
             self.guild_id = guild_id
+            self.selected_month = None
+            self.selected_day = None
+            self.selected_year = None
 
             # Month dropdown
             self.add_item(BirthdayCog.MonthSelect(cog, guild_id))
-            # Day 1–15
-            self.add_item(BirthdayCog.DaySelect(cog, guild_id, 1, 15))
-            # Day 16–31
-            self.add_item(BirthdayCog.DaySelect(cog, guild_id, 16, 31))
+            # Day text input
+            self.add_item(BirthdayCog.DayInput(cog, guild_id))
+            # Year text input (optional)
+            self.add_item(BirthdayCog.YearInput(cog, guild_id))
+            # Save button
+            self.add_item(BirthdayCog.SaveButton(cog, guild_id))
             # Remove button
             self.add_item(BirthdayCog.RemoveButton(cog, guild_id))
 
@@ -96,26 +101,61 @@ class BirthdayCog(commands.Cog):
             super().__init__(placeholder="Select Month", options=options)
 
         async def callback(self, interaction: discord.Interaction):
-            month = self.values[0]
-            self.view.selected_month = month
-            await interaction.response.send_message(f"✅ Month set to {month}. Now select your day.", ephemeral=True)
+            self.view.selected_month = self.values[0]
+            await interaction.response.send_message(f"✅ Month set to {self.values[0]}", ephemeral=True)
 
-    class DaySelect(discord.ui.Select):
-        def __init__(self, cog, guild_id, start: int, end: int):
+    class DayInput(discord.ui.TextInput):
+        def __init__(self, cog, guild_id):
+            super().__init__(
+                label="Day (1-31)",
+                placeholder="15",
+                required=True,
+                max_length=2
+            )
             self.cog = cog
             self.guild_id = guild_id
-            options = [discord.SelectOption(label=str(i), value=f"{i:02}") for i in range(start, end + 1)]
-            super().__init__(placeholder=f"Select Day ({start}-{end})", options=options)
 
         async def callback(self, interaction: discord.Interaction):
-            day = self.values[0]
-            month = getattr(self.view, "selected_month", None)
-            if not month:
-                await interaction.response.send_message("⚠ Please select a month first.", ephemeral=True)
+            self.view.selected_day = self.value
+            await interaction.response.send_message(f"✅ Day set to {self.value}", ephemeral=True)
+
+    class YearInput(discord.ui.TextInput):
+        def __init__(self, cog, guild_id):
+            super().__init__(
+                label="Year (optional)",
+                placeholder="2000",
+                required=False,
+                max_length=4
+            )
+            self.cog = cog
+            self.guild_id = guild_id
+
+        async def callback(self, interaction: discord.Interaction):
+            self.view.selected_year = self.value or "2000"
+            await interaction.response.send_message(f"✅ Year set to {self.view.selected_year}", ephemeral=True)
+
+    class SaveButton(discord.ui.Button):
+        def __init__(self, cog, guild_id):
+            super().__init__(label="Save Birthday", style=discord.ButtonStyle.green)
+            self.cog = cog
+            self.guild_id = guild_id
+
+        async def callback(self, interaction: discord.Interaction):
+            month = self.view.selected_month
+            day = self.view.selected_day
+            year = self.view.selected_year or "2000"
+
+            if not month or not day:
+                await interaction.response.send_message("⚠ Please select month and day first.", ephemeral=True)
                 return
-            # Optional year (default 2000)
-            year = "2000"
-            date_str = f"{day}/{month}/{year}"
+
+            try:
+                date_obj = datetime.strptime(f"{day}/{month}/{year}", "%d/%m/%Y")
+            except ValueError:
+                await interaction.response.send_message("⚠ Invalid date.", ephemeral=True)
+                return
+
+            date_str = date_obj.strftime("%d/%m/%Y")
             self.cog.set_birthday(interaction.guild.id, interaction.user.id, date_str)
             await interaction.response.send_message(f"✅ Birthday saved: {date_str}", ephemeral=True)
 
@@ -213,7 +253,7 @@ class BirthdayCog(commands.Cog):
             else:
                 embed = discord.Embed(
                     title="🎂 Birthday Manager 🎂",
-                    description="Select your birthday below using the dropdowns:",
+                    description="Select your birthday below:",
                     color=discord.Color.blue(),
                 )
                 view = self.BirthdayView(self, guild.id)
