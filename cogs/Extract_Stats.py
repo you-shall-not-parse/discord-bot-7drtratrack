@@ -1,82 +1,97 @@
 import pandas as pd
 from selenium import webdriver
-from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.common.by import By
 import time
-import io
 import csv
+import io
 
-def extract_table_data():
-    # Set up Chrome options
+def extract_table_data(url="http://178.18.248.164:7012/games/5558"):
+    # Configure Chrome options
     chrome_options = Options()
-    chrome_options.add_argument("--headless")  # Run in headless mode (no GUI)
+    chrome_options.add_argument("--headless")  # Run in headless mode
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     
-    # Initialize the Chrome webdriver
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
-    
     try:
-        # Navigate to the page containing the table
-        driver.get("http://178.18.248.164:7012/games/5558")  # Adjust the URL to your actual page
-        print("Page loaded")
+        # Setup the driver
+        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
         
-        # Wait for the table to load
-        time.sleep(3)  # You might need to adjust this delay
+        # Navigate to the page
+        driver.get(url)
+        print(f"Page title: {driver.title}")
         
-        # Option 1: If there's a "Download CSV" button, click it
-        try:
-            # Try to find and click a download button (adjust the selector as needed)
-            csv_button = driver.find_element(By.XPATH, "//button[contains(text(), 'Export CSV')]")
-            csv_button.click()
-            print("CSV export button clicked")
-            time.sleep(2)  # Wait for download to initialize
-            # Note: This approach will download to your downloads folder
-            # You'll need additional code to process the downloaded file
-        except Exception as e:
-            print(f"Could not find CSV export button: {e}")
+        # Wait for table to load
+        time.sleep(3)
         
-        # Option 2: Extract data directly from the table
-        table_data = []
-        try:
-            # Find the table element (adjust the selector as needed)
-            table = driver.find_element(By.TAG_NAME, "table")
-            
-            # Get all rows from the table
-            rows = table.find_elements(By.TAG_NAME, "tr")
-            
-            # Extract headers
-            header_row = rows[0]
-            headers = [header.text for header in header_row.find_elements(By.TAG_NAME, "th")]
-            table_data.append(headers)
-            
-            # Extract data rows
-            for row in rows[1:]:
-                cells = row.find_elements(By.TAG_NAME, "td")
-                row_data = [cell.text for cell in cells]
-                table_data.append(row_data)
-                
-            print(f"Extracted {len(table_data)-1} rows of data")
-            
-            # Convert to DataFrame for easier handling
-            df = pd.DataFrame(table_data[1:], columns=table_data[0])
-            print(df.head())
-            
-            return df
-            
-        except Exception as e:
-            print(f"Error extracting table data: {e}")
-            
-    finally:
-        # Close the browser
+        # Find the table
+        table = driver.find_element(By.TAG_NAME, "table")
+        
+        # Extract headers
+        headers = [th.text for th in table.find_elements(By.TAG_NAME, "th")]
+        
+        # Extract rows
+        rows = []
+        for tr in table.find_elements(By.TAG_NAME, "tr")[1:]:  # Skip header row
+            row_data = [td.text for td in tr.find_elements(By.TAG_NAME, "td")]
+            if row_data:  # Avoid empty rows
+                rows.append(row_data)
+        
+        # Create DataFrame
+        df = pd.DataFrame(rows, columns=headers)
+        
+        # Clean up
         driver.quit()
+        
+        return df
+        
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        if 'driver' in locals():
+            driver.quit()
+        return None
 
+# Try to extract via CSV URL first
+def try_csv_extraction():
+    try:
+        CSV_URL = "http://178.18.248.164:7012/games/5558/export/csv"
+        print(f"Attempting to download CSV directly from: {CSV_URL}")
+        
+        response = requests.get(CSV_URL)
+        response.raise_for_status()
+        
+        # Read CSV directly from memory
+        csv_data = list(csv.reader(io.StringIO(response.text)))
+        
+        # Convert to DataFrame
+        headers = csv_data[0]
+        data = csv_data[1:]
+        return pd.DataFrame(data, columns=headers)
+        
+    except Exception as e:
+        print(f"Direct CSV download failed: {e}")
+        return None
+
+# Main execution
 if __name__ == "__main__":
-    data = extract_table_data()
+    import requests
     
-    # Optional: Save to CSV
-    if data is not None:
-        data.to_csv('extracted_data.csv', index=False)
+    # Try direct CSV download first
+    df = try_csv_extraction()
+    
+    # If that fails, try with Selenium
+    if df is None:
+        print("Switching to Selenium extraction method...")
+        df = extract_table_data()
+    
+    if df is not None:
+        print("\nExtracted Data:")
+        print(df.head())
+        
+        # Save to CSV
+        df.to_csv("extracted_data.csv", index=False)
         print("Data saved to extracted_data.csv")
+    else:
+        print("Failed to extract data.")
