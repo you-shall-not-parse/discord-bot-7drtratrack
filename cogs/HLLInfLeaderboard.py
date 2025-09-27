@@ -525,7 +525,7 @@ class SubmissionModal(Modal):
 
         # Decide if screenshot is required
         submissions_channel = await self.cog._get_channel(SUBMISSIONS_CHANNEL_ID)
-        require_ss = random.choice([True, False])
+        require_ss = random.random() < 0.7
 
         if submissions_channel:
             try:
