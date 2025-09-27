@@ -6,8 +6,8 @@ from datetime import datetime, date, time
 import pytz
 
 # ---------------- Config ----------------
-BIRTHDAY_CHANNEL_ID = 123456789012345678   # channel for birthday embed & daily messages
-SUMMARY_CHANNEL_ID = 123456789012345678    # channel for monthly summaries
+BIRTHDAY_CHANNEL_ID = 1099248200776421406   # channel for birthday embed & daily messages
+SUMMARY_CHANNEL_ID = 1098333222540152944    # channel for monthly summaries
 TIMEZONE = "Europe/London"
 DB_FILE = "birthdays.db"
 # ----------------------------------------
