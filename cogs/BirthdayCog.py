@@ -2,13 +2,13 @@ import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 import sqlite3
-from datetime import datetime, date, time
+from datetime import datetime, time
 import pytz
 
 # ---------------- Config ----------------
-BIRTHDAY_CHANNEL_ID = 1099248200776421406   # channel for birthday embed & daily messages
-SUMMARY_CHANNEL_ID = 1098333222540152944    # channel for monthly summaries
-GUILD_ID = 1097913605082579024              # your testing server ID
+BIRTHDAY_CHANNEL_ID = 123456789012345678  # channel for birthday embed & daily messages
+SUMMARY_CHANNEL_ID = 123456789012345678   # channel for monthly summaries
+GUILD_ID = 123456789012345678             # your server ID
 TIMEZONE = "Europe/London"
 DB_FILE = "birthdays.db"
 # ----------------------------------------
@@ -22,14 +22,24 @@ class BirthdayCog(commands.Cog):
         self.conn = sqlite3.connect(DB_FILE)
         self.c = self.conn.cursor()
         self.c.execute(
-            "CREATE TABLE IF NOT EXISTS birthdays (guild_id INTEGER, user_id INTEGER, date TEXT, display_age INTEGER, PRIMARY KEY (guild_id, user_id))"
+            "CREATE TABLE IF NOT EXISTS birthdays (guild_id INTEGER, user_id INTEGER, date TEXT, display_age INTEGER DEFAULT 0, PRIMARY KEY (guild_id, user_id))"
         )
         self.conn.commit()
+
+        # Ensure display_age column exists (for older DBs)
+        self._ensure_display_age_column()
 
         # Start tasks
         self.check_birthdays.start()
         self.post_monthly_summary.start()
         self.bot.loop.create_task(self.ensure_embed_posted())
+
+    def _ensure_display_age_column(self):
+        self.c.execute("PRAGMA table_info(birthdays)")
+        columns = [col[1] for col in self.c.fetchall()]
+        if "display_age" not in columns:
+            self.c.execute("ALTER TABLE birthdays ADD COLUMN display_age INTEGER DEFAULT 0")
+            self.conn.commit()
 
     def cog_unload(self):
         self.conn.close()
@@ -98,10 +108,6 @@ class BirthdayCog(commands.Cog):
             await interaction.response.send_message("⚠ Invalid day. Must be 1-31.", ephemeral=True)
             return
 
-        # Validate year
-        if year < 1:
-            year = 2000
-
         # Validate date combination
         try:
             date_obj = datetime(year, month.value, day)
@@ -111,7 +117,6 @@ class BirthdayCog(commands.Cog):
 
         date_str = date_obj.strftime("%d/%m/%Y")
         self.set_birthday(interaction.guild.id, interaction.user.id, date_str, display_age)
-
         await interaction.response.send_message(
             f"✅ Birthday saved as {day:02} {month.name} {year}. Display age: {'Yes' if display_age else 'No'}",
             ephemeral=True
@@ -204,14 +209,13 @@ class BirthdayCog(commands.Cog):
             if channel:
                 await channel.send(embed=embed)
 
-    # ---------------- Auto Embed ----------------
+    # ---------------- Embed Info ----------------
     async def ensure_embed_posted(self):
         await self.bot.wait_until_ready()
         for guild in self.bot.guilds:
             channel = guild.get_channel(BIRTHDAY_CHANNEL_ID)
             if not channel:
                 continue
-
             async for message in channel.history(limit=100):
                 if message.author == self.bot.user and message.embeds:
                     embed = message.embeds[0]
@@ -229,9 +233,9 @@ class BirthdayCog(commands.Cog):
                 )
                 await channel.send(embed=embed)
 
-    # ---------------- Cog Load ----------------
+    # ---------------- Cog Load for Guild ----------------
     async def cog_load(self):
-        # Add commands guild-scoped for instant availability
+        # Register commands instantly for the guild
         self.bot.tree.add_command(self.setbirthday, guild=self.guild)
         self.bot.tree.add_command(self.removebirthday, guild=self.guild)
         self.bot.tree.add_command(self.birthdaysplease, guild=self.guild)
