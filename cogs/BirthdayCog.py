@@ -244,4 +244,3 @@ class BirthdayCog(commands.Cog):
 async def setup(bot: commands.Bot):
     cog = BirthdayCog(bot)
     await bot.add_cog(cog)
-    bot.tree.add_command(cog.birthdaysplease)
