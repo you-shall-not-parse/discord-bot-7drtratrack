@@ -1,15 +1,11 @@
 """
 HLL Stats Cog (no graphing) — single-guild, automatic Discord -> player_id linking.
 
-Behavior updates in this version:
-- Single-guild configuration via integer constants at the top.
-- /extract-stats ingests CSVs, auto-links members, stores stats.
-- After ingest completes the cog now UPDATES existing leaderboard messages in the configured
-  channel (one embed for All-time and one embed for Rolling). If the embeds are not found,
-  it posts them. It does NOT post duplicate leaderboards each time.
-- Each embed contains multiple fields: one field per enabled metric listing the Top 10.
-- CSV-provided names remain authoritative in the DB.
-
+This file is the full cog with admin commands and leaderboard updating.
+At the top you can configure:
+- GUILD_ID: integer guild/server id
+- LEADERBOARD_CHANNEL_ID: integer channel id to post leaderboards
+- ADMIN_ROLE_IDS: list of integer role ids that should be treated as admins (in addition to guild administrators / manage_guild permission).
 
 Drop this file into cogs/hll_stats.py and load it with:
     await bot.load_extension("cogs.hll_stats")
@@ -28,11 +24,17 @@ from discord.ext import commands
 import aiosqlite
 
 # =========================
-# Configuration - single guild + leaderboard channel (define integers here)
+# Configuration - single guild + leaderboard channel + admin role IDs
 # =========================
-# Edit these integer constants to match your server and channel IDs.
-GUILD_ID: int = 1097913605082579024  # <-- set your guild ID (integer)
-LEADERBOARD_CHANNEL_ID: int = 1099806153170489485  # <-- set your leaderboard channel ID (integer)
+# Replace the placeholder integers with your actual server/channel/role IDs.
+GUILD_ID: int = 123456789012345678            # set your guild ID (integer)
+LEADERBOARD_CHANNEL_ID: int = 1099806153170489485  # set your leaderboard channel ID (integer)
+
+# Admin roles: list the role IDs which should be allowed to run admin commands.
+# Example: ADMIN_ROLE_IDS = [111111111111111111, 222222222222222222]
+ADMIN_ROLE_IDS: List[int] = [
+    # add integer role IDs here
+]
 
 # Rolling window and DB path (set as desired)
 DEFAULT_ROLLING_WINDOW_GAMES: int = 5
@@ -51,7 +53,7 @@ def _trim_discriminator(name: Optional[str]) -> Optional[str]:
         return None
     return re.sub(r'#\d{1,10}$', '', name).strip()
 
-# Rank tokens based on the provided rank list; include common abbreviations and spacing variants.
+# Rank tokens based on provided list; include common abbreviations and spacing variants.
 RANK_TOKENS = [
     # General Staff
     "Field Marshal", "FM",
@@ -159,7 +161,7 @@ METRIC_DEFS: Dict[str, Dict[str, Any]] = {
 DEFAULT_ENABLED_METRICS = ["kills", "deaths", "kdr", "kpm", "dpm"]
 
 # =========================
-# DB schema
+# DB schema and migrations
 # =========================
 
 SCHEMA_SQL = """
@@ -183,6 +185,8 @@ CREATE TABLE IF NOT EXISTS games (
   created_at TIMESTAMP NOT NULL,
   source_filename TEXT NOT NULL,
   file_hash TEXT NOT NULL,
+  deleted INTEGER DEFAULT 0,
+  deleted_at TIMESTAMP,
   UNIQUE (guild_id, file_hash)
 );
 
@@ -205,6 +209,7 @@ CREATE TABLE IF NOT EXISTS stats (
   weapons TEXT,
   death_by_weapons TEXT,
   extras TEXT,
+  active INTEGER DEFAULT 1,
   FOREIGN KEY (guild_id, player_id) REFERENCES players(guild_id, player_id),
   FOREIGN KEY (game_id) REFERENCES games(id)
 );
@@ -227,7 +232,17 @@ CREATE INDEX IF NOT EXISTS idx_stats_game ON stats (guild_id, game_id);
 """
 
 async def init_db(conn: aiosqlite.Connection) -> None:
+    # Create base schema if missing
     await conn.executescript(SCHEMA_SQL)
+    # Backwards-compat migrations: ensure stats.active and games.deleted columns exist for older DBs
+    async def ensure_column(table: str, col: str, decl: str):
+        async with conn.execute(f"PRAGMA table_info({table})") as cur:
+            cols = {r[1] for r in await cur.fetchall()}
+        if col not in cols:
+            await conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+    await ensure_column("games", "deleted", "INTEGER DEFAULT 0")
+    await ensure_column("games", "deleted_at", "TIMESTAMP")
+    await ensure_column("stats", "active", "INTEGER DEFAULT 1")
     await conn.commit()
 
 # =========================
@@ -298,18 +313,31 @@ class HLLStatsCog(commands.Cog):
             (str(guild_id), player_id, name, now, now),
         )
 
-    async def insert_game(self, guild_id: int, uploader_id: int, message_id: int, filename: str, file_hash: str) -> Optional[int]:
+    async def insert_game(self, guild_id: int, uploader_id: int, message_id: int, filename: str, file_hash: str, force: bool = False) -> Tuple[Optional[int], bool]:
+        """
+        Insert a game row. Returns (game_id, created).
+        If created==False then an existing game_id is returned (duplicate detected).
+        If force==True we bypass the unique constraint by appending a short unique suffix to file_hash.
+        """
         assert self.db
         now = datetime.datetime.utcnow().isoformat()
+        fh = file_hash
+        if force:
+            fh = fh + "-" + hashlib.sha256(f"{now}-{uploader_id}".encode()).hexdigest()[:8]
         try:
             cur = await self.db.execute(
                 "INSERT INTO games (guild_id, uploader_id, message_id, created_at, source_filename, file_hash) VALUES (?, ?, ?, ?, ?, ?)",
-                (str(guild_id), uploader_id, message_id, now, filename, file_hash),
+                (str(guild_id), uploader_id, message_id, now, filename, fh),
             )
             await self.db.commit()
-            return cur.lastrowid
+            return (cur.lastrowid, True)
         except aiosqlite.IntegrityError:
-            return None
+            # existing game with same file_hash
+            async with self.db.execute("SELECT id FROM games WHERE guild_id=? AND file_hash=?", (str(guild_id), file_hash)) as cur:
+                row = await cur.fetchone()
+            if row:
+                return (row[0], False)
+            return (None, False)
 
     async def insert_stat(self, guild_id: int, game_id: int, mapped: Dict[str, Any]) -> None:
         assert self.db
@@ -320,8 +348,8 @@ class HLLStatsCog(commands.Cog):
               kills, deaths, kdr, kpm, dpm,
               combat_effectiveness, support_points, defensive_points, offensive_points,
               max_kill_streak, max_death_streak,
-              weapons, death_by_weapons, extras
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              weapons, death_by_weapons, extras, active
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
             """,
             (
                 str(guild_id), game_id, mapped["player_id"],
@@ -359,7 +387,7 @@ class HLLStatsCog(commands.Cog):
         assert self.db
         await self.db.commit()
 
-    # ---- Stats queries ----
+    # ---- Stats queries (only consider stats.active=1) ----
     async def get_all_time_stats(self, guild_id: int, player_id: str) -> Optional[Dict[str, Any]]:
         assert self.db
         selects = [
@@ -376,7 +404,10 @@ class HLLStatsCog(commands.Cog):
             "MAX(COALESCE(max_kill_streak,0)) as max_ks",
             "MAX(COALESCE(max_death_streak,0)) as max_ds",
         ]
-        async with self.db.execute(f"SELECT {', '.join(selects)} FROM stats WHERE guild_id=? AND player_id=?", (str(guild_id), player_id)) as cur:
+        async with self.db.execute(
+            f"SELECT {', '.join(selects)} FROM stats WHERE guild_id=? AND player_id=? AND active=1",
+            (str(guild_id), player_id)
+        ) as cur:
             row = await cur.fetchone()
         if not row or row[0] == 0:
             return None
@@ -403,7 +434,7 @@ class HLLStatsCog(commands.Cog):
                    combat_effectiveness, support_points, defensive_points, offensive_points,
                    max_kill_streak, max_death_streak
             FROM stats
-            WHERE guild_id=? AND player_id=?
+            WHERE guild_id=? AND player_id=? AND active=1
             ORDER BY id ASC
             LIMIT ?
             """,
@@ -415,7 +446,10 @@ class HLLStatsCog(commands.Cog):
 
     async def get_rolling_stats(self, guild_id: int, player_id: str, window: int) -> Optional[Dict[str, Any]]:
         assert self.db
-        async with self.db.execute("SELECT kills, deaths, kdr, kpm, dpm FROM stats WHERE guild_id=? AND player_id=? ORDER BY id DESC LIMIT ?", (str(guild_id), player_id, window)) as cur:
+        async with self.db.execute(
+            "SELECT kills, deaths, kdr, kpm, dpm FROM stats WHERE guild_id=? AND player_id=? AND active=1 ORDER BY id DESC LIMIT ?",
+            (str(guild_id), player_id, window)
+        ) as cur:
             rows = await cur.fetchall()
         if not rows:
             return None
@@ -442,11 +476,11 @@ class HLLStatsCog(commands.Cog):
         col = md["column"]
         agg = md["all_time"]
         if agg == "sum":
-            sql = f"SELECT player_id, SUM(COALESCE({col},0)) as v FROM stats WHERE guild_id=? GROUP BY player_id HAVING COUNT(*) > 0 ORDER BY v DESC LIMIT ?"
+            sql = f"SELECT player_id, SUM(COALESCE({col},0)) as v FROM stats WHERE guild_id=? AND active=1 GROUP BY player_id HAVING COUNT(*) > 0 ORDER BY v DESC LIMIT ?"
         elif agg == "avg":
-            sql = f"SELECT player_id, AVG({col}) as v FROM stats WHERE guild_id=? GROUP BY player_id HAVING COUNT(*) > 0 ORDER BY v DESC LIMIT ?"
+            sql = f"SELECT player_id, AVG({col}) as v FROM stats WHERE guild_id=? AND active=1 GROUP BY player_id HAVING COUNT(*) > 0 ORDER BY v DESC LIMIT ?"
         else:
-            sql = f"SELECT player_id, MAX({col}) as v FROM stats WHERE guild_id=? GROUP BY player_id HAVING COUNT(*) > 0 ORDER BY v DESC LIMIT ?"
+            sql = f"SELECT player_id, MAX({col}) as v FROM stats WHERE guild_id=? AND active=1 GROUP BY player_id HAVING COUNT(*) > 0 ORDER BY v DESC LIMIT ?"
         async with self.db.execute(sql, (str(guild_id), limit)) as cur:
             return [(r[0], r[1]) for r in await cur.fetchall() if r[1] is not None]
 
@@ -457,7 +491,10 @@ class HLLStatsCog(commands.Cog):
         agg_rolling = md["rolling"]
         results: List[Tuple[str, float]] = []
         for pid in await self.get_all_player_ids(guild_id):
-            async with self.db.execute(f"SELECT {col} FROM stats WHERE guild_id=? AND player_id=? ORDER BY id DESC LIMIT ?", (str(guild_id), pid, window)) as cur:
+            async with self.db.execute(
+                f"SELECT {col} FROM stats WHERE guild_id=? AND player_id=? AND active=1 ORDER BY id DESC LIMIT ?",
+                (str(guild_id), pid, window)
+            ) as cur:
                 vals = [r[0] for r in await cur.fetchall() if r[0] is not None]
             if not vals:
                 continue
@@ -529,6 +566,155 @@ class HLLStatsCog(commands.Cog):
         }
         return mapped
 
+    # -----------------------
+    # Admin: list/remove/undo/redo games
+    # -----------------------
+    def _is_admin(self, interaction: discord.Interaction) -> bool:
+        """
+        Admin check:
+          - True if user has guild administrator or manage_guild permission
+          - OR if the user has any role with id in ADMIN_ROLE_IDS
+        """
+        if interaction.user.guild_permissions.administrator or interaction.user.guild_permissions.manage_guild:
+            return True
+        # role id check
+        try:
+            member = interaction.guild.get_member(interaction.user.id)
+            if member:
+                for r in member.roles:
+                    if r.id in ADMIN_ROLE_IDS:
+                        return True
+        except Exception:
+            pass
+        return False
+
+    admin_group = app_commands.Group(name="hllstatsadmin", description="Admin actions: browse/uploaded games and remove/undo/redo stats from a game.")
+
+    @admin_group.command(name="list-games", description="List recently uploaded games (CSV files) with their IDs and status.")
+    @app_commands.describe(limit="How many recent games to list (max 50)")
+    @app_commands.guild_only()
+    async def admin_list_games(self, interaction: discord.Interaction, limit: Optional[int] = 25):
+        if interaction.guild is None:
+            await interaction.response.send_message("Guild-only.", ephemeral=True)
+            return
+        if not self._is_admin(interaction):
+            await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
+            return
+        limit = max(1, min(50, limit or 25))
+        await interaction.response.defer(ephemeral=True)
+
+        async with self.db.execute(
+            "SELECT id, uploader_id, created_at, source_filename, file_hash, deleted, deleted_at FROM games WHERE guild_id=? ORDER BY id DESC LIMIT ?",
+            (str(interaction.guild_id), limit)
+        ) as cur:
+            rows = await cur.fetchall()
+
+        if not rows:
+            await interaction.followup.send("No games uploaded yet.", ephemeral=True)
+            return
+
+        embed = discord.Embed(title="Uploaded Games", color=discord.Color.blue(), description=f"Showing {len(rows)} most recent uploads")
+        for (gid, uploader_id, created_at, filename, file_hash, deleted, deleted_at) in rows:
+            # count stats rows and active rows for this game
+            async with self.db.execute("SELECT COUNT(*) FROM stats WHERE guild_id=? AND game_id=?", (str(interaction.guild_id), gid)) as c1:
+                total_stats = (await c1.fetchone())[0]
+            async with self.db.execute("SELECT COUNT(*) FROM stats WHERE guild_id=? AND game_id=? AND active=1", (str(interaction.guild_id), gid)) as c2:
+                active_stats = (await c2.fetchone())[0]
+            uploader = interaction.guild.get_member(int(uploader_id)) if uploader_id else None
+            uploader_display = uploader.display_name if uploader else str(uploader_id)
+            status = "deleted" if deleted else "active"
+            created_at_str = created_at or "unknown"
+            value = f"File: {filename}\nUploader: {uploader_display}\nUploaded: {created_at_str}\nRows: {active_stats}/{total_stats} active\nHash: {file_hash}\nStatus: {status}"
+            if deleted and deleted_at:
+                value += f"\nDeleted at: {deleted_at}"
+            embed.add_field(name=f"Game ID {gid}", value=value, inline=False)
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @admin_group.command(name="remove", description="Soft-remove stats for a given game (deactivates stats). Use 'permanent' to delete rows permanently.")
+    @app_commands.describe(game_id="Game ID to remove", permanent="Permanently delete rows instead of soft-delete")
+    @app_commands.guild_only()
+    async def admin_remove(self, interaction: discord.Interaction, game_id: int, permanent: Optional[bool] = False):
+        if interaction.guild is None:
+            await interaction.response.send_message("Guild-only.", ephemeral=True)
+            return
+        if not self._is_admin(interaction):
+            await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+
+        # verify game exists and belongs to guild
+        async with self.db.execute("SELECT id, source_filename, deleted FROM games WHERE guild_id=? AND id=?", (str(interaction.guild_id), game_id)) as cur:
+            row = await cur.fetchone()
+        if not row:
+            await interaction.followup.send(f"Game ID {game_id} not found in this guild.", ephemeral=True)
+            return
+
+        if permanent:
+            # permanently delete stats and game row
+            await self.db.execute("DELETE FROM stats WHERE guild_id=? AND game_id=?", (str(interaction.guild_id), game_id))
+            await self.db.execute("DELETE FROM games WHERE guild_id=? AND id=?", (str(interaction.guild_id), game_id))
+            await self.commit()
+            # update leaderboards
+            try:
+                await self._post_or_update_leaderboards_in_channel(interaction.guild)
+            except Exception:
+                pass
+            await interaction.followup.send(f"Permanently deleted game {game_id} and its stats.", ephemeral=True)
+            return
+
+        # soft-delete: set stats.active=0 and mark game.deleted=1
+        now = datetime.datetime.utcnow().isoformat()
+        await self.db.execute("UPDATE stats SET active=0 WHERE guild_id=? AND game_id=?", (str(interaction.guild_id), game_id))
+        await self.db.execute("UPDATE games SET deleted=1, deleted_at=? WHERE guild_id=? AND id=?", (now, str(interaction.guild_id), game_id))
+        await self.commit()
+        # update leaderboards after change
+        try:
+            await self._post_or_update_leaderboards_in_channel(interaction.guild)
+        except Exception:
+            pass
+        await interaction.followup.send(f"Soft-removed stats for game {game_id}. Use /hllstatsadmin undo {game_id} to restore.", ephemeral=True)
+
+    @admin_group.command(name="undo", description="Undo a prior removal for a given game (reactivates stats).")
+    @app_commands.describe(game_id="Game ID to undo removal for")
+    @app_commands.guild_only()
+    async def admin_undo(self, interaction: discord.Interaction, game_id: int):
+        if interaction.guild is None:
+            await interaction.response.send_message("Guild-only.", ephemeral=True)
+            return
+        if not self._is_admin(interaction):
+            await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+
+        # verify game exists
+        async with self.db.execute("SELECT id, deleted FROM games WHERE guild_id=? AND id=?", (str(interaction.guild_id), game_id)) as cur:
+            row = await cur.fetchone()
+        if not row:
+            await interaction.followup.send(f"Game ID {game_id} not found in this guild.", ephemeral=True)
+            return
+
+        await self.db.execute("UPDATE stats SET active=1 WHERE guild_id=? AND game_id=?", (str(interaction.guild_id), game_id))
+        await self.db.execute("UPDATE games SET deleted=0, deleted_at=NULL WHERE guild_id=? AND id=?", (str(interaction.guild_id), game_id))
+        await self.commit()
+        # update leaderboards
+        try:
+            await self._post_or_update_leaderboards_in_channel(interaction.guild)
+        except Exception:
+            pass
+        await interaction.followup.send(f"Restored stats for game {game_id}.", ephemeral=True)
+
+    @admin_group.command(name="redo", description="Redo removal for a given game (same as remove without permanent).")
+    @app_commands.describe(game_id="Game ID to redo removal for")
+    @app_commands.guild_only()
+    async def admin_redo(self, interaction: discord.Interaction, game_id: int):
+        # redo==soft remove again
+        await self.admin_remove(interaction, game_id, permanent=False)
+
+    # -----------------------
+    # Existing commands: ingest, unlink, myhllstats, stats-config
+    # -----------------------
+
     @app_commands.guild_only()
     @app_commands.describe(file="CSV file (your exported format). Must include Player ID and Name columns at minimum.")
     @app_commands.command(name="extract-stats", description="Ingest a CSV of player stats to update the database.")
@@ -555,9 +741,33 @@ class HLLStatsCog(commands.Cog):
             return
 
         file_hash = _sha256_bytes(raw_bytes)
-        game_id = await self.insert_game(guild_id=interaction.guild_id, uploader_id=interaction.user.id, message_id=interaction.id, filename=file.filename, file_hash=file_hash)
-        if game_id is None:
-            await interaction.followup.send("This CSV appears to have been uploaded before. Skipping duplicate.", ephemeral=True)
+        # normal insert (no force)
+        game_id, created = await self.insert_game(
+            guild_id=interaction.guild_id,
+            uploader_id=interaction.user.id,
+            message_id=interaction.id,
+            filename=file.filename,
+            file_hash=file_hash,
+            force=False
+        )
+        if not created:
+            if game_id is None:
+                await interaction.followup.send("This CSV appears to have been uploaded before. Skipping duplicate.", ephemeral=True)
+                return
+            # existing game found, report it
+            async with self.db.execute("SELECT uploader_id, created_at, source_filename FROM games WHERE id=?", (game_id,)) as cur:
+                row = await cur.fetchone()
+            if row:
+                u_id, created_at, src_name = row
+                uploader_member = interaction.guild.get_member(int(u_id))
+                uploader_display = uploader_member.display_name if uploader_member else str(u_id)
+                await interaction.followup.send(
+                    f"This CSV matches a previous upload (Game ID {game_id}, file: {src_name}, uploaded by {uploader_display} at {created_at}).\n"
+                    "If you really need to re-import identical file content, contact an admin to use the `force` option.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send("This CSV appears to have been uploaded before. Skipping duplicate.", ephemeral=True)
             return
 
         decoded = raw_bytes.decode("utf-8-sig", errors="replace")
@@ -597,7 +807,6 @@ class HLLStatsCog(commands.Cog):
                 missing_pid += 1
                 continue
 
-            # CSV name is authoritative
             csv_name = name or "Unknown"
             await self.upsert_player(interaction.guild_id, pid, csv_name)
             if pid in existing_pids:
@@ -637,19 +846,13 @@ class HLLStatsCog(commands.Cog):
         embed.add_field(name="Auto-linked accounts", value=str(auto_linked), inline=True)
         embed.add_field(name="Game ID", value=str(game_id), inline=True)
         await interaction.followup.send(embed=embed, ephemeral=True)
-
-        # notify about leaderboard update result
         await interaction.followup.send(posted_note, ephemeral=True)
 
-    async def _find_bot_message_by_title(self, channel: discord.abc.Messageable, title: str) -> Optional[discord.Message]:
+    async def _find_bot_message_by_title(self, channel: discord.TextChannel, title: str) -> Optional[discord.Message]:
         """
         Search recent messages in channel for a message authored by the bot with an embed title matching `title`.
         Returns the message if found, else None.
         """
-        # channel may be TextChannel; use history
-        if not isinstance(channel, discord.TextChannel):
-            # try to fetch channel if not full object (shouldn't normally happen)
-            return None
         async for msg in channel.history(limit=300):
             if msg.author.id != self.bot.user.id:
                 continue
@@ -666,8 +869,6 @@ class HLLStatsCog(commands.Cog):
         Two embeds:
           - "Leaderboards — All-time" (fields: one per enabled metric containing top10)
           - "Leaderboards — Rolling (last X)" (fields: one per enabled metric containing top10 rolling)
-        If an embed with the exact title and authored by the bot exists in the channel recent history,
-        it will be edited; otherwise a new message will be sent.
         """
         settings = await self.get_settings(guild.id)
         enabled_metrics = settings["enabled_metrics"]
@@ -675,19 +876,17 @@ class HLLStatsCog(commands.Cog):
 
         # Resolve channel
         channel = guild.get_channel(LEADERBOARD_CHANNEL_ID) or await guild.fetch_channel(LEADERBOARD_CHANNEL_ID)
-        if channel is None:
-            raise RuntimeError(f"Leaderboard channel not found (ID {LEADERBOARD_CHANNEL_ID})")
+        if channel is None or not isinstance(channel, discord.TextChannel):
+            raise RuntimeError(f"Leaderboard channel not found or not a text channel (ID {LEADERBOARD_CHANNEL_ID})")
 
         # Build All-time embed
         all_embed = discord.Embed(title="Leaderboards — All-time", color=discord.Color.gold(), timestamp=datetime.datetime.utcnow())
         all_embed.set_footer(text="All-time top 10 per metric (sums or averages as configured).")
-        any_all_data = False
         for mk in enabled_metrics:
             rows = await self.get_all_time_leaderboard(guild.id, mk, limit=10)
             if not rows:
                 all_embed.add_field(name=METRIC_DEFS[mk]["label"], value="No data.", inline=False)
                 continue
-            any_all_data = True
             lines = []
             for i, (pid, val) in enumerate(rows, start=1):
                 latest_name = await self.get_latest_name(guild.id, pid) or pid
@@ -698,13 +897,11 @@ class HLLStatsCog(commands.Cog):
         # Build Rolling embed
         roll_embed = discord.Embed(title=f"Leaderboards — Rolling (last {window})", color=discord.Color.orange(), timestamp=datetime.datetime.utcnow())
         roll_embed.set_footer(text=f"Rolling averages / maxima over last {window} games.")
-        any_roll_data = False
         for mk in enabled_metrics:
             rows = await self.get_rolling_leaderboard(guild.id, mk, window, limit=10)
             if not rows:
                 roll_embed.add_field(name=METRIC_DEFS[mk]["label"], value="No data.", inline=False)
                 continue
-            any_roll_data = True
             lines = []
             for i, (pid, val) in enumerate(rows, start=1):
                 latest_name = await self.get_latest_name(guild.id, pid) or pid
@@ -712,15 +909,12 @@ class HLLStatsCog(commands.Cog):
                 lines.append(f"{i}. {latest_name} — {disp}")
             roll_embed.add_field(name=METRIC_DEFS[mk]["label"], value="\n".join(lines), inline=False)
 
-        # If there's no data in either embed, still create/update messages to show empty state.
-        # Find existing messages by searching recent messages for matching titles authored by bot.
-        # Update if found, else send new message.
+        # Find existing messages and edit, else send new
         all_msg = await self._find_bot_message_by_title(channel, all_embed.title)
         if all_msg:
             try:
                 await all_msg.edit(embed=all_embed)
             except Exception:
-                # fallback: send new
                 await channel.send(embed=all_embed)
         else:
             await channel.send(embed=all_embed)
@@ -837,6 +1031,11 @@ class HLLStatsCog(commands.Cog):
             return
         new_enabled = settings["enabled_metrics"] + [metric]
         await self.set_enabled_metrics(interaction.guild_id, new_enabled)
+        # update leaderboards after config change
+        try:
+            await self._post_or_update_leaderboards_in_channel(interaction.guild)
+        except Exception:
+            pass
         await interaction.followup.send(f"Enabled '{metric}' ({METRIC_DEFS[metric]['label']}).", ephemeral=True)
 
     @stats_config.command(name="disable", description="Disable a metric from display/leaderboards.")
@@ -853,6 +1052,11 @@ class HLLStatsCog(commands.Cog):
             return
         new_enabled = [m for m in settings["enabled_metrics"] if m != metric]
         await self.set_enabled_metrics(interaction.guild_id, new_enabled)
+        # update leaderboards after config change
+        try:
+            await self._post_or_update_leaderboards_in_channel(interaction.guild)
+        except Exception:
+            pass
         await interaction.followup.send(f"Disabled '{metric}' ({METRIC_DEFS[metric]['label']}).", ephemeral=True)
 
     @stats_config.command(name="set-rolling", description="Set rolling window X (1-100).")
@@ -861,6 +1065,11 @@ class HLLStatsCog(commands.Cog):
     async def stats_config_set_rolling(self, interaction: discord.Interaction, window: app_commands.Range[int, 1, 100]):
         await interaction.response.defer(ephemeral=True)
         await self.set_rolling_window(interaction.guild_id, int(window))
+        # update leaderboards with new rolling window
+        try:
+            await self._post_or_update_leaderboards_in_channel(interaction.guild)
+        except Exception:
+            pass
         await interaction.followup.send(f"Set rolling window to {int(window)} games.", ephemeral=True)
 
 # setup entrypoint
