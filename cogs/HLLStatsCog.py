@@ -1,3 +1,29 @@
+"""
+HLL Stats Cog (no graphing) — single-guild, automatic Discord -> player_id linking.
+
+This full cog includes:
+- CSV ingestion (/extract-stats)
+- Automatic auto-linking by matching Discord member name/nickname with CSV Name
+  (trims #discriminator and strips ranks)
+- Per-game stat storage in SQLite (games + stats tables; stores filename and file_hash)
+- Leaderboard embeds (two embeds: All-time and Rolling) posted/updated in a configured channel
+- Admin group /hllstatsadmin with list-games, remove (soft/permanent), undo, redo
+- Configurable admin role IDs via ADMIN_ROLE_IDS constant
+- Setup registers the admin group explicitly and syncs the guild commands
+
+Configuration (edit the integer constants near the top):
+- GUILD_ID: your server id (int)
+- LEADERBOARD_CHANNEL_ID: channel id for the leaderboard embeds (int)
+- ADMIN_ROLE_IDS: list of role ids who should be allowed to use admin commands
+
+Requirements:
+- discord.py v2.x
+- aiosqlite
+- Bot must be created with intents.members = True if you want auto-linking
+
+Drop this file into cogs/hll_stats.py and load it with:
+    await bot.load_extension("cogs.hll_stats")
+"""
 import io
 import csv
 import json
@@ -913,151 +939,15 @@ class HLLStatsCog(commands.Cog):
         else:
             await channel.send(embed=roll_embed)
 
-    # Allow users to unlink if they don't want the auto-link
-    @app_commands.guild_only()
-    @app_commands.command(name="unlinkplayer", description="Unlink your Discord user from any auto-linked player ID.")
-    async def unlinkplayer(self, interaction: discord.Interaction):
-        if interaction.guild is None:
-            await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
-            return
-        await self.unlink_user(interaction.guild_id, interaction.user.id)
-        await self.commit()
-        await interaction.response.send_message("Unlinked your player ID (if it existed).", ephemeral=True)
-
-    @app_commands.guild_only()
-    @app_commands.describe(player_id="Optional: specify player ID to view (if not auto-linked)")
-    @app_commands.command(name="myhllstats", description="Show your all-time and rolling stats (configurable metrics).")
-    async def myhllstats(self, interaction: discord.Interaction, player_id: Optional[str] = None):
-        if interaction.guild is None:
-            await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
-            return
-        await interaction.response.defer(ephemeral=True, thinking=True)
-
-        if interaction.guild_id != GUILD_ID:
-            await interaction.followup.send("This bot is configured for a different guild.", ephemeral=True)
-            return
-
-        settings = await self.get_settings(interaction.guild_id)
-        window = settings["rolling_window_games"]
-        enabled = settings["enabled_metrics"]
-
-        pid = player_id or await self.get_linked_player_id(interaction.guild_id, interaction.user.id)
-        if not pid:
-            await interaction.followup.send("No player ID linked. Upload a CSV with your player name (matching your Discord name) using /extract-stats so the bot can auto-link you.", ephemeral=True)
-            return
-
-        latest_name = await self.get_latest_name(interaction.guild_id, pid) or "Unknown"
-        all_time = await self.get_all_time_stats(interaction.guild_id, pid)
-        if not all_time:
-            await interaction.followup.send("No stats found for your player ID yet.", ephemeral=True)
-            return
-        rolling = await self.get_rolling_stats(interaction.guild_id, pid, window)
-
-        def fmt(mk: str, v: Optional[float]) -> str:
-            if v is None:
-                return "—"
-            return METRIC_DEFS[mk]["fmt"](v)
-
-        all_time_lines = [f"Games: {all_time['games']}"]
-        for mk in enabled:
-            val = all_time.get(mk)
-            all_time_lines.append(f"{METRIC_DEFS[mk]['label']}: {fmt(mk, val)}")
-
-        rolling_lines = []
-        if rolling:
-            roll_map = {
-                "kills": rolling["avg_kills"],
-                "deaths": rolling["avg_deaths"],
-                "kdr": rolling["avg_kdr"],
-                "kpm": rolling["avg_kpm"],
-                "dpm": rolling["avg_dpm"],
-            }
-            for mk in enabled:
-                if mk in roll_map:
-                    rolling_lines.append(f"{METRIC_DEFS[mk]['label']}: {fmt(mk, roll_map[mk])}")
-                else:
-                    rolling_lines.append(f"{METRIC_DEFS[mk]['label']}: (N/A)")
-        else:
-            rolling_lines.append(f"Not enough games yet (need at least 1 of last {window}).")
-
-        embed = discord.Embed(title=f"My HLL Stats • {latest_name}", color=discord.Color.blurple())
-        embed.add_field(name="All-time", value="\n".join(all_time_lines), inline=True)
-        embed.add_field(name=f"Rolling (last {window})", value="\n".join(rolling_lines), inline=True)
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
-    # Stats-config group (enable/disable metrics, set rolling window)
-    stats_config = app_commands.Group(name="stats-config", description="Configure which stats are shown and rolling window.")
-
-    @stats_config.command(name="list", description="Show enabled metrics and rolling window.")
-    @app_commands.guild_only()
-    async def stats_config_list(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        settings = await self.get_settings(interaction.guild_id)
-        enabled = settings["enabled_metrics"]
-        labels = [f"- {m} ({METRIC_DEFS[m]['label']})" for m in enabled]
-        all_metrics = ", ".join(sorted(METRIC_DEFS.keys()))
-        embed = discord.Embed(title="Stats Configuration", description="These metrics are currently enabled for display/leaderboards.", color=discord.Color.teal())
-        embed.add_field(name=f"Enabled metrics ({len(enabled)})", value="\n".join(labels) or "None", inline=False)
-        embed.add_field(name="Rolling window", value=str(settings["rolling_window_games"]), inline=True)
-        embed.add_field(name="Available metric keys", value=all_metrics, inline=False)
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
-    @stats_config.command(name="enable", description="Enable a metric for display/leaderboards.")
-    @app_commands.describe(metric="Metric key to enable")
-    @app_commands.guild_only()
-    async def stats_config_enable(self, interaction: discord.Interaction, metric: str):
-        await interaction.response.defer(ephemeral=True)
-        if metric not in METRIC_DEFS:
-            await interaction.followup.send(f"Unknown metric '{metric}'.", ephemeral=True)
-            return
-        settings = await self.get_settings(interaction.guild_id)
-        if metric in settings["enabled_metrics"]:
-            await interaction.followup.send(f"'{metric}' is already enabled.", ephemeral=True)
-            return
-        new_enabled = settings["enabled_metrics"] + [metric]
-        await self.set_enabled_metrics(interaction.guild_id, new_enabled)
-        # update leaderboards after config change
-        try:
-            await self._post_or_update_leaderboards_in_channel(interaction.guild)
-        except Exception:
-            pass
-        await interaction.followup.send(f"Enabled '{metric}' ({METRIC_DEFS[metric]['label']}).", ephemeral=True)
-
-    @stats_config.command(name="disable", description="Disable a metric from display/leaderboards.")
-    @app_commands.describe(metric="Metric key to disable")
-    @app_commands.guild_only()
-    async def stats_config_disable(self, interaction: discord.Interaction, metric: str):
-        await interaction.response.defer(ephemeral=True)
-        if metric not in METRIC_DEFS:
-            await interaction.followup.send(f"Unknown metric '{metric}'.", ephemeral=True)
-            return
-        settings = await self.get_settings(interaction.guild_id)
-        if metric not in settings["enabled_metrics"]:
-            await interaction.followup.send(f"'{metric}' is already disabled.", ephemeral=True)
-            return
-        new_enabled = [m for m in settings["enabled_metrics"] if m != metric]
-        await self.set_enabled_metrics(interaction.guild_id, new_enabled)
-        # update leaderboards after config change
-        try:
-            await self._post_or_update_leaderboards_in_channel(interaction.guild)
-        except Exception:
-            pass
-        await interaction.followup.send(f"Disabled '{metric}' ({METRIC_DEFS[metric]['label']}).", ephemeral=True)
-
-    @stats_config.command(name="set-rolling", description="Set rolling window X (1-100).")
-    @app_commands.describe(window="Number of most recent games to use for rolling averages (1-100)")
-    @app_commands.guild_only()
-    async def stats_config_set_rolling(self, interaction: discord.Interaction, window: app_commands.Range[int, 1, 100]):
-        await interaction.response.defer(ephemeral=True)
-        await self.set_rolling_window(interaction.guild_id, int(window))
-        # update leaderboards with new rolling window
-        try:
-            await self._post_or_update_leaderboards_in_channel(interaction.guild)
-        except Exception:
-            pass
-        await interaction.followup.send(f"Set rolling window to {int(window)} games.", ephemeral=True)
-
-# setup entrypoint
+# setup entrypoint with explicit admin group registration and guild sync
 async def setup(bot: commands.Bot):
     cog = HLLStatsCog(bot)
     await bot.add_cog(cog)
+
+    # Ensure admin group is added to the tree and sync to guild so the group appears reliably.
+    try:
+        bot.tree.add_command(cog.admin_group, guild=discord.Object(id=GUILD_ID))
+        await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
+    except Exception as exc:
+        # Print a warning but don't crash the bot startup
+        print("Warning: failed to register/sync hllstatsadmin group:", exc)
