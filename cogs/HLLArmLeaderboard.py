@@ -49,7 +49,7 @@ LEADERBOARD_DESCRIPTION = (
     "**You must have a screenshot to back up your submissions, it is requested on a random basis and if called upon you must post it "
     f"in <#{ARM_SUBMISSIONS_CHANNEL_ID}> otherwise your scores will be revoked.**\n\n"
     "Leaderboard shows the highest single verified submissions by crew (pending proofs are excluded). "
-    "Admins and SNCO can use /hllarmstatsadmin to set a crew's stats."
+    "Admins and SNCO can use /hlltankscoreadmin to set a crew's stats."
 )
 LEADERBOARD_DESCRIPTION_MONTHLY = (
     "Showing highest single verified submissions for the current month (by crew). Use /hllarmtopscores to view all-time leaders."
@@ -379,11 +379,11 @@ class HLLArmLeaderboard(commands.Cog):
 
     # Admin: overwrite a crew's record for a stat (unique command name)
     @app_commands.command(
-        name="hllarmstatsadmin",
+        name="hlltankscoreadmin",
         description="Admin: set a crew's high score for a stat. Set value to 0 to remove this crew from leaderboard."
     )
     @app_commands.guilds(discord.Object(id=GUILD_ID))
-    async def hllarmstatsadmin(
+    async def hlltankscoreadmin(
         self,
         interaction: discord.Interaction,
         user1: discord.Member,
@@ -483,7 +483,7 @@ class HLLArmLeaderboard(commands.Cog):
         )
 
     # --- Autocomplete for "stat" argument ---
-    @hllarmstatsadmin.autocomplete("stat")
+    @hlltankscoreadmin.autocomplete("stat")
     async def stat_autocomplete(
         self,
         interaction: discord.Interaction,
