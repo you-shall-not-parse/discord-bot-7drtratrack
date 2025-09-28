@@ -143,7 +143,7 @@ METRIC_DEFS: Dict[str, Dict[str, Any]] = {
     "max_death_streak": {"label": "Max death streak", "all_time": "max", "rolling": "max", "column": "max_death_streak", "fmt": lambda v: f"{v:.0f}"},
 }
 
-DEFAULT_ENABLED_METRICS = ["kills", "deaths", "kdr", "kpm", "dpm"]
+DEFAULT_ENABLED_METRICS = ["kills", "deaths", "kdr", "kpm", "dpm", "combat_effectiveness", "support_points", "defensive_points", "offensive_points"]
 
 # =========================
 # DB schema and migrations
