@@ -63,9 +63,7 @@ METRIC_DEFS: Dict[str, Dict[str, Any]] = {
 # Make sure any key you add exists as a key in METRIC_DEFS above.
 # Example: ["kills","deaths","kdr","kpm","dpm"]
 # =========================
-UPDATE guild_settings
 SET enabled_metrics = '["kills","deaths","kdr","kpm","dpm","combat_effectiveness","support_points","defensive_points","offensive_points"]'
-WHERE guild_id = '1097913605082579024';
 # =========================
 
 # Helper: validate and canonicalize the default enabled metrics list
