@@ -484,7 +484,7 @@ class GameMonCog(commands.Cog):
                 logger.error(f"HTTP error deleting message: {e}")
 
     # ---------- Preference Command ----------
-    @discord.app_commands.command(name="gamepref", description="Set your game listing preference")
+    @discord.app_commands.command(name="gamemon-gamepref", description="Set your game listing preference")
     @discord.app_commands.describe(pref="opt_in / opt_out")
     async def gamepref(self, interaction: discord.Interaction, pref: str):
         if pref not in ["opt_in", "opt_out"]:
@@ -553,7 +553,7 @@ class GameMonCog(commands.Cog):
             )
 
     # ---------- Manual Refresh Command ----------
-    @discord.app_commands.command(name="refreshgames", description="Refresh the Now Playing list")
+    @discord.app_commands.command(name="gamemon-refreshgames", description="Refresh the Now Playing list")
     async def refreshgames(self, interaction: discord.Interaction):
         # Check if user is in the admin list
         if not self.is_admin_user(interaction.user.id):
@@ -580,7 +580,7 @@ class GameMonCog(commands.Cog):
             )
 
     # ---------- Fix Preference Command ----------
-    @discord.app_commands.command(name="fixgame", description="Fix your game display (opt-in and force add current game)")
+    @discord.app_commands.command(name="gamemon-fixgame", description="Fix your game display (opt-in and force add current game)")
     async def fixgame(self, interaction: discord.Interaction):
         user_id = str(interaction.user.id)
         
@@ -631,7 +631,7 @@ class GameMonCog(commands.Cog):
             )
 
     # ---------- Get Current Games Command ----------
-    @discord.app_commands.command(name="currentgames", description="Show currently detected games for users")
+    @discord.app_commands.command(name="gamemon-currentgames", description="Show currently detected games for users")
     async def currentgames(self, interaction: discord.Interaction):
         # Check if user is in the admin list
         if not self.is_admin_user(interaction.user.id):
@@ -989,7 +989,7 @@ class GameMonCog(commands.Cog):
         return removed_count
 
     # ---------- Reset State Command ----------
-    @discord.app_commands.command(name="resetstate", description="Reset the game state (admin only)")
+    @discord.app_commands.command(name="gamemon-resetstate", description="Reset the game state (admin only)")
     async def resetstate(self, interaction: discord.Interaction):
         # Check if user has admin permission
         if not interaction.user.guild_permissions.administrator:
@@ -1018,7 +1018,7 @@ class GameMonCog(commands.Cog):
         )
         
     # ---------- Toggle Monitoring Command ----------
-    @discord.app_commands.command(name="togglemonitoring", description="Toggle monitoring for users without preferences (admin only)")
+    @discord.app_commands.command(name="gamemon-togglemonitoring", description="Toggle monitoring for users without preferences (admin only)")
     async def toggle_monitoring(self, interaction: discord.Interaction):
         # Check if user is in the admin list
         if not self.is_admin_user(interaction.user.id):
@@ -1038,7 +1038,7 @@ class GameMonCog(commands.Cog):
         )
         
     # ---------- Toggle Verbose Logging Command ----------
-    @discord.app_commands.command(name="toggleverbose", description="Toggle verbose logging (admin only)")
+    @discord.app_commands.command(name="gamemon-toggleverbose", description="Toggle verbose logging (admin only)")
     async def toggle_verbose(self, interaction: discord.Interaction):
         # Check if user is in the admin list
         if not self.is_admin_user(interaction.user.id):
