@@ -613,13 +613,17 @@ class HLLStatsCog(commands.Cog):
 
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="remove", description="Permanently remove stats and the game row for a given Game ID.")
+       @app_commands.command(
+        name="admin_hllstatsremove",
+        description="Permanently delete a game and all its stats (irreversible)."
+    )
     @app_commands.describe(game_id="Game ID to permanently delete")
     @app_commands.guild_only()
     async def admin_remove(self, interaction: discord.Interaction, game_id: int):
         """
         Permanently delete all stats rows for the game and remove the game record.
-        This action is irreversible.
+        Also remove any players in the guild that no longer have any stats and their user_links.
+        This action is irreversible — back up your DB first.
         """
         if interaction.guild is None:
             await interaction.response.send_message("Guild-only.", ephemeral=True)
@@ -631,24 +635,51 @@ class HLLStatsCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
 
         # verify game exists and belongs to guild
-        async with self.db.execute("SELECT id, source_filename FROM games WHERE guild_id=? AND id=?", (str(interaction.guild_id), game_id)) as cur:
+        async with self.db.execute(
+            "SELECT id, source_filename FROM games WHERE guild_id=? AND id=?",
+            (str(interaction.guild_id), game_id)
+        ) as cur:
             row = await cur.fetchone()
         if not row:
             await interaction.followup.send(f"Game ID {game_id} not found in this guild.", ephemeral=True)
             return
 
-        # permanently delete stats and game row
-        await self.db.execute("DELETE FROM stats WHERE guild_id=? AND game_id=?", (str(interaction.guild_id), game_id))
-        await self.db.execute("DELETE FROM games WHERE guild_id=? AND id=?", (str(interaction.guild_id), game_id))
-        await self.commit()
+        # Perform permanent removal and cleanup orphaned players/links
+        try:
+            # Start a transaction (aiosqlite executes statements in a transaction until commit)
+            await self.db.execute("DELETE FROM stats WHERE guild_id=? AND game_id=?", (str(interaction.guild_id), game_id))
+            await self.db.execute("DELETE FROM games WHERE guild_id=? AND id=?", (str(interaction.guild_id), game_id))
+
+            # Find players in this guild and remove those with no remaining active or inactive stats
+            async with self.db.execute("SELECT player_id FROM players WHERE guild_id=?", (str(interaction.guild_id),)) as cur:
+                all_pids = [r[0] for r in await cur.fetchall()]
+
+            for pid in all_pids:
+                async with self.db.execute("SELECT COUNT(*) FROM stats WHERE guild_id=? AND player_id=?", (str(interaction.guild_id), pid)) as c:
+                    cnt = (await c.fetchone())[0]
+                if cnt == 0:
+                    # remove player record and any user_links pointing to it
+                    await self.db.execute("DELETE FROM players WHERE guild_id=? AND player_id=?", (str(interaction.guild_id), pid))
+                    await self.db.execute("DELETE FROM user_links WHERE guild_id=? AND player_id=?", (str(interaction.guild_id), pid))
+
+            await self.db.commit()
+        except Exception as exc:
+            # Rollback attempt for safety if commit failed
+            try:
+                await self.db.execute("ROLLBACK")
+            except Exception:
+                pass
+            await interaction.followup.send(f"Failed to permanently delete game {game_id}: {exc}", ephemeral=True)
+            return
 
         # update leaderboards
         try:
             await self._post_or_update_leaderboards_in_channel(interaction.guild)
         except Exception:
+            # ignore leaderboard update errors but inform the user that deletion succeeded
             pass
 
-        await interaction.followup.send(f"Permanently deleted game {game_id} and its stats.", ephemeral=True)
+        await interaction.followup.send(f"Permanently deleted game {game_id} and its stats; orphaned players/links cleaned up.", ephemeral=True)
 
     # -----------------------
     # Apply defaults slash commands
