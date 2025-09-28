@@ -28,6 +28,7 @@ DB_FILE = "armleaderboard.db"
 PROOF_TIMEOUT_MINUTES = 5
 
 # Armour crew stats (adjust as needed)
+LIFE_STAT_NAME = "Longest Life HH:MM"
 STATS_ARM = [
     "Most Infantry Kills",
     "Longest Armour Kill",
@@ -36,7 +37,7 @@ STATS_ARM = [
     "Most Garrisons Destroyed",
     "Most OPs Destroyed",
     "Most Officer Kills",
-    "Longest Life HH:MM"
+    LIFE_STAT_NAME
 ]
 
 # Text shown under the embed title
@@ -76,6 +77,35 @@ def crew_mentions_from_key(bot: commands.Bot, crew_key: str) -> str:
         user = bot.get_user(uid)
         parts.append(user.mention if user else f"<@{uid}>")
     return ", ".join(parts) if parts else "(no crew)"
+
+def is_life_stat(stat: str) -> bool:
+    return stat == LIFE_STAT_NAME
+
+def parse_hhmm_to_minutes(text: str) -> int:
+    """Parse 'HH:MM' (or 'H:MM') into total minutes. Raises ValueError on bad format."""
+    s = text.strip()
+    if ":" not in s:
+        raise ValueError("Missing ':'")
+    parts = s.split(":")
+    if len(parts) != 2:
+        raise ValueError("Invalid HH:MM format")
+    h_str, m_str = parts[0].strip(), parts[1].strip()
+    if not (h_str.isdigit() and m_str.isdigit()):
+        raise ValueError("Hours and minutes must be numbers")
+    h = int(h_str)
+    m = int(m_str)
+    if h < 0 or m < 0 or m >= 60:
+        raise ValueError("Minutes must be between 00 and 59")
+    return h * 60 + m
+
+def format_minutes_as_hhmm(total_minutes: int) -> str:
+    if total_minutes is None:
+        return "0:00"
+    if total_minutes < 0:
+        total_minutes = 0
+    h = total_minutes // 60
+    m = total_minutes % 60
+    return f"{h}:{m:02d}"
 
 # ---------------- Database (async with aiosqlite) ----------------
 async def init_db():
@@ -219,7 +249,8 @@ class HLLArmLeaderboard(commands.Cog):
                                 achieved_str = f" ({dt.strftime('%d/%m/%y')})"
                             except Exception:
                                 pass
-                        lines.append(f"**{idx}.** {crew_str} — {best}{achieved_str}")
+                        display_val = format_minutes_as_hhmm(best) if is_life_stat(stat) else str(best)
+                        lines.append(f"**{idx}.** {crew_str} — {display_val}{achieved_str}")
                     embed.add_field(name=stat, value="\n".join(lines), inline=False)
                 else:
                     embed.add_field(name=stat, value="No data yet", inline=False)
@@ -325,7 +356,7 @@ class HLLArmLeaderboard(commands.Cog):
         interaction: discord.Interaction,
         user1: discord.Member,
         stat: str,
-        value: int,
+        value: str,
         user2: Optional[discord.Member] = None,
         user3: Optional[discord.Member] = None,
     ):
@@ -338,8 +369,32 @@ class HLLArmLeaderboard(commands.Cog):
         if stat not in STATS_ARM:
             await interaction.response.send_message("Invalid stat.", ephemeral=True)
             return
-        if value < 0:
-            await interaction.response.send_message("Score value cannot be negative.", ephemeral=True)
+
+        # Parse value based on stat
+        parsed_value: Optional[int] = None
+        value_str = (value or "").strip()
+        try:
+            if is_life_stat(stat):
+                # Allow "0" as removal shorthand
+                if value_str == "0":
+                    parsed_value = 0
+                else:
+                    parsed_value = parse_hhmm_to_minutes(value_str)
+            else:
+                parsed_value = int(value_str)
+                if parsed_value < 0:
+                    raise ValueError("negative")
+        except Exception:
+            if is_life_stat(stat):
+                await interaction.response.send_message(
+                    "Invalid value for Longest Life. Please enter time as HH:MM (e.g. 1:23) or 0 to remove.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(
+                    "Invalid score. Please enter a non-negative integer (e.g. 10) or 0 to remove.",
+                    ephemeral=True
+                )
             return
 
         crew_ids = [user1.id]
@@ -360,15 +415,16 @@ class HLLArmLeaderboard(commands.Cog):
                 )
                 row = await cur.fetchone()
                 prev_best = row[0] if row and row[0] is not None else 0
+                prev_best_display = format_minutes_as_hhmm(prev_best) if is_life_stat(stat) else str(prev_best)
 
-                # If value is 0, remove crew from this stat's leaderboard (delete all, do not insert)
-                if value == 0:
+                # If parsed_value is 0, remove crew from this stat's leaderboard (delete all, do not insert)
+                if parsed_value == 0:
                     await db.execute("DELETE FROM submissions_arm WHERE crew_key=? AND stat=?", (crew_key, stat))
                     await db.commit()
                     await self.update_leaderboard()
                     crew_str = ", ".join(m.mention for m in [user1, user2, user3] if m)
                     await interaction.response.send_message(
-                        f"Removed {crew_str} from the {stat} leaderboard. Previous verified best was {prev_best}.",
+                        f"Removed {crew_str} from the {stat} leaderboard. Previous verified best was {prev_best_display}.",
                         ephemeral=True,
                     )
                     return
@@ -379,7 +435,7 @@ class HLLArmLeaderboard(commands.Cog):
                 # Use invoker as submitter_id for admin action
                 await db.execute(
                     "INSERT INTO submissions_arm(submitter_id, crew_key, stat, value, submitted_at, needs_proof, proof_verified) VALUES(?, ?, ?, ?, ?, 0, 1)",
-                    (invoker.id, crew_key, stat, int(value), now_iso),
+                    (invoker.id, crew_key, stat, int(parsed_value), now_iso),
                 )
                 await db.commit()
         except Exception as e:
@@ -388,8 +444,9 @@ class HLLArmLeaderboard(commands.Cog):
 
         await self.update_leaderboard()
         crew_str = ", ".join(m.mention for m in [user1, user2, user3] if m)
+        new_val_display = format_minutes_as_hhmm(parsed_value) if is_life_stat(stat) else str(parsed_value)
         await interaction.response.send_message(
-            f"Set {crew_str}'s {stat} high score to {value}. Previous verified best was {prev_best}.",
+            f"Set {crew_str}'s {stat} high score to {new_val_display}. Previous verified best was {prev_best_display}.",
             ephemeral=True,
         )
 
@@ -487,8 +544,9 @@ class HLLArmLeaderboard(commands.Cog):
                     if channel:
                         for sid, uid, stat, val in rows:
                             try:
+                                val_display = format_minutes_as_hhmm(val) if is_life_stat(stat) else str(val)
                                 await channel.send(
-                                    f"<@{uid}> your armour crew submission #{sid} ({val} {stat}) was removed "
+                                    f"<@{uid}> your armour crew submission #{sid} ({val_display} {stat}) was removed "
                                     f"due to missing screenshot within {PROOF_TIMEOUT_MINUTES} minutes."
                                 )
                             except Exception:
@@ -511,7 +569,10 @@ class ArmSubmissionModal(Modal):
         self.submitter = submitter
         self.crew_key = crew_key
 
-        self.value_input = TextInput(label="Enter your score", placeholder="e.g. 10", required=True)
+        if is_life_stat(stat):
+            self.value_input = TextInput(label="Enter your time (HH:MM)", placeholder="e.g. 1:23", required=True)
+        else:
+            self.value_input = TextInput(label="Enter your score", placeholder="e.g. 10", required=True)
         self.add_item(self.value_input)
 
     async def on_submit(self, interaction: discord.Interaction):
@@ -536,11 +597,20 @@ class ArmSubmissionModal(Modal):
             )
             return
 
-        # Validate integer
+        # Validate input
         try:
-            value = int(str(self.value_input.value).strip())
+            raw_value = str(self.value_input.value).strip()
+            if is_life_stat(self.stat):
+                value = parse_hhmm_to_minutes(raw_value)
+            else:
+                value = int(raw_value)
+                if value < 0:
+                    raise ValueError("negative")
         except (TypeError, ValueError):
-            await interaction.response.send_message("Please enter a valid integer.", ephemeral=True)
+            if is_life_stat(self.stat):
+                await interaction.response.send_message("Please enter time as HH:MM (e.g. 1:23).", ephemeral=True)
+            else:
+                await interaction.response.send_message("Please enter a valid non-negative integer.", ephemeral=True)
             return
 
         # Insert submission as verified; may be flipped to pending if proof required
@@ -564,6 +634,7 @@ class ArmSubmissionModal(Modal):
         # Decide if screenshot is required
         submissions_channel = await self.cog._get_channel(ARM_SUBMISSIONS_CHANNEL_ID)
         require_ss = random.random() < 0.7
+        display_value = format_minutes_as_hhmm(value) if is_life_stat(self.stat) else str(value)
 
         if submissions_channel:
             try:
@@ -580,14 +651,14 @@ class ArmSubmissionModal(Modal):
                         pass
 
                     await submissions_channel.send(
-                        f"{self.submitter.mention} submitted {value} {self.stat} for crew: {crew_mentions_from_key(self.cog.bot, self.crew_key)}. "
+                        f"{self.submitter.mention} submitted {display_value} {self.stat} for crew: {crew_mentions_from_key(self.cog.bot, self.crew_key)}. "
                         f"Screenshot required.\nPlease upload an image in this channel within {PROOF_TIMEOUT_MINUTES} minutes.\n"
                         f"Submission ID: #{submission_id}"
                     )
                     await self.cog.update_leaderboard()
                 else:
                     await submissions_channel.send(
-                        f"{self.submitter.mention} submitted {value} {self.stat} for crew: {crew_mentions_from_key(self.cog.bot, self.crew_key)}! "
+                        f"{self.submitter.mention} submitted {display_value} {self.stat} for crew: {crew_mentions_from_key(self.cog.bot, self.crew_key)}! "
                         f"No screenshot required this time."
                     )
             except Exception:
