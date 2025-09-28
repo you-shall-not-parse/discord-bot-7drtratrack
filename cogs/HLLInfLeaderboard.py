@@ -32,7 +32,7 @@ LEADERBOARD_DESCRIPTION = (
     "**You must have a screenshot to back up your submissions, it is requested on a random basis and if called upon you must post it "
     f"in <#{1419010992578363564}> otherwise your scores will be revoked.**\n\n"
     "Leaderboard shows the highest single verified submissions (pending proofs are excluded). "
-    "Admins and SNCO can use /hllinfstatsadmin to change your stats anytime as required."
+    "Admins and SNCO can use /hllinfstatsadmin to change your stats anytime as required. No Arty on the kills or killstreak!"
 )
 LEADERBOARD_DESCRIPTION_MONTHLY = (
     "Showing highest single verified submissions for the current month. Use /hlltopscores to view all-time leaders."
