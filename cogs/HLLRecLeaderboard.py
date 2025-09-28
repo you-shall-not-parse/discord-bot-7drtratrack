@@ -32,10 +32,10 @@ LEADERBOARD_DESCRIPTION = (
     "**You must have a screenshot to back up your submissions, it is requested on a random basis and if called upon you must post it "
     f"in <#{1419010992578363564}> otherwise your scores will be revoked.**\n\n"
     "Leaderboard shows the highest single verified submissions (pending proofs are excluded). "
-    "Admins and SNCO can use /hllrecscoreadmin to change your stats anytime as required."
+    "Admins and SNCO can use /hllhighs-recscoreadmin to change your stats anytime as required."
 )
 LEADERBOARD_DESCRIPTION_MONTHLY = (
-    "Showing highest single verified submissions for the current month. Use /hllrectopscores to view all-time leaders."
+    "Showing highest single verified submissions for the current month. Use /hllhighs-rectopscores to view all-time leaders."
 )
 
 # ---------------- Database (async with aiosqlite) ----------------
@@ -276,13 +276,13 @@ class HLLRecLeaderboard(commands.Cog):
 
         await self.update_leaderboard()
 
-    @app_commands.command(name="hllrectopscores", description="Show all-time top scores")
+    @app_commands.command(name="hllhighs-rectopscores", description="Show all-time top scores")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     async def hllrectopscores(self, interaction: discord.Interaction):
         embed = await self.build_leaderboard_embed(monthly=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="hllrecmonthtopscores", description="Show top scores for this month")
+    @app_commands.command(name="hllhighs-recmonthtopscores", description="Show top scores for this month")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     async def hllrecmonthtopscores(self, interaction: discord.Interaction):
         embed = await self.build_leaderboard_embed(monthly=True)
@@ -290,7 +290,7 @@ class HLLRecLeaderboard(commands.Cog):
 
     # ---------------- Admin: Single-mode overwrite ----------------
     @app_commands.command(
-        name="hllrecscoreadmin",
+        name="hllhighs-recscoreadmin",
         description="Admin: set a crew's high score for a stat. Set value to 0 to remove this crew from leaderboard."
     )
     @app_commands.choices(
