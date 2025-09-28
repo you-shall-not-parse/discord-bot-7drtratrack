@@ -849,7 +849,8 @@ class HLLStatsCog(commands.Cog):
     async def _post_or_update_leaderboards_in_channel(self, guild: discord.Guild) -> None:
         """
         Compute and either edit existing leaderboard messages or post new ones.
-        Two embeds:
+        Three embeds (in this order):
+          - "Matches — Included" (list of matches that contribute active stats)
           - "Leaderboards — All-time" (fields: one per enabled metric containing top10)
           - "Leaderboards — Rolling (last X)" (fields: one per enabled metric containing top10 rolling)
         """
@@ -861,6 +862,54 @@ class HLLStatsCog(commands.Cog):
         channel = guild.get_channel(LEADERBOARD_CHANNEL_ID) or await guild.fetch_channel(LEADERBOARD_CHANNEL_ID)
         if channel is None or not isinstance(channel, discord.TextChannel):
             raise RuntimeError(f"Leaderboard channel not found or not a text channel (ID {LEADERBOARD_CHANNEL_ID})")
+
+        # Build Matches embed (games that currently contribute active stats)
+        matches_embed = discord.Embed(title="Matches — Included", color=discord.Color.dark_blue(), timestamp=datetime.datetime.utcnow())
+        matches_embed.set_footer(text="List of matches contributing active stats (Match ID shown).")
+
+        async with self.db.execute(
+            """
+            SELECT g.id, g.source_filename, g.uploader_id, g.created_at,
+                   COUNT(s.id) as total_rows,
+                   SUM(CASE WHEN s.active=1 THEN 1 ELSE 0 END) as active_rows
+            FROM games g
+            LEFT JOIN stats s ON s.game_id = g.id AND s.guild_id = ?
+            WHERE g.guild_id = ?
+            GROUP BY g.id
+            HAVING SUM(CASE WHEN s.active=1 THEN 1 ELSE 0 END) > 0
+            ORDER BY g.id DESC
+            """,
+            (str(guild.id), str(guild.id))
+        ) as cur:
+            match_rows = await cur.fetchall()
+
+        if not match_rows:
+            matches_embed.description = "No matches with active stats yet."
+        else:
+            # Limit to a reasonable number of matches per embed field (Discord limits field length)
+            # We'll create one field per match for clarity.
+            for (gid, filename, uploader_id, created_at, total_rows, active_rows) in match_rows:
+                uploader_display = str(uploader_id)
+                try:
+                    if uploader_id:
+                        member = guild.get_member(int(uploader_id))
+                        if member:
+                            uploader_display = member.display_name
+                except Exception:
+                    pass
+                created_at_str = created_at or "unknown"
+                value = f"File: {filename}\nUploader: {uploader_display}\nUploaded: {created_at_str}\nRows: {active_rows}/{total_rows} active"
+                matches_embed.add_field(name=f"Match ID {gid}", value=value, inline=False)
+
+        # Post or update Matches embed first
+        matches_msg = await self._find_bot_message_by_title(channel, matches_embed.title)
+        if matches_msg:
+            try:
+                await matches_msg.edit(embed=matches_embed)
+            except Exception:
+                await channel.send(embed=matches_embed)
+        else:
+            await channel.send(embed=matches_embed)
 
         # Build All-time embed
         all_embed = discord.Embed(title="Leaderboards — All-time", color=discord.Color.gold(), timestamp=datetime.datetime.utcnow())
