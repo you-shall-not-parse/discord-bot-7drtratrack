@@ -34,6 +34,9 @@ STATS_ARM = [
     "Most Vehicles Destroyed",
     "Most Killstreak",
     "Most Garrisons Destroyed",
+    "Most OPs Destroyed",
+    "Most Officer Kills",
+    "Longest Life HH:MM"
 ]
 
 # Text shown under the embed title
