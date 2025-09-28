@@ -7,9 +7,8 @@ This full cog includes:
   (trims #discriminator and strips ranks)
 - Per-game stat storage in SQLite (games + stats tables; stores filename and file_hash)
 - Leaderboard embeds (two embeds: All-time and Rolling) posted/updated in a configured channel
-- Admin group /hllstatsadmin with list-games, remove (soft/permanent), undo, redo
+- Admin commands (separate top-level commands) to list-games, remove, undo, redo
 - Configurable admin role IDs via ADMIN_ROLE_IDS constant
-- Registration of admin group deferred until the bot is ready (avoids application_id error)
 
 Configuration (edit the integer constants near the top):
 - GUILD_ID: your server id (int)
@@ -53,6 +52,7 @@ DB_PATH: str = "hll_stats.sqlite3"
 
 GUILD_IDS = [GUILD_ID]
 GUILDS = [discord.Object(id=GUILD_ID)]
+
 
 # =========================
 # Utilities: trimming, normalization, rank stripping
@@ -267,23 +267,10 @@ class HLLStatsCog(commands.Cog):
 
     async def cog_load(self) -> None:
         """
-        Initialize DB and schedule admin group registration after bot is ready
-        (prevents application_id error).
+        Initialize DB. No explicit application sync here; top-level commands register when the cog is added.
         """
         self.db = await aiosqlite.connect(DB_PATH)
         await init_db(self.db)
-
-        async def _register_admin_group() -> None:
-            try:
-                await self.bot.wait_until_ready()
-                # Register the admin group for the configured guild and sync
-                self.bot.tree.add_command(self.admin_group, guild=discord.Object(id=GUILD_ID))
-                await self.bot.tree.sync(guild=discord.Object(id=GUILD_ID))
-                print("hllstatsadmin group registered and synced for guild", GUILD_ID)
-            except Exception as exc:
-                print("Warning: failed to register/sync hllstatsadmin group in cog_load:", exc)
-
-        self.bot.loop.create_task(_register_admin_group())
 
     async def cog_unload(self) -> None:
         if self.db:
@@ -594,7 +581,7 @@ class HLLStatsCog(commands.Cog):
         return mapped
 
     # -----------------------
-    # Admin: list/remove/undo/redo games
+    # Admin: separate top-level commands (not a group)
     # -----------------------
     def _is_admin(self, interaction: discord.Interaction) -> bool:
         """
@@ -604,7 +591,6 @@ class HLLStatsCog(commands.Cog):
         """
         if interaction.user.guild_permissions.administrator or interaction.user.guild_permissions.manage_guild:
             return True
-        # role id check
         try:
             member = interaction.guild.get_member(interaction.user.id)
             if member:
@@ -615,9 +601,7 @@ class HLLStatsCog(commands.Cog):
             pass
         return False
 
-    admin_group = app_commands.Group(name="hllstatsadmin", description="Admin actions: browse/uploaded games and remove/undo/redo stats from a game.")
-
-    @admin_group.command(name="list-games", description="List recently uploaded games (CSV files) with their IDs and status.")
+    @app_commands.command(name="hllstats_list_games", description="(Admin) List recently uploaded games.")
     @app_commands.describe(limit="How many recent games to list (max 50)")
     @app_commands.guild_only()
     async def admin_list_games(self, interaction: discord.Interaction, limit: Optional[int] = 25):
@@ -658,7 +642,7 @@ class HLLStatsCog(commands.Cog):
 
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @admin_group.command(name="remove", description="Soft-remove stats for a given game (deactivates stats). Use 'permanent' to delete rows permanently.")
+    @app_commands.command(name="hllstats_remove", description="(Admin) Remove stats for a given game (soft or permanent).")
     @app_commands.describe(game_id="Game ID to remove", permanent="Permanently delete rows instead of soft-delete")
     @app_commands.guild_only()
     async def admin_remove(self, interaction: discord.Interaction, game_id: int, permanent: Optional[bool] = False):
@@ -670,7 +654,6 @@ class HLLStatsCog(commands.Cog):
             return
         await interaction.response.defer(ephemeral=True)
 
-        # verify game exists and belongs to guild
         async with self.db.execute("SELECT id, source_filename, deleted FROM games WHERE guild_id=? AND id=?", (str(interaction.guild_id), game_id)) as cur:
             row = await cur.fetchone()
         if not row:
@@ -678,11 +661,9 @@ class HLLStatsCog(commands.Cog):
             return
 
         if permanent:
-            # permanently delete stats and game row
             await self.db.execute("DELETE FROM stats WHERE guild_id=? AND game_id=?", (str(interaction.guild_id), game_id))
             await self.db.execute("DELETE FROM games WHERE guild_id=? AND id=?", (str(interaction.guild_id), game_id))
             await self.commit()
-            # update leaderboards
             try:
                 await self._post_or_update_leaderboards_in_channel(interaction.guild)
             except Exception:
@@ -690,19 +671,17 @@ class HLLStatsCog(commands.Cog):
             await interaction.followup.send(f"Permanently deleted game {game_id} and its stats.", ephemeral=True)
             return
 
-        # soft-delete: set stats.active=0 and mark game.deleted=1
         now = datetime.datetime.utcnow().isoformat()
         await self.db.execute("UPDATE stats SET active=0 WHERE guild_id=? AND game_id=?", (str(interaction.guild_id), game_id))
         await self.db.execute("UPDATE games SET deleted=1, deleted_at=? WHERE guild_id=? AND id=?", (now, str(interaction.guild_id), game_id))
         await self.commit()
-        # update leaderboards after change
         try:
             await self._post_or_update_leaderboards_in_channel(interaction.guild)
         except Exception:
             pass
-        await interaction.followup.send(f"Soft-removed stats for game {game_id}. Use /hllstatsadmin undo {game_id} to restore.", ephemeral=True)
+        await interaction.followup.send(f"Soft-removed stats for game {game_id}. Use /hllstats_undo {game_id} to restore.", ephemeral=True)
 
-    @admin_group.command(name="undo", description="Undo a prior removal for a given game (reactivates stats).")
+    @app_commands.command(name="hllstats_undo", description="(Admin) Undo a prior removal for a given game (reactivate stats).")
     @app_commands.describe(game_id="Game ID to undo removal for")
     @app_commands.guild_only()
     async def admin_undo(self, interaction: discord.Interaction, game_id: int):
@@ -714,7 +693,6 @@ class HLLStatsCog(commands.Cog):
             return
         await interaction.response.defer(ephemeral=True)
 
-        # verify game exists
         async with self.db.execute("SELECT id, deleted FROM games WHERE guild_id=? AND id=?", (str(interaction.guild_id), game_id)) as cur:
             row = await cur.fetchone()
         if not row:
@@ -724,18 +702,16 @@ class HLLStatsCog(commands.Cog):
         await self.db.execute("UPDATE stats SET active=1 WHERE guild_id=? AND game_id=?", (str(interaction.guild_id), game_id))
         await self.db.execute("UPDATE games SET deleted=0, deleted_at=NULL WHERE guild_id=? AND id=?", (str(interaction.guild_id), game_id))
         await self.commit()
-        # update leaderboards
         try:
             await self._post_or_update_leaderboards_in_channel(interaction.guild)
         except Exception:
             pass
         await interaction.followup.send(f"Restored stats for game {game_id}.", ephemeral=True)
 
-    @admin_group.command(name="redo", description="Redo removal for a given game (same as remove without permanent).")
+    @app_commands.command(name="hllstats_redo", description="(Admin) Redo removal for a given game (soft remove again).")
     @app_commands.describe(game_id="Game ID to redo removal for")
     @app_commands.guild_only()
     async def admin_redo(self, interaction: discord.Interaction, game_id: int):
-        # redo==soft remove again
         await self.admin_remove(interaction, game_id, permanent=False)
 
     # -----------------------
@@ -955,151 +931,7 @@ class HLLStatsCog(commands.Cog):
         else:
             await channel.send(embed=roll_embed)
 
-    # Allow users to unlink if they don't want the auto-link
-    @app_commands.guild_only()
-    @app_commands.command(name="unlinkplayer", description="Unlink your Discord user from any auto-linked player ID.")
-    async def unlinkplayer(self, interaction: discord.Interaction):
-        if interaction.guild is None:
-            await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
-            return
-        await self.unlink_user(interaction.guild_id, interaction.user.id)
-        await self.commit()
-        await interaction.response.send_message("Unlinked your player ID (if it existed).", ephemeral=True)
-
-    @app_commands.guild_only()
-    @app_commands.describe(player_id="Optional: specify player ID to view (if not auto-linked)")
-    @app_commands.command(name="myhllstats", description="Show your all-time and rolling stats (configurable metrics).")
-    async def myhllstats(self, interaction: discord.Interaction, player_id: Optional[str] = None):
-        if interaction.guild is None:
-            await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
-            return
-        await interaction.response.defer(ephemeral=True, thinking=True)
-
-        if interaction.guild_id != GUILD_ID:
-            await interaction.followup.send("This bot is configured for a different guild.", ephemeral=True)
-            return
-
-        settings = await self.get_settings(interaction.guild_id)
-        window = settings["rolling_window_games"]
-        enabled = settings["enabled_metrics"]
-
-        pid = player_id or await self.get_linked_player_id(interaction.guild_id, interaction.user.id)
-        if not pid:
-            await interaction.followup.send("No player ID linked. Upload a CSV with your player name (matching your Discord name) using /extract-stats so the bot can auto-link you.", ephemeral=True)
-            return
-
-        latest_name = await self.get_latest_name(interaction.guild_id, pid) or "Unknown"
-        all_time = await self.get_all_time_stats(interaction.guild_id, pid)
-        if not all_time:
-            await interaction.followup.send("No stats found for your player ID yet.", ephemeral=True)
-            return
-        rolling = await self.get_rolling_stats(interaction.guild_id, pid, window)
-
-        def fmt(mk: str, v: Optional[float]) -> str:
-            if v is None:
-                return "—"
-            return METRIC_DEFS[mk]["fmt"](v)
-
-        all_time_lines = [f"Games: {all_time['games']}"]
-        for mk in enabled:
-            val = all_time.get(mk)
-            all_time_lines.append(f"{METRIC_DEFS[mk]['label']}: {fmt(mk, val)}")
-
-        rolling_lines = []
-        if rolling:
-            roll_map = {
-                "kills": rolling["avg_kills"],
-                "deaths": rolling["avg_deaths"],
-                "kdr": rolling["avg_kdr"],
-                "kpm": rolling["avg_kpm"],
-                "dpm": rolling["avg_dpm"],
-            }
-            for mk in enabled:
-                if mk in roll_map:
-                    rolling_lines.append(f"{METRIC_DEFS[mk]['label']}: {fmt(mk, roll_map[mk])}")
-                else:
-                    rolling_lines.append(f"{METRIC_DEFS[mk]['label']}: (N/A)")
-        else:
-            rolling_lines.append(f"Not enough games yet (need at least 1 of last {window}).")
-
-        embed = discord.Embed(title=f"My HLL Stats • {latest_name}", color=discord.Color.blurple())
-        embed.add_field(name="All-time", value="\n".join(all_time_lines), inline=True)
-        embed.add_field(name=f"Rolling (last {window})", value="\n".join(rolling_lines), inline=True)
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
-    # Stats-config group (enable/disable metrics, set rolling window)
-    stats_config = app_commands.Group(name="stats-config", description="Configure which stats are shown and rolling window.")
-
-    @stats_config.command(name="list", description="Show enabled metrics and rolling window.")
-    @app_commands.guild_only()
-    async def stats_config_list(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        settings = await self.get_settings(interaction.guild_id)
-        enabled = settings["enabled_metrics"]
-        labels = [f"- {m} ({METRIC_DEFS[m]['label']})" for m in enabled]
-        all_metrics = ", ".join(sorted(METRIC_DEFS.keys()))
-        embed = discord.Embed(title="Stats Configuration", description="These metrics are currently enabled for display/leaderboards.", color=discord.Color.teal())
-        embed.add_field(name=f"Enabled metrics ({len(enabled)})", value="\n".join(labels) or "None", inline=False)
-        embed.add_field(name="Rolling window", value=str(settings["rolling_window_games"]), inline=True)
-        embed.add_field(name="Available metric keys", value=all_metrics, inline=False)
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
-    @stats_config.command(name="enable", description="Enable a metric for display/leaderboards.")
-    @app_commands.describe(metric="Metric key to enable")
-    @app_commands.guild_only()
-    async def stats_config_enable(self, interaction: discord.Interaction, metric: str):
-        await interaction.response.defer(ephemeral=True)
-        if metric not in METRIC_DEFS:
-            await interaction.followup.send(f"Unknown metric '{metric}'.", ephemeral=True)
-            return
-        settings = await self.get_settings(interaction.guild_id)
-        if metric in settings["enabled_metrics"]:
-            await interaction.followup.send(f"'{metric}' is already enabled.", ephemeral=True)
-            return
-        new_enabled = settings["enabled_metrics"] + [metric]
-        await self.set_enabled_metrics(interaction.guild_id, new_enabled)
-        # update leaderboards after config change
-        try:
-            await self._post_or_update_leaderboards_in_channel(interaction.guild)
-        except Exception:
-            pass
-        await interaction.followup.send(f"Enabled '{metric}' ({METRIC_DEFS[metric]['label']}).", ephemeral=True)
-
-    @stats_config.command(name="disable", description="Disable a metric from display/leaderboards.")
-    @app_commands.describe(metric="Metric key to disable")
-    @app_commands.guild_only()
-    async def stats_config_disable(self, interaction: discord.Interaction, metric: str):
-        await interaction.response.defer(ephemeral=True)
-        if metric not in METRIC_DEFS:
-            await interaction.followup.send(f"Unknown metric '{metric}'.", ephemeral=True)
-            return
-        settings = await self.get_settings(interaction.guild_id)
-        if metric not in settings["enabled_metrics"]:
-            await interaction.followup.send(f"'{metric}' is already disabled.", ephemeral=True)
-            return
-        new_enabled = [m for m in settings["enabled_metrics"] if m != metric]
-        await self.set_enabled_metrics(interaction.guild_id, new_enabled)
-        # update leaderboards after config change
-        try:
-            await self._post_or_update_leaderboards_in_channel(interaction.guild)
-        except Exception:
-            pass
-        await interaction.followup.send(f"Disabled '{metric}' ({METRIC_DEFS[metric]['label']}).", ephemeral=True)
-
-    @stats_config.command(name="set-rolling", description="Set rolling window X (1-100).")
-    @app_commands.describe(window="Number of most recent games to use for rolling averages (1-100)")
-    @app_commands.guild_only()
-    async def stats_config_set_rolling(self, interaction: discord.Interaction, window: app_commands.Range[int, 1, 100]):
-        await interaction.response.defer(ephemeral=True)
-        await self.set_rolling_window(interaction.guild_id, int(window))
-        # update leaderboards with new rolling window
-        try:
-            await self._post_or_update_leaderboards_in_channel(interaction.guild)
-        except Exception:
-            pass
-        await interaction.followup.send(f"Set rolling window to {int(window)} games.", ephemeral=True)
-
-# setup entrypoint: add cog only. admin group is registered in cog_load after bot is ready.
+# setup entrypoint: add cog only.
 async def setup(bot: commands.Bot):
     cog = HLLStatsCog(bot)
     await bot.add_cog(cog)
