@@ -653,7 +653,7 @@ class HLLStatsCog(commands.Cog):
     # -----------------------
     # Apply defaults slash commands
     # -----------------------
-    @app_commands.command(name="apply-default-metrics", description="Admin: set this guild's enabled metrics to the current DEFAULT_ENABLED_METRICS and refresh leaderboards.")
+    @app_commands.command(name="apply-default-metrics", description="Admin: set enabled metrics to the current DEFAULT_ENABLED_METRICS and refresh.")
     @app_commands.guild_only()
     async def apply_default_metrics(self, interaction: discord.Interaction):
         if interaction.guild is None:
