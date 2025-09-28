@@ -573,47 +573,7 @@ class HLLStatsCog(commands.Cog):
             pass
         return False
 
-    @app_commands.command(name="list-games", description="List recently uploaded games (CSV files) with their IDs and status.")
-    @app_commands.describe(limit="How many recent games to list (max 50)")
-    @app_commands.guild_only()
-    async def admin_list_games(self, interaction: discord.Interaction, limit: Optional[int] = 25):
-        if interaction.guild is None:
-            await interaction.response.send_message("Guild-only.", ephemeral=True)
-            return
-        if not self._is_admin(interaction):
-            await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
-            return
-        limit = max(1, min(50, limit or 25))
-        await interaction.response.defer(ephemeral=True)
-
-        async with self.db.execute(
-            "SELECT id, uploader_id, created_at, source_filename, file_hash, deleted, deleted_at FROM games WHERE guild_id=? ORDER BY id DESC LIMIT ?",
-            (str(interaction.guild_id), limit)
-        ) as cur:
-            rows = await cur.fetchall()
-
-        if not rows:
-            await interaction.followup.send("No games uploaded yet.", ephemeral=True)
-            return
-
-        embed = discord.Embed(title="Uploaded Games", color=discord.Color.blue(), description=f"Showing {len(rows)} most recent uploads")
-        for (gid, uploader_id, created_at, filename, file_hash, deleted, deleted_at) in rows:
-            async with self.db.execute("SELECT COUNT(*) FROM stats WHERE guild_id=? AND game_id=?", (str(interaction.guild_id), gid)) as c1:
-                total_stats = (await c1.fetchone())[0]
-            async with self.db.execute("SELECT COUNT(*) FROM stats WHERE guild_id=? AND game_id=? AND active=1", (str(interaction.guild_id), gid)) as c2:
-                active_stats = (await c2.fetchone())[0]
-            uploader = interaction.guild.get_member(int(uploader_id)) if uploader_id else None
-            uploader_display = uploader.display_name if uploader else str(uploader_id)
-            status = "deleted" if deleted else "active"
-            created_at_str = created_at or "unknown"
-            value = f"File: {filename}\nUploader: {uploader_display}\nUploaded: {created_at_str}\nRows: {active_stats}/{total_stats} active\nHash: {file_hash}\nStatus: {status}"
-            if deleted and deleted_at:
-                value += f"\nDeleted at: {deleted_at}"
-            embed.add_field(name=f"Game ID {gid}", value=value, inline=False)
-
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
-    @app_commands.command(name="admin_hllstatsremove", description="Permanently delete a game and all its stats (irreversible).")
+    @app_commands.command(name="HLLStats-adminstatsrem", description="Permanently delete a game and all its stats (irreversible).")
     @app_commands.describe(game_id="Game ID to permanently delete")
     @app_commands.guild_only()
     async def admin_remove(self, interaction: discord.Interaction, game_id: int):
@@ -681,7 +641,7 @@ class HLLStatsCog(commands.Cog):
     # -----------------------
     # Apply defaults slash commands
     # -----------------------
-    @app_commands.command(name="apply-default-metrics", description="Admin: set enabled metrics to the current DEFAULT_ENABLED_METRICS and refresh.")
+    @app_commands.command(name="HLLStats-apply-default-metrics", description="Admin: set enabled metrics to the current DEFAULT_ENABLED_METRICS and refresh.")
     @app_commands.guild_only()
     async def apply_default_metrics(self, interaction: discord.Interaction):
         if interaction.guild is None:
@@ -714,7 +674,7 @@ class HLLStatsCog(commands.Cog):
 
     @app_commands.guild_only()
     @app_commands.describe(file="CSV file (your exported format). Must include Player ID and Name columns at minimum.")
-    @app_commands.command(name="extract-stats", description="Ingest a CSV of player stats to update the database.")
+    @app_commands.command(name="HLLStats-extractstats", description="Ingest a CSV of player stats to update the database.")
     async def extract_stats(self, interaction: discord.Interaction, file: discord.Attachment):
         if interaction.guild is None:
             await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
@@ -958,7 +918,7 @@ class HLLStatsCog(commands.Cog):
 
     @app_commands.guild_only()
     @app_commands.describe(player_id="Optional: specify player ID to view (if not auto-linked)")
-    @app_commands.command(name="myhllstats", description="Show your all-time and rolling stats (configurable metrics).")
+    @app_commands.command(name="HLLStats-myhllstats", description="Show your all-time and rolling stats (configurable metrics).")
     async def myhllstats(self, interaction: discord.Interaction, player_id: Optional[str] = None):
         if interaction.guild is None:
             await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
