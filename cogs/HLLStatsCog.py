@@ -573,7 +573,7 @@ class HLLStatsCog(commands.Cog):
             pass
         return False
 
-    @app_commands.command(name="HLLStats-adminstatsrem", description="Permanently delete a game and all its stats (irreversible).")
+    @app_commands.command(name="hllstats-adminstatsrem", description="Permanently delete a game and all its stats (irreversible).")
     @app_commands.describe(game_id="Game ID to permanently delete")
     @app_commands.guild_only()
     async def admin_remove(self, interaction: discord.Interaction, game_id: int):
@@ -641,7 +641,7 @@ class HLLStatsCog(commands.Cog):
     # -----------------------
     # Apply defaults slash commands
     # -----------------------
-    @app_commands.command(name="HLLStats-apply-default-metrics", description="Admin: set enabled metrics to the current DEFAULT_ENABLED_METRICS and refresh.")
+    @app_commands.command(name="hllstats-apply-default-metrics", description="Admin: set enabled metrics to the current DEFAULT_ENABLED_METRICS and refresh.")
     @app_commands.guild_only()
     async def apply_default_metrics(self, interaction: discord.Interaction):
         if interaction.guild is None:
@@ -674,7 +674,7 @@ class HLLStatsCog(commands.Cog):
 
     @app_commands.guild_only()
     @app_commands.describe(file="CSV file (your exported format). Must include Player ID and Name columns at minimum.")
-    @app_commands.command(name="HLLStats-extractstats", description="Ingest a CSV of player stats to update the database.")
+    @app_commands.command(name="hllstats-extractstats", description="Ingest a CSV of player stats to update the database.")
     async def extract_stats(self, interaction: discord.Interaction, file: discord.Attachment):
         if interaction.guild is None:
             await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
@@ -918,7 +918,7 @@ class HLLStatsCog(commands.Cog):
 
     @app_commands.guild_only()
     @app_commands.describe(player_id="Optional: specify player ID to view (if not auto-linked)")
-    @app_commands.command(name="HLLStats-myhllstats", description="Show your all-time and rolling stats (configurable metrics).")
+    @app_commands.command(name="hllstats-myhllstats", description="Show your all-time and rolling stats (configurable metrics).")
     async def myhllstats(self, interaction: discord.Interaction, player_id: Optional[str] = None):
         if interaction.guild is None:
             await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
