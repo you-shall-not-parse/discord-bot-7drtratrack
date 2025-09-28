@@ -1,11 +1,7 @@
 # hll_stats_cog.py
-# Simplified HLL stats cog with a single "edit-this-line" list that controls which metrics
-# are enabled by default. Edit DEFAULT_ENABLED_METRICS (the single line below) to add/remove
-# metrics throughout the bot. Any metric added here must have a corresponding entry in
-# METRIC_DEFS (so the bot knows how to label/format/aggregate it).
-#
-# The code validates DEFAULT_ENABLED_METRICS against METRIC_DEFS and uses that filtered list
-# when creating guild defaults and when rendering leaderboards.
+# HLL stats Cog — removed unlinkplayer slash command as requested.
+# Admin remove performs permanent deletion only. Undo/redo commands removed earlier.
+# Other functionality (ingest, leaderboards, admin list, apply-default-metrics, etc.) unchanged.
 
 import io
 import csv
@@ -39,11 +35,8 @@ GUILDS = [discord.Object(id=GUILD_ID)]
 
 # =========================
 # Metric definitions
-# NOTE: If you add a metric key to DEFAULT_ENABLED_METRICS (below), you MUST add
-# a corresponding entry here in METRIC_DEFS with its label, aggregation modes, column name,
-# and formatting function. The code will filter DEFAULT_ENABLED_METRICS to this dict.
+# Add metric keys here; any key you put in DEFAULT_ENABLED_METRICS must be defined here.
 # =========================
-
 METRIC_DEFS: Dict[str, Dict[str, Any]] = {
     "kills": {"label": "Kills", "all_time": "sum", "rolling": "avg", "column": "kills", "fmt": lambda v: f"{v:.0f}"},
     "deaths": {"label": "Deaths", "all_time": "sum", "rolling": "avg", "column": "deaths", "fmt": lambda v: f"{v:.0f}"},
@@ -59,19 +52,18 @@ METRIC_DEFS: Dict[str, Dict[str, Any]] = {
 }
 
 # =========================
-# Edit THIS LINE to add/remove which metrics are enabled by DEFAULT for new guilds.
+# Edit THIS LINE to change which metrics are enabled by DEFAULT for new guilds.
 # Make sure any key you add exists as a key in METRIC_DEFS above.
-# Example: ["kills","deaths","kdr","kpm","dpm"]
 # =========================
-DEFAULT_ENABLED_METRICS = ["kills", "deaths", "kdr", "kpm", "dpm", "combat_effectiveness", "support_points", "defensive_points", "offensive_points"]
+DEFAULT_ENABLED_METRICS = [
+    "kills", "deaths", "kdr", "kpm", "dpm",
+    "combat_effectiveness", "support_points", "defensive_points", "offensive_points"
+]
 # =========================
 
-# Helper: validate and canonicalize the default enabled metrics list
 def _canonical_default_enabled_metrics() -> List[str]:
-    # keep the user-editable list as the authoritative list, but filter to known defs
     filtered = [m for m in DEFAULT_ENABLED_METRICS if m in METRIC_DEFS]
     if not filtered:
-        # fall back to all defined metrics if the editable list is empty/invalid
         return list(METRIC_DEFS.keys())
     return filtered
 
@@ -80,36 +72,25 @@ def _canonical_default_enabled_metrics() -> List[str]:
 # =========================
 
 def _trim_discriminator(name: Optional[str]) -> Optional[str]:
-    """Remove trailing Discord discriminator '#1234' if present."""
     if name is None:
         return None
     return re.sub(r'#\d{1,10}$', '', name).strip()
 
-# Rank tokens based on provided list; include common abbreviations and spacing variants.
 RANK_TOKENS = [
-    # General Staff
     "Field Marshal", "FM",
     "General", "Gen",
     "Lieutenant General", "Lt Gen", "Lt.Gen", "LtGen",
     "Major General", "Maj Gen", "Maj.Gen", "MajGen",
     "Brigadier", "Brig",
-
-    # Command Staff
     "Colonel", "Col",
     "Lieutenant Colonel", "Lt Col", "Lt.Col", "LtCol",
     "Major", "Maj",
     "Captain", "Cpt",
     "Lieutenant", "Lt", "Lt.",
     "2nd Lieutenant", "2Lt", "2ndLt", "2 Lt",
-
-    # SNCO
     "Regimental Sergeant Major", "RSM", "WO1", "WO2",
     "Warrant Officer 1st Class", "Warrant Officer 2nd Class",
-
-    # NCO
     "Sergeant major", "SGM", "Staff Sergeant", "SSG",
-
-    # Junior Enlisted
     "Sergeant", "Sgt",
     "Corporal", "Cpl",
     "L.Cpl", "LCpl", "L Cpl",
@@ -117,32 +98,20 @@ RANK_TOKENS = [
     "Recruit",
 ]
 
-# Build robust regex (case-insensitive) to match rank at the start of name.
 _rank_variants = []
 for tok in RANK_TOKENS:
     esc = re.escape(tok)
-    # permit flexible separators where spaces exist
     esc = esc.replace(r'\ ', r'[\s\._-]*')
     _rank_variants.append(esc)
-
 _RANK_PREFIX_RE = re.compile(r'^(?:' + r'|'.join(_rank_variants) + r')[\s\._-]*', re.IGNORECASE)
 
 def _strip_rank_prefix(name: Optional[str]) -> Optional[str]:
-    """Remove a leading rank token if present."""
     if name is None:
         return None
     s = name.strip()
-    new = _RANK_PREFIX_RE.sub('', s)
-    return new.strip()
+    return _RANK_PREFIX_RE.sub('', s).strip()
 
 def _normalize_for_match(s: Optional[str]) -> Optional[str]:
-    """
-    Normalize for matching:
-      - trim trailing discriminator
-      - strip leading rank token
-      - collapse whitespace
-      - lowercase (casefold)
-    """
     if s is None:
         return None
     s = _trim_discriminator(s)
@@ -193,7 +162,7 @@ CREATE TABLE IF NOT EXISTS games (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   guild_id TEXT NOT NULL,
   uploader_id INTEGER NOT NULL,
-  message_id INTEGER NOT NULL,
+  message_id INTEGER,
   created_at TIMESTAMP NOT NULL,
   source_filename TEXT NOT NULL,
   file_hash TEXT NOT NULL,
@@ -244,9 +213,7 @@ CREATE INDEX IF NOT EXISTS idx_stats_game ON stats (guild_id, game_id);
 """
 
 async def init_db(conn: aiosqlite.Connection) -> None:
-    # Create base schema if missing
     await conn.executescript(SCHEMA_SQL)
-    # Backwards-compat migrations: ensure stats.active and games.deleted columns exist for older DBs
     async def ensure_column(table: str, col: str, decl: str):
         async with conn.execute(f"PRAGMA table_info({table})") as cur:
             cols = {r[1] for r in await cur.fetchall()}
@@ -265,6 +232,7 @@ class HLLStatsCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.db: Optional[aiosqlite.Connection] = None
+        self._startup_refreshed = False
 
     async def cog_load(self) -> None:
         self.db = await aiosqlite.connect(DB_PATH)
@@ -276,7 +244,6 @@ class HLLStatsCog(commands.Cog):
 
     # ---- settings helpers ----
     async def ensure_guild_settings(self, guild_id: int) -> None:
-        # Use the canonicalized default enabled metrics when creating a new guild settings row.
         assert self.db
         async with self.db.execute("SELECT guild_id FROM guild_settings WHERE guild_id=?", (str(guild_id),)) as cur:
             row = await cur.fetchone()
@@ -298,16 +265,13 @@ class HLLStatsCog(commands.Cog):
             enabled_raw = json.loads(row[1]) if row and row[1] else _canonical_default_enabled_metrics()
         except Exception:
             enabled_raw = _canonical_default_enabled_metrics()
-        # Ensure any stored enabled metrics are valid keys in METRIC_DEFS
         enabled = [m for m in enabled_raw if m in METRIC_DEFS]
-        # If none are valid, fall back to canonical defaults
         if not enabled:
             enabled = _canonical_default_enabled_metrics()
         return {"rolling_window_games": window, "enabled_metrics": enabled}
 
     async def set_enabled_metrics(self, guild_id: int, metrics: List[str]) -> None:
         assert self.db
-        # persist only valid metric keys
         metrics = [m for m in metrics if m in METRIC_DEFS]
         await self.db.execute("UPDATE guild_settings SET enabled_metrics=? WHERE guild_id=?", (json.dumps(metrics), str(guild_id)))
         await self.db.commit()
@@ -332,12 +296,7 @@ class HLLStatsCog(commands.Cog):
             (str(guild_id), player_id, name, now, now),
         )
 
-    async def insert_game(self, guild_id: int, uploader_id: int, message_id: int, filename: str, file_hash: str, force: bool = False) -> Tuple[Optional[int], bool]:
-        """
-        Insert a game row. Returns (game_id, created).
-        If created==False then an existing game_id is returned (duplicate detected).
-        If force==True we bypass the unique constraint by appending a short unique suffix to file_hash.
-        """
+    async def insert_game(self, guild_id: int, uploader_id: int, message_id: Optional[int], filename: str, file_hash: str, force: bool = False) -> Tuple[Optional[int], bool]:
         assert self.db
         now = datetime.datetime.utcnow().isoformat()
         fh = file_hash
@@ -351,7 +310,6 @@ class HLLStatsCog(commands.Cog):
             await self.db.commit()
             return (cur.lastrowid, True)
         except aiosqlite.IntegrityError:
-            # existing game with same file_hash
             async with self.db.execute("SELECT id FROM games WHERE guild_id=? AND file_hash=?", (str(guild_id), file_hash)) as cur:
                 row = await cur.fetchone()
             if row:
@@ -359,19 +317,17 @@ class HLLStatsCog(commands.Cog):
             return (None, False)
 
     async def insert_stat(self, guild_id: int, game_id: int, mapped: Dict[str, Any]) -> None:
-        """
-        Simplified insert: only insert the core numeric columns (up through offensive_points).
-        Other columns (max_kill_streak, weapons, death_by_weapons, extras) will be left NULL.
-        active column defaults to 1 in the schema.
-        """
+        """Insert with full column list ensuring placeholders and values match the schema."""
         assert self.db
         await self.db.execute(
             """
             INSERT INTO stats (
               guild_id, game_id, player_id,
               kills, deaths, kdr, kpm, dpm,
-              combat_effectiveness, support_points, defensive_points, offensive_points
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              combat_effectiveness, support_points, defensive_points, offensive_points,
+              max_kill_streak, max_death_streak,
+              weapons, death_by_weapons, extras, active
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(guild_id),
@@ -386,6 +342,12 @@ class HLLStatsCog(commands.Cog):
                 mapped.get("support_points"),
                 mapped.get("defensive_points"),
                 mapped.get("offensive_points"),
+                mapped.get("max_kill_streak"),
+                mapped.get("max_death_streak"),
+                mapped.get("weapons"),
+                mapped.get("death_by_weapons"),
+                json.dumps(mapped.get("extras") or {}),
+                1,  # active flag
             ),
         )
 
@@ -596,17 +558,11 @@ class HLLStatsCog(commands.Cog):
         return mapped
 
     # -----------------------
-    # Admin: list/remove/undo/redo games (top-level commands)
+    # Admin: list/remove games (top-level commands)
     # -----------------------
     def _is_admin(self, interaction: discord.Interaction) -> bool:
-        """
-        Admin check:
-          - True if user has guild administrator or manage_guild permission
-          - OR if the user has any role with id in ADMIN_ROLE_IDS
-        """
         if interaction.user.guild_permissions.administrator or interaction.user.guild_permissions.manage_guild:
             return True
-        # role id check
         try:
             member = interaction.guild.get_member(interaction.user.id)
             if member:
@@ -642,7 +598,6 @@ class HLLStatsCog(commands.Cog):
 
         embed = discord.Embed(title="Uploaded Games", color=discord.Color.blue(), description=f"Showing {len(rows)} most recent uploads")
         for (gid, uploader_id, created_at, filename, file_hash, deleted, deleted_at) in rows:
-            # count stats rows and active rows for this game
             async with self.db.execute("SELECT COUNT(*) FROM stats WHERE guild_id=? AND game_id=?", (str(interaction.guild_id), gid)) as c1:
                 total_stats = (await c1.fetchone())[0]
             async with self.db.execute("SELECT COUNT(*) FROM stats WHERE guild_id=? AND game_id=? AND active=1", (str(interaction.guild_id), gid)) as c2:
@@ -658,88 +613,106 @@ class HLLStatsCog(commands.Cog):
 
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="remove", description="Soft-remove stats for a given game (deactivates stats). Use 'permanent' to delete rows permanently.")
-    @app_commands.describe(game_id="Game ID to remove", permanent="Permanently delete rows instead of soft-delete")
+    @app_commands.command(name="remove", description="Permanently remove stats and the game row for a given Game ID.")
+    @app_commands.describe(game_id="Game ID to permanently delete")
     @app_commands.guild_only()
-    async def admin_remove(self, interaction: discord.Interaction, game_id: int, permanent: Optional[bool] = False):
+    async def admin_remove(self, interaction: discord.Interaction, game_id: int):
+        """
+        Permanently delete all stats rows for the game and remove the game record.
+        This action is irreversible.
+        """
         if interaction.guild is None:
             await interaction.response.send_message("Guild-only.", ephemeral=True)
             return
         if not self._is_admin(interaction):
             await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
             return
+
         await interaction.response.defer(ephemeral=True)
 
         # verify game exists and belongs to guild
-        async with self.db.execute("SELECT id, source_filename, deleted FROM games WHERE guild_id=? AND id=?", (str(interaction.guild_id), game_id)) as cur:
+        async with self.db.execute("SELECT id, source_filename FROM games WHERE guild_id=? AND id=?", (str(interaction.guild_id), game_id)) as cur:
             row = await cur.fetchone()
         if not row:
             await interaction.followup.send(f"Game ID {game_id} not found in this guild.", ephemeral=True)
             return
 
-        if permanent:
-            # permanently delete stats and game row
-            await self.db.execute("DELETE FROM stats WHERE guild_id=? AND game_id=?", (str(interaction.guild_id), game_id))
-            await self.db.execute("DELETE FROM games WHERE guild_id=? AND id=?", (str(interaction.guild_id), game_id))
-            await self.commit()
-            # update leaderboards
-            try:
-                await self._post_or_update_leaderboards_in_channel(interaction.guild)
-            except Exception:
-                pass
-            await interaction.followup.send(f"Permanently deleted game {game_id} and its stats.", ephemeral=True)
-            return
-
-        # soft-delete: set stats.active=0 and mark game.deleted=1
-        now = datetime.datetime.utcnow().isoformat()
-        await self.db.execute("UPDATE stats SET active=0 WHERE guild_id=? AND game_id=?", (str(interaction.guild_id), game_id))
-        await self.db.execute("UPDATE games SET deleted=1, deleted_at=? WHERE guild_id=? AND id=?", (now, str(interaction.guild_id), game_id))
+        # permanently delete stats and game row
+        await self.db.execute("DELETE FROM stats WHERE guild_id=? AND game_id=?", (str(interaction.guild_id), game_id))
+        await self.db.execute("DELETE FROM games WHERE guild_id=? AND id=?", (str(interaction.guild_id), game_id))
         await self.commit()
-        # update leaderboards after change
-        try:
-            await self._post_or_update_leaderboards_in_channel(interaction.guild)
-        except Exception:
-            pass
-        await interaction.followup.send(f"Soft-removed stats for game {game_id}. Use /undo {game_id} to restore.", ephemeral=True)
 
-    @app_commands.command(name="undo", description="Undo a prior removal for a given game (reactivates stats).")
-    @app_commands.describe(game_id="Game ID to undo removal for")
-    @app_commands.guild_only()
-    async def admin_undo(self, interaction: discord.Interaction, game_id: int):
-        if interaction.guild is None:
-            await interaction.response.send_message("Guild-only.", ephemeral=True)
-            return
-        if not self._is_admin(interaction):
-            await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
-            return
-        await interaction.response.defer(ephemeral=True)
-
-        # verify game exists
-        async with self.db.execute("SELECT id, deleted FROM games WHERE guild_id=? AND id=?", (str(interaction.guild_id), game_id)) as cur:
-            row = await cur.fetchone()
-        if not row:
-            await interaction.followup.send(f"Game ID {game_id} not found in this guild.", ephemeral=True)
-            return
-
-        await self.db.execute("UPDATE stats SET active=1 WHERE guild_id=? AND game_id=?", (str(interaction.guild_id), game_id))
-        await self.db.execute("UPDATE games SET deleted=0, deleted_at=NULL WHERE guild_id=? AND id=?", (str(interaction.guild_id), game_id))
-        await self.commit()
         # update leaderboards
         try:
             await self._post_or_update_leaderboards_in_channel(interaction.guild)
         except Exception:
             pass
-        await interaction.followup.send(f"Restored stats for game {game_id}.", ephemeral=True)
 
-    @app_commands.command(name="redo", description="Redo removal for a given game (same as remove without permanent).")
-    @app_commands.describe(game_id="Game ID to redo removal for")
-    @app_commands.guild_only()
-    async def admin_redo(self, interaction: discord.Interaction, game_id: int):
-        # redo==soft remove again
-        await self.admin_remove(interaction, game_id, permanent=False)
+        await interaction.followup.send(f"Permanently deleted game {game_id} and its stats.", ephemeral=True)
 
     # -----------------------
-    # Existing commands: ingest, unlink, myhllstats
+    # Apply defaults slash commands
+    # -----------------------
+    @app_commands.command(name="apply-default-metrics", description="Admin: set this guild's enabled metrics to the current DEFAULT_ENABLED_METRICS and refresh leaderboards.")
+    @app_commands.guild_only()
+    async def apply_default_metrics(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            await interaction.response.send_message("Guild-only.", ephemeral=True)
+            return
+        if not self._is_admin(interaction):
+            await interaction.response.send_message("You do not have permission to run this.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        defaults = [m for m in DEFAULT_ENABLED_METRICS if m in METRIC_DEFS]
+        if not defaults:
+            await interaction.followup.send("No valid default metrics available (check METRIC_DEFS).", ephemeral=True)
+            return
+
+        await self.db.execute("UPDATE guild_settings SET enabled_metrics=? WHERE guild_id=?", (json.dumps(defaults), str(interaction.guild_id)))
+        await self.db.commit()
+
+        try:
+            await self._post_or_update_leaderboards_in_channel(interaction.guild)
+        except Exception as exc:
+            await interaction.followup.send(f"Settings updated but failed to refresh leaderboards: {exc}", ephemeral=True)
+            return
+
+        await interaction.followup.send(f"Applied default metrics to this guild: {defaults}", ephemeral=True)
+
+    @app_commands.command(name="apply-default-metrics-all", description="[Owner only] Overwrite enabled metrics for ALL guilds with DEFAULT_ENABLED_METRICS and refresh leaderboards.")
+    async def apply_default_metrics_all(self, interaction: discord.Interaction):
+        try:
+            is_owner = await self.bot.is_owner(interaction.user)
+        except Exception:
+            is_owner = False
+        if not is_owner:
+            await interaction.response.send_message("Only the bot owner can run this.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        defaults = [m for m in DEFAULT_ENABLED_METRICS if m in METRIC_DEFS]
+        if not defaults:
+            await interaction.followup.send("No valid default metrics available (check METRIC_DEFS).", ephemeral=True)
+            return
+
+        await self.db.execute("UPDATE guild_settings SET enabled_metrics=?", (json.dumps(defaults),))
+        await self.db.commit()
+
+        failed = []
+        for guild in list(self.bot.guilds):
+            try:
+                await self._post_or_update_leaderboards_in_channel(guild)
+            except Exception:
+                failed.append(guild.id)
+
+        if failed:
+            await interaction.followup.send(f"Applied defaults to all guilds; failed to refresh for guild IDs: {failed}", ephemeral=True)
+        else:
+            await interaction.followup.send(f"Applied defaults to all guilds and refreshed leaderboards.", ephemeral=True)
+
+    # -----------------------
+    # Existing commands: ingest, myhllstats, leaderboards, etc.
     # -----------------------
 
     @app_commands.guild_only()
@@ -768,7 +741,6 @@ class HLLStatsCog(commands.Cog):
             return
 
         file_hash = _sha256_bytes(raw_bytes)
-        # normal insert (no force)
         game_id, created = await self.insert_game(
             guild_id=interaction.guild_id,
             uploader_id=interaction.user.id,
@@ -781,7 +753,6 @@ class HLLStatsCog(commands.Cog):
             if game_id is None:
                 await interaction.followup.send("This CSV appears to have been uploaded before. Skipping duplicate.", ephemeral=True)
                 return
-            # existing game found, report it
             async with self.db.execute("SELECT uploader_id, created_at, source_filename FROM games WHERE id=?", (game_id,)) as cur:
                 row = await cur.fetchone()
             if row:
@@ -803,7 +774,6 @@ class HLLStatsCog(commands.Cog):
             await interaction.followup.send("CSV has no header row.", ephemeral=True)
             return
 
-        # Pre-fetch guild members and build normalized-name -> member_id map.
         members_map: Dict[str, int] = {}
         try:
             members = [m async for m in interaction.guild.fetch_members(limit=None)]
@@ -811,7 +781,6 @@ class HLLStatsCog(commands.Cog):
                 for cand in (m.name, m.display_name):
                     norm = _normalize_for_match(cand)
                     if norm:
-                        # keep first found mapping
                         members_map.setdefault(norm, m.id)
         except Exception:
             members_map = {}
@@ -845,7 +814,6 @@ class HLLStatsCog(commands.Cog):
             await self.insert_stat(interaction.guild_id, game_id, mapped)
             processed += 1
 
-            # Attempt auto-link using normalized CSV name
             norm_csv = _normalize_for_match(csv_name)
             if norm_csv and norm_csv in members_map:
                 discord_id = members_map[norm_csv]
@@ -857,7 +825,6 @@ class HLLStatsCog(commands.Cog):
 
         await self.commit()
 
-        # Post or update leaderboards (all enabled metrics) to configured channel
         posted_note = ""
         try:
             await self._post_or_update_leaderboards_in_channel(interaction.guild)
@@ -876,10 +843,6 @@ class HLLStatsCog(commands.Cog):
         await interaction.followup.send(posted_note, ephemeral=True)
 
     async def _find_bot_message_by_title(self, channel: discord.TextChannel, title: str) -> Optional[discord.Message]:
-        """
-        Search recent messages in channel for a message authored by the bot with an embed title matching `title`.
-        Returns the message if found, else None.
-        """
         async for msg in channel.history(limit=300):
             if msg.author.id != self.bot.user.id:
                 continue
@@ -891,23 +854,15 @@ class HLLStatsCog(commands.Cog):
         return None
 
     async def _post_or_update_leaderboards_in_channel(self, guild: discord.Guild) -> None:
-        """
-        Compute and either edit existing leaderboard messages or post new ones.
-        Three embeds (in this order):
-          - "Matches — Included" (list of matches that contribute active stats)
-          - "Leaderboards — All-time" (fields: one per enabled metric containing top10)
-          - "Leaderboards — Rolling (last X)" (fields: one per enabled metric containing top10 rolling)
-        """
         settings = await self.get_settings(guild.id)
-        enabled_metrics = settings["enabled_metrics"]  # already validated by get_settings
+        enabled_metrics = settings["enabled_metrics"]
         window = settings["rolling_window_games"]
 
-        # Resolve channel
         channel = guild.get_channel(LEADERBOARD_CHANNEL_ID) or await guild.fetch_channel(LEADERBOARD_CHANNEL_ID)
         if channel is None or not isinstance(channel, discord.TextChannel):
             raise RuntimeError(f"Leaderboard channel not found or not a text channel (ID {LEADERBOARD_CHANNEL_ID})")
 
-        # Build Matches embed (games that currently contribute active stats)
+        # Matches embed
         matches_embed = discord.Embed(title="Matches — Included", color=discord.Color.dark_blue(), timestamp=datetime.datetime.utcnow())
         matches_embed.set_footer(text="List of matches contributing active stats (Match ID shown).")
 
@@ -943,7 +898,6 @@ class HLLStatsCog(commands.Cog):
                 value = f"File: {filename}\nUploader: {uploader_display}\nUploaded: {created_at_str}\nRows: {active_rows}/{total_rows} active"
                 matches_embed.add_field(name=f"Match ID {gid}", value=value, inline=False)
 
-        # Post or update Matches embed first
         matches_msg = await self._find_bot_message_by_title(channel, matches_embed.title)
         if matches_msg:
             try:
@@ -953,11 +907,10 @@ class HLLStatsCog(commands.Cog):
         else:
             await channel.send(embed=matches_embed)
 
-        # Build All-time embed
+        # All-time embed
         all_embed = discord.Embed(title="Leaderboards — All-time", color=discord.Color.gold(), timestamp=datetime.datetime.utcnow())
         all_embed.set_footer(text="All-time top 10 per metric (sums or averages as configured).")
         for mk in enabled_metrics:
-            # guard: ensure metric key still exists in METRIC_DEFS
             if mk not in METRIC_DEFS:
                 continue
             rows = await self.get_all_time_leaderboard(guild.id, mk, limit=10)
@@ -971,7 +924,16 @@ class HLLStatsCog(commands.Cog):
                 lines.append(f"{i}. {latest_name} — {disp}")
             all_embed.add_field(name=METRIC_DEFS[mk]["label"], value="\n".join(lines), inline=False)
 
-        # Build Rolling embed
+        all_msg = await self._find_bot_message_by_title(channel, all_embed.title)
+        if all_msg:
+            try:
+                await all_msg.edit(embed=all_embed)
+            except Exception:
+                await channel.send(embed=all_embed)
+        else:
+            await channel.send(embed=all_embed)
+
+        # Rolling embed
         roll_embed = discord.Embed(title=f"Leaderboards — Rolling (last {window})", color=discord.Color.orange(), timestamp=datetime.datetime.utcnow())
         roll_embed.set_footer(text=f"Rolling averages / maxima over last {window} games.")
         for mk in enabled_metrics:
@@ -988,16 +950,6 @@ class HLLStatsCog(commands.Cog):
                 lines.append(f"{i}. {latest_name} — {disp}")
             roll_embed.add_field(name=METRIC_DEFS[mk]["label"], value="\n".join(lines), inline=False)
 
-        # Find existing messages and edit, else send new
-        all_msg = await self._find_bot_message_by_title(channel, all_embed.title)
-        if all_msg:
-            try:
-                await all_msg.edit(embed=all_embed)
-            except Exception:
-                await channel.send(embed=all_embed)
-        else:
-            await channel.send(embed=all_embed)
-
         roll_msg = await self._find_bot_message_by_title(channel, roll_embed.title)
         if roll_msg:
             try:
@@ -1006,17 +958,6 @@ class HLLStatsCog(commands.Cog):
                 await channel.send(embed=roll_embed)
         else:
             await channel.send(embed=roll_embed)
-
-    # Allow users to unlink if they don't want the auto-link
-    @app_commands.guild_only()
-    @app_commands.command(name="unlinkplayer", description="Unlink your Discord user from any auto-linked player ID.")
-    async def unlinkplayer(self, interaction: discord.Interaction):
-        if interaction.guild is None:
-            await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
-            return
-        await self.unlink_user(interaction.guild_id, interaction.user.id)
-        await self.commit()
-        await interaction.response.send_message("Unlinked your player ID (if it existed).", ephemeral=True)
 
     @app_commands.guild_only()
     @app_commands.describe(player_id="Optional: specify player ID to view (if not auto-linked)")
