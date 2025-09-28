@@ -49,10 +49,10 @@ LEADERBOARD_DESCRIPTION = (
     "**You must have a screenshot to back up your submissions, it is requested on a random basis and if called upon you must post it "
     f"in <#{ARM_SUBMISSIONS_CHANNEL_ID}> otherwise your scores will be revoked.**\n\n"
     "Leaderboard shows the highest single verified submissions by crew (pending proofs are excluded). "
-    "Admins and SNCO can use /hllarmscoreadmin to set a crew's stats."
+    "Admins and SNCO can use /hllhighs-armscoreadmin to set a crew's stats."
 )
 LEADERBOARD_DESCRIPTION_MONTHLY = (
-    "Showing highest single verified submissions for the current month (by crew). Use /hllarmtopscores to view all-time leaders."
+    "Showing highest single verified submissions for the current month (by crew). Use /hllhighs-armtopscores to view all-time leaders."
 )
 
 # ---------------- Helpers ----------------
@@ -365,13 +365,13 @@ class HLLArmLeaderboard(commands.Cog):
         await self.update_leaderboard()
 
     # ---------- Slash commands (unique names for this cog) ----------
-    @app_commands.command(name="hllarmtopscores", description="Show all-time armour crew top scores")
+    @app_commands.command(name="hllhighs-armtopscores", description="Show all-time armour crew top scores")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     async def hllarmtopscores(self, interaction: discord.Interaction):
         embed = await self.build_leaderboard_embed(monthly=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="hllarmmonthtopscores", description="Show this month's armour crew top scores")
+    @app_commands.command(name="hllhighs-armmonthtopscores", description="Show this month's armour crew top scores")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     async def hllarmmonthtopscores(self, interaction: discord.Interaction):
         embed = await self.build_leaderboard_embed(monthly=True)
@@ -379,11 +379,11 @@ class HLLArmLeaderboard(commands.Cog):
 
     # Admin: overwrite a crew's record for a stat (unique command name)
     @app_commands.command(
-        name="hllarmscoreadmin",
+        name="hllhighs-armscoreadmin",
         description="Admin: set a crew's high score for a stat. Set value to 0 to remove this crew from leaderboard."
     )
     @app_commands.guilds(discord.Object(id=GUILD_ID))
-    async def hllarmscoreadmin(
+    async def hllhighs-armscoreadmin(
         self,
         interaction: discord.Interaction,
         user1: discord.Member,
@@ -483,7 +483,7 @@ class HLLArmLeaderboard(commands.Cog):
         )
 
     # --- Autocomplete for "stat" argument ---
-    @hllarmscoreadmin.autocomplete("stat")
+    @hllhighs-armscoreadmin.autocomplete("stat")
     async def stat_autocomplete(
         self,
         interaction: discord.Interaction,
