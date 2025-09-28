@@ -225,7 +225,7 @@ class BirthdayCog(commands.Cog):
                 embed = discord.Embed(
                     title="🎂 Birthday Manager 🎂",
                     description=(
-                        "Use `/setbirthday day month [year] [display_age]` to set your birthday.\n"
+                        "Use `/setbirthday day month [year] [display_age]` in #general-chat to set your birthday.\n"
                         "Example: `/setbirthday 15 June 1995 True`\n"
                         "Age will only be shown if you select True."
                     ),
