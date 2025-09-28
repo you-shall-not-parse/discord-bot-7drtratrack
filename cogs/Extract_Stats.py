@@ -9,7 +9,7 @@ Behavior updates in this version:
   it posts them. It does NOT post duplicate leaderboards each time.
 - Each embed contains multiple fields: one field per enabled metric listing the Top 10.
 - CSV-provided names remain authoritative in the DB.
-- Requires members intent (Intents.members = True) and "SERVER MEMBERS INTENT" enabled.
+
 
 Drop this file into cogs/hll_stats.py and load it with:
     await bot.load_extension("cogs.hll_stats")
@@ -31,8 +31,8 @@ import aiosqlite
 # Configuration - single guild + leaderboard channel (define integers here)
 # =========================
 # Edit these integer constants to match your server and channel IDs.
-GUILD_ID: int = 123456789012345678  # <-- set your guild ID (integer)
-LEADERBOARD_CHANNEL_ID: int = 234567890123456789  # <-- set your leaderboard channel ID (integer)
+GUILD_ID: int = 1097913605082579024  # <-- set your guild ID (integer)
+LEADERBOARD_CHANNEL_ID: int = 1099806153170489485  # <-- set your leaderboard channel ID (integer)
 
 # Rolling window and DB path (set as desired)
 DEFAULT_ROLLING_WINDOW_GAMES: int = 5
