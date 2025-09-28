@@ -28,7 +28,8 @@ DB_FILE = "armleaderboard.db"
 PROOF_TIMEOUT_MINUTES = 5
 
 # Armour crew stats (adjust as needed)
-LIFE_STAT_NAME = "Longest Life HH:MM"
+OLD_LIFE_STAT_NAME = "Longest Life HH:MM"
+LIFE_STAT_NAME = "Longest Life HH:MM:SS"
 STATS_ARM = [
     "Most Infantry Kills",
     "Longest Armour Kill",
@@ -79,33 +80,43 @@ def crew_mentions_from_key(bot: commands.Bot, crew_key: str) -> str:
     return ", ".join(parts) if parts else "(no crew)"
 
 def is_life_stat(stat: str) -> bool:
-    return stat == LIFE_STAT_NAME
+    return stat == LIFE_STAT_NAME or stat == OLD_LIFE_STAT_NAME
 
-def parse_hhmm_to_minutes(text: str) -> int:
-    """Parse 'HH:MM' (or 'H:MM') into total minutes. Raises ValueError on bad format."""
-    s = text.strip()
+def parse_time_to_seconds(text: str) -> int:
+    """
+    Parse 'H:MM' or 'H:MM:SS' into total seconds.
+    Raises ValueError on bad format or out-of-range values.
+    """
+    s = (text or "").strip()
     if ":" not in s:
         raise ValueError("Missing ':'")
-    parts = s.split(":")
-    if len(parts) != 2:
-        raise ValueError("Invalid HH:MM format")
-    h_str, m_str = parts[0].strip(), parts[1].strip()
-    if not (h_str.isdigit() and m_str.isdigit()):
-        raise ValueError("Hours and minutes must be numbers")
-    h = int(h_str)
-    m = int(m_str)
-    if h < 0 or m < 0 or m >= 60:
-        raise ValueError("Minutes must be between 00 and 59")
-    return h * 60 + m
+    parts = [p.strip() for p in s.split(":")]
+    if len(parts) == 2:
+        h_str, m_str = parts
+        if not (h_str.isdigit() and m_str.isdigit()):
+            raise ValueError("Non-numeric")
+        h = int(h_str); m = int(m_str); s_val = 0
+    elif len(parts) == 3:
+        h_str, m_str, sec_str = parts
+        if not (h_str.isdigit() and m_str.isdigit() and sec_str.isdigit()):
+            raise ValueError("Non-numeric")
+        h = int(h_str); m = int(m_str); s_val = int(sec_str)
+    else:
+        raise ValueError("Invalid time format")
+    if h < 0 or m < 0 or m >= 60 or s_val < 0 or s_val >= 60:
+        raise ValueError("Out of range")
+    return h * 3600 + m * 60 + s_val
 
-def format_minutes_as_hhmm(total_minutes: int) -> str:
-    if total_minutes is None:
-        return "0:00"
-    if total_minutes < 0:
-        total_minutes = 0
-    h = total_minutes // 60
-    m = total_minutes % 60
-    return f"{h}:{m:02d}"
+def format_seconds_as_hhmmss(total_seconds: int) -> str:
+    if total_seconds is None:
+        return "0:00:00"
+    if total_seconds < 0:
+        total_seconds = 0
+    h = total_seconds // 3600
+    rem = total_seconds % 3600
+    m = rem // 60
+    s = rem % 60
+    return f"{h}:{m:02d}:{s:02d}"
 
 # ---------------- Database (async with aiosqlite) ----------------
 async def init_db():
@@ -131,6 +142,21 @@ async def init_db():
             )
         """)
         await db.commit()
+
+async def migrate_life_stat_to_seconds():
+    """
+    Migrate any old 'HH:MM' life records to seconds and rename stat to 'HH:MM:SS'.
+    Safe to run multiple times.
+    """
+    try:
+        async with aiosqlite.connect(DB_FILE) as db:
+            await db.execute(
+                "UPDATE submissions_arm SET value = value * 60, stat = ? WHERE stat = ?",
+                (LIFE_STAT_NAME, OLD_LIFE_STAT_NAME),
+            )
+            await db.commit()
+    except Exception as e:
+        print(f"HLLArmLeaderboard: migration failed: {e}")
 
 # ---------------- Cog ----------------
 class HLLArmLeaderboard(commands.Cog):
@@ -249,7 +275,7 @@ class HLLArmLeaderboard(commands.Cog):
                                 achieved_str = f" ({dt.strftime('%d/%m/%y')})"
                             except Exception:
                                 pass
-                        display_val = format_minutes_as_hhmm(best) if is_life_stat(stat) else str(best)
+                        display_val = format_seconds_as_hhmmss(best) if is_life_stat(stat) else str(best)
                         lines.append(f"**{idx}.** {crew_str} — {display_val}{achieved_str}")
                     embed.add_field(name=stat, value="\n".join(lines), inline=False)
                 else:
@@ -309,6 +335,12 @@ class HLLArmLeaderboard(commands.Cog):
             except Exception as e:
                 print(f"HLLArmLeaderboard: DB init failed: {e}")
 
+        # Run migration to seconds format for Longest Life
+        try:
+            await migrate_life_stat_to_seconds()
+        except Exception as e:
+            print(f"HLLArmLeaderboard: life stat migration error: {e}")
+
         if not self._view_registered:
             try:
                 self.bot.add_view(ArmLeaderboardView(self))  # persistent
@@ -345,7 +377,7 @@ class HLLArmLeaderboard(commands.Cog):
         embed = await self.build_leaderboard_embed(monthly=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-       # Admin: overwrite a crew's record for a stat (unique command name)
+    # Admin: overwrite a crew's record for a stat (unique command name)
     @app_commands.command(
         name="hllarmstatsadmin",
         description="Admin: set a crew's high score for a stat. Set value to 0 to remove this crew from leaderboard."
@@ -379,7 +411,7 @@ class HLLArmLeaderboard(commands.Cog):
                 if value_str == "0":
                     parsed_value = 0
                 else:
-                    parsed_value = parse_hhmm_to_minutes(value_str)
+                    parsed_value = parse_time_to_seconds(value_str)  # store as seconds
             else:
                 parsed_value = int(value_str)
                 if parsed_value < 0:
@@ -387,12 +419,12 @@ class HLLArmLeaderboard(commands.Cog):
         except Exception:
             if is_life_stat(stat):
                 await interaction.response.send_message(
-                    "Invalid value for Longest Life. Please enter time as HH:MM (e.g. 1:23) or 0 to remove.",
+                    "Invalid value for Longest Life. Enter H:MM or H:MM:SS (e.g. 1:23 or 1:23:45), or 0 to remove.",
                     ephemeral=True
                 )
             else:
                 await interaction.response.send_message(
-                    "Invalid score. Please enter a non-negative integer (e.g. 10) or 0 to remove.",
+                    "Invalid score. Enter a non-negative integer (e.g. 10) or 0 to remove.",
                     ephemeral=True
                 )
             return
@@ -415,7 +447,7 @@ class HLLArmLeaderboard(commands.Cog):
                 )
                 row = await cur.fetchone()
                 prev_best = row[0] if row and row[0] is not None else 0
-                prev_best_display = format_minutes_as_hhmm(prev_best) if is_life_stat(stat) else str(prev_best)
+                prev_best_display = format_seconds_as_hhmmss(prev_best) if is_life_stat(stat) else str(prev_best)
 
                 # If parsed_value is 0, remove crew from this stat's leaderboard (delete all, do not insert)
                 if parsed_value == 0:
@@ -444,7 +476,7 @@ class HLLArmLeaderboard(commands.Cog):
 
         await self.update_leaderboard()
         crew_str = ", ".join(m.mention for m in [user1, user2, user3] if m)
-        new_val_display = format_minutes_as_hhmm(parsed_value) if is_life_stat(stat) else str(parsed_value)
+        new_val_display = format_seconds_as_hhmmss(parsed_value) if is_life_stat(stat) else str(parsed_value)
         await interaction.response.send_message(
             f"Set {crew_str}'s {stat} high score to {new_val_display}. Previous verified best was {prev_best_display}.",
             ephemeral=True,
@@ -544,7 +576,7 @@ class HLLArmLeaderboard(commands.Cog):
                     if channel:
                         for sid, uid, stat, val in rows:
                             try:
-                                val_display = format_minutes_as_hhmm(val) if is_life_stat(stat) else str(val)
+                                val_display = format_seconds_as_hhmmss(val) if is_life_stat(stat) else str(val)
                                 await channel.send(
                                     f"<@{uid}> your armour crew submission #{sid} ({val_display} {stat}) was removed "
                                     f"due to missing screenshot within {PROOF_TIMEOUT_MINUTES} minutes."
@@ -570,7 +602,7 @@ class ArmSubmissionModal(Modal):
         self.crew_key = crew_key
 
         if is_life_stat(stat):
-            self.value_input = TextInput(label="Enter your time (HH:MM)", placeholder="e.g. 1:23", required=True)
+            self.value_input = TextInput(label="Enter your time (H:MM or H:MM:SS)", placeholder="e.g. 1:23 or 1:23:45", required=True)
         else:
             self.value_input = TextInput(label="Enter your score", placeholder="e.g. 10", required=True)
         self.add_item(self.value_input)
@@ -601,14 +633,14 @@ class ArmSubmissionModal(Modal):
         try:
             raw_value = str(self.value_input.value).strip()
             if is_life_stat(self.stat):
-                value = parse_hhmm_to_minutes(raw_value)
+                value = parse_time_to_seconds(raw_value)  # seconds
             else:
                 value = int(raw_value)
                 if value < 0:
                     raise ValueError("negative")
         except (TypeError, ValueError):
             if is_life_stat(self.stat):
-                await interaction.response.send_message("Please enter time as HH:MM (e.g. 1:23).", ephemeral=True)
+                await interaction.response.send_message("Please enter time as H:MM or H:MM:SS (e.g. 1:23 or 1:23:45).", ephemeral=True)
             else:
                 await interaction.response.send_message("Please enter a valid non-negative integer.", ephemeral=True)
             return
@@ -634,7 +666,7 @@ class ArmSubmissionModal(Modal):
         # Decide if screenshot is required
         submissions_channel = await self.cog._get_channel(ARM_SUBMISSIONS_CHANNEL_ID)
         require_ss = random.random() < 0.7
-        display_value = format_minutes_as_hhmm(value) if is_life_stat(self.stat) else str(value)
+        display_value = format_seconds_as_hhmmss(value) if is_life_stat(self.stat) else str(value)
 
         if submissions_channel:
             try:
