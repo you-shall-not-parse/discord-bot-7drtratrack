@@ -383,7 +383,7 @@ class HLLArmLeaderboard(commands.Cog):
         description="Admin: set a crew's high score for a stat. Set value to 0 to remove this crew from leaderboard."
     )
     @app_commands.guilds(discord.Object(id=GUILD_ID))
-    async def hllhighs-armscoreadmin(
+    async def hllhighsarmscoreadmin(
         self,
         interaction: discord.Interaction,
         user1: discord.Member,
@@ -483,7 +483,7 @@ class HLLArmLeaderboard(commands.Cog):
         )
 
     # --- Autocomplete for "stat" argument ---
-    @hllhighs-armscoreadmin.autocomplete("stat")
+    @hllhighsarmscoreadmin.autocomplete("stat")
     async def stat_autocomplete(
         self,
         interaction: discord.Interaction,
