@@ -1,3 +1,12 @@
+# hll_stats_cog.py
+# Simplified HLL stats cog with a single "edit-this-line" list that controls which metrics
+# are enabled by default. Edit DEFAULT_ENABLED_METRICS (the single line below) to add/remove
+# metrics throughout the bot. Any metric added here must have a corresponding entry in
+# METRIC_DEFS (so the bot knows how to label/format/aggregate it).
+#
+# The code validates DEFAULT_ENABLED_METRICS against METRIC_DEFS and uses that filtered list
+# when creating guild defaults and when rendering leaderboards.
+
 import io
 import csv
 import json
@@ -27,6 +36,44 @@ DB_PATH: str = "hll_stats.sqlite3"
 
 GUILD_IDS = [GUILD_ID]
 GUILDS = [discord.Object(id=GUILD_ID)]
+
+# =========================
+# Metric definitions
+# NOTE: If you add a metric key to DEFAULT_ENABLED_METRICS (below), you MUST add
+# a corresponding entry here in METRIC_DEFS with its label, aggregation modes, column name,
+# and formatting function. The code will filter DEFAULT_ENABLED_METRICS to this dict.
+# =========================
+
+METRIC_DEFS: Dict[str, Dict[str, Any]] = {
+    "kills": {"label": "Kills", "all_time": "sum", "rolling": "avg", "column": "kills", "fmt": lambda v: f"{v:.0f}"},
+    "deaths": {"label": "Deaths", "all_time": "sum", "rolling": "avg", "column": "deaths", "fmt": lambda v: f"{v:.0f}"},
+    "kdr": {"label": "K/D", "all_time": "avg", "rolling": "avg", "column": "kdr", "fmt": lambda v: f"{v:.2f}"},
+    "kpm": {"label": "Kills/min", "all_time": "avg", "rolling": "avg", "column": "kpm", "fmt": lambda v: f"{v:.2f}"},
+    "dpm": {"label": "Deaths/min", "all_time": "avg", "rolling": "avg", "column": "dpm", "fmt": lambda v: f"{v:.2f}"},
+    "combat_effectiveness": {"label": "Combat Effectiveness", "all_time": "sum", "rolling": "avg", "column": "combat_effectiveness", "fmt": lambda v: f"{v:.0f}"},
+    "support_points": {"label": "Support Points", "all_time": "sum", "rolling": "avg", "column": "support_points", "fmt": lambda v: f"{v:.0f}"},
+    "defensive_points": {"label": "Defensive Points", "all_time": "sum", "rolling": "avg", "column": "defensive_points", "fmt": lambda v: f"{v:.0f}"},
+    "offensive_points": {"label": "Offensive Points", "all_time": "sum", "rolling": "avg", "column": "offensive_points", "fmt": lambda v: f"{v:.0f}"},
+    "max_kill_streak": {"label": "Max kill streak", "all_time": "max", "rolling": "max", "column": "max_kill_streak", "fmt": lambda v: f"{v:.0f}"},
+    "max_death_streak": {"label": "Max death streak", "all_time": "max", "rolling": "max", "column": "max_death_streak", "fmt": lambda v: f"{v:.0f}"},
+}
+
+# =========================
+# Edit THIS LINE to add/remove which metrics are enabled by DEFAULT for new guilds.
+# Make sure any key you add exists as a key in METRIC_DEFS above.
+# Example: ["kills","deaths","kdr","kpm","dpm"]
+# =========================
+DEFAULT_ENABLED_METRICS = ["kills", "deaths", "kdr", "kpm", "dpm"]
+# =========================
+
+# Helper: validate and canonicalize the default enabled metrics list
+def _canonical_default_enabled_metrics() -> List[str]:
+    # keep the user-editable list as the authoritative list, but filter to known defs
+    filtered = [m for m in DEFAULT_ENABLED_METRICS if m in METRIC_DEFS]
+    if not filtered:
+        # fall back to all defined metrics if the editable list is empty/invalid
+        return list(METRIC_DEFS.keys())
+    return filtered
 
 # =========================
 # Utilities: trimming, normalization, rank stripping
@@ -124,26 +171,6 @@ def _safe_ratio(num: Optional[float], den: Optional[float]) -> Optional[float]:
     if num is None or den is None or den == 0:
         return None
     return num / den
-
-# =========================
-# Metric definitions
-# =========================
-
-METRIC_DEFS: Dict[str, Dict[str, Any]] = {
-    "kills": {"label": "Kills", "all_time": "sum", "rolling": "avg", "column": "kills", "fmt": lambda v: f"{v:.0f}"},
-    "deaths": {"label": "Deaths", "all_time": "sum", "rolling": "avg", "column": "deaths", "fmt": lambda v: f"{v:.0f}"},
-    "kdr": {"label": "K/D", "all_time": "avg", "rolling": "avg", "column": "kdr", "fmt": lambda v: f"{v:.2f}"},
-    "kpm": {"label": "Kills/min", "all_time": "avg", "rolling": "avg", "column": "kpm", "fmt": lambda v: f"{v:.2f}"},
-    "dpm": {"label": "Deaths/min", "all_time": "avg", "rolling": "avg", "column": "dpm", "fmt": lambda v: f"{v:.2f}"},
-    "combat_effectiveness": {"label": "Combat Effectiveness", "all_time": "sum", "rolling": "avg", "column": "combat_effectiveness", "fmt": lambda v: f"{v:.0f}"},
-    "support_points": {"label": "Support Points", "all_time": "sum", "rolling": "avg", "column": "support_points", "fmt": lambda v: f"{v:.0f}"},
-    "defensive_points": {"label": "Defensive Points", "all_time": "sum", "rolling": "avg", "column": "defensive_points", "fmt": lambda v: f"{v:.0f}"},
-    "offensive_points": {"label": "Offensive Points", "all_time": "sum", "rolling": "avg", "column": "offensive_points", "fmt": lambda v: f"{v:.0f}"},
-    "max_kill_streak": {"label": "Max kill streak", "all_time": "max", "rolling": "max", "column": "max_kill_streak", "fmt": lambda v: f"{v:.0f}"},
-    "max_death_streak": {"label": "Max death streak", "all_time": "max", "rolling": "max", "column": "max_death_streak", "fmt": lambda v: f"{v:.0f}"},
-}
-
-DEFAULT_ENABLED_METRICS = ["kills", "deaths", "kdr", "kpm", "dpm", "combat_effectiveness", "support_points", "defensive_points", "offensive_points"]
 
 # =========================
 # DB schema and migrations
@@ -249,14 +276,15 @@ class HLLStatsCog(commands.Cog):
 
     # ---- settings helpers ----
     async def ensure_guild_settings(self, guild_id: int) -> None:
-        # Keep guild_settings created but we no longer expose commands to change it.
+        # Use the canonicalized default enabled metrics when creating a new guild settings row.
         assert self.db
         async with self.db.execute("SELECT guild_id FROM guild_settings WHERE guild_id=?", (str(guild_id),)) as cur:
             row = await cur.fetchone()
         if not row:
+            defaults = _canonical_default_enabled_metrics()
             await self.db.execute(
                 "INSERT INTO guild_settings (guild_id, rolling_window_games, enabled_metrics) VALUES (?, ?, ?)",
-                (str(guild_id), DEFAULT_ROLLING_WINDOW_GAMES, json.dumps(DEFAULT_ENABLED_METRICS)),
+                (str(guild_id), DEFAULT_ROLLING_WINDOW_GAMES, json.dumps(defaults)),
             )
             await self.db.commit()
 
@@ -267,11 +295,27 @@ class HLLStatsCog(commands.Cog):
             row = await cur.fetchone()
         window = row[0]
         try:
-            enabled = json.loads(row[1]) if row and row[1] else DEFAULT_ENABLED_METRICS
+            enabled_raw = json.loads(row[1]) if row and row[1] else _canonical_default_enabled_metrics()
         except Exception:
-            enabled = DEFAULT_ENABLED_METRICS
-        enabled = [m for m in enabled if m in METRIC_DEFS]
+            enabled_raw = _canonical_default_enabled_metrics()
+        # Ensure any stored enabled metrics are valid keys in METRIC_DEFS
+        enabled = [m for m in enabled_raw if m in METRIC_DEFS]
+        # If none are valid, fall back to canonical defaults
+        if not enabled:
+            enabled = _canonical_default_enabled_metrics()
         return {"rolling_window_games": window, "enabled_metrics": enabled}
+
+    async def set_enabled_metrics(self, guild_id: int, metrics: List[str]) -> None:
+        assert self.db
+        # persist only valid metric keys
+        metrics = [m for m in metrics if m in METRIC_DEFS]
+        await self.db.execute("UPDATE guild_settings SET enabled_metrics=? WHERE guild_id=?", (json.dumps(metrics), str(guild_id)))
+        await self.db.commit()
+
+    async def set_rolling_window(self, guild_id: int, window: int) -> None:
+        assert self.db
+        await self.db.execute("UPDATE guild_settings SET rolling_window_games=? WHERE guild_id=?", (window, str(guild_id)))
+        await self.db.commit()
 
     # ---- DB helpers ----
     async def upsert_player(self, guild_id: int, player_id: str, name: str) -> None:
@@ -855,7 +899,7 @@ class HLLStatsCog(commands.Cog):
           - "Leaderboards — Rolling (last X)" (fields: one per enabled metric containing top10 rolling)
         """
         settings = await self.get_settings(guild.id)
-        enabled_metrics = settings["enabled_metrics"]
+        enabled_metrics = settings["enabled_metrics"]  # already validated by get_settings
         window = settings["rolling_window_games"]
 
         # Resolve channel
@@ -886,8 +930,6 @@ class HLLStatsCog(commands.Cog):
         if not match_rows:
             matches_embed.description = "No matches with active stats yet."
         else:
-            # Limit to a reasonable number of matches per embed field (Discord limits field length)
-            # We'll create one field per match for clarity.
             for (gid, filename, uploader_id, created_at, total_rows, active_rows) in match_rows:
                 uploader_display = str(uploader_id)
                 try:
@@ -915,6 +957,9 @@ class HLLStatsCog(commands.Cog):
         all_embed = discord.Embed(title="Leaderboards — All-time", color=discord.Color.gold(), timestamp=datetime.datetime.utcnow())
         all_embed.set_footer(text="All-time top 10 per metric (sums or averages as configured).")
         for mk in enabled_metrics:
+            # guard: ensure metric key still exists in METRIC_DEFS
+            if mk not in METRIC_DEFS:
+                continue
             rows = await self.get_all_time_leaderboard(guild.id, mk, limit=10)
             if not rows:
                 all_embed.add_field(name=METRIC_DEFS[mk]["label"], value="No data.", inline=False)
@@ -930,6 +975,8 @@ class HLLStatsCog(commands.Cog):
         roll_embed = discord.Embed(title=f"Leaderboards — Rolling (last {window})", color=discord.Color.orange(), timestamp=datetime.datetime.utcnow())
         roll_embed.set_footer(text=f"Rolling averages / maxima over last {window} games.")
         for mk in enabled_metrics:
+            if mk not in METRIC_DEFS:
+                continue
             rows = await self.get_rolling_leaderboard(guild.id, mk, window, limit=10)
             if not rows:
                 roll_embed.add_field(name=METRIC_DEFS[mk]["label"], value="No data.", inline=False)
@@ -1007,6 +1054,8 @@ class HLLStatsCog(commands.Cog):
 
         all_time_lines = [f"Games: {all_time['games']}"]
         for mk in enabled:
+            if mk not in METRIC_DEFS:
+                continue
             val = all_time.get(mk)
             all_time_lines.append(f"{METRIC_DEFS[mk]['label']}: {fmt(mk, val)}")
 
