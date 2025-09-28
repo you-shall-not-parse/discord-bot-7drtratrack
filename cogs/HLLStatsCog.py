@@ -680,37 +680,6 @@ class HLLStatsCog(commands.Cog):
 
         await interaction.followup.send(f"Applied default metrics to this guild: {defaults}", ephemeral=True)
 
-    @app_commands.command(name="apply-default-metrics-all", description="Overwrite enabled metrics with DEFAULT_ENABLED_METRICS and refresh.")
-    async def apply_default_metrics_all(self, interaction: discord.Interaction):
-        try:
-            is_owner = await self.bot.is_owner(interaction.user)
-        except Exception:
-            is_owner = False
-        if not is_owner:
-            await interaction.response.send_message("Only the bot owner can run this.", ephemeral=True)
-            return
-
-        await interaction.response.defer(ephemeral=True)
-        defaults = [m for m in DEFAULT_ENABLED_METRICS if m in METRIC_DEFS]
-        if not defaults:
-            await interaction.followup.send("No valid default metrics available (check METRIC_DEFS).", ephemeral=True)
-            return
-
-        await self.db.execute("UPDATE guild_settings SET enabled_metrics=?", (json.dumps(defaults),))
-        await self.db.commit()
-
-        failed = []
-        for guild in list(self.bot.guilds):
-            try:
-                await self._post_or_update_leaderboards_in_channel(guild)
-            except Exception:
-                failed.append(guild.id)
-
-        if failed:
-            await interaction.followup.send(f"Applied defaults to all guilds; failed to refresh for guild IDs: {failed}", ephemeral=True)
-        else:
-            await interaction.followup.send(f"Applied defaults to all guilds and refreshed leaderboards.", ephemeral=True)
-
     # -----------------------
     # Existing commands: ingest, myhllstats, leaderboards, etc.
     # -----------------------
