@@ -680,7 +680,7 @@ class HLLStatsCog(commands.Cog):
 
         await interaction.followup.send(f"Applied default metrics to this guild: {defaults}", ephemeral=True)
 
-    @app_commands.command(name="apply-default-metrics-all", description="[Owner only] Overwrite enabled metrics for ALL guilds with DEFAULT_ENABLED_METRICS and refresh leaderboards.")
+    @app_commands.command(name="apply-default-metrics-all", description="Overwrite enabled metrics with DEFAULT_ENABLED_METRICS and refresh.")
     async def apply_default_metrics_all(self, interaction: discord.Interaction):
         try:
             is_owner = await self.bot.is_owner(interaction.user)
