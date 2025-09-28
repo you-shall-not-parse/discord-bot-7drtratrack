@@ -613,10 +613,7 @@ class HLLStatsCog(commands.Cog):
 
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-       @app_commands.command(
-        name="admin_hllstatsremove",
-        description="Permanently delete a game and all its stats (irreversible)."
-        )
+    @app_commands.command(name="admin_hllstatsremove" description="Permanently delete a game and all its stats (irreversible).")
     @app_commands.describe(game_id="Game ID to permanently delete")
     @app_commands.guild_only()
     async def admin_remove(self, interaction: discord.Interaction, game_id: int):
