@@ -334,7 +334,7 @@ class HLLStatsCog(commands.Cog):
               combat_effectiveness, support_points, defensive_points, offensive_points,
               max_kill_streak, max_death_streak,
               weapons, death_by_weapons, extras, active
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(guild_id), game_id, mapped["player_id"],
