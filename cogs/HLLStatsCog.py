@@ -1,15 +1,3 @@
-"""
-HLL Stats Cog (no graphing) — single-guild, automatic Discord -> player_id linking.
-
-This file is the full cog with admin commands and leaderboard updating.
-At the top you can configure:
-- GUILD_ID: integer guild/server id
-- LEADERBOARD_CHANNEL_ID: integer channel id to post leaderboards
-- ADMIN_ROLE_IDS: list of integer role ids that should be treated as admins (in addition to guild administrators / manage_guild permission).
-
-Drop this file into cogs/hll_stats.py and load it with:
-    await bot.load_extension("cogs.hll_stats")
-"""
 import io
 import csv
 import json
@@ -27,14 +15,11 @@ import aiosqlite
 # Configuration - single guild + leaderboard channel + admin role IDs
 # =========================
 # Replace the placeholder integers with your actual server/channel/role IDs.
-GUILD_ID: int = 123456789012345678            # set your guild ID (integer)
+GUILD_ID: int = 1097913605082579024            # set your guild ID (integer)
 LEADERBOARD_CHANNEL_ID: int = 1099806153170489485  # set your leaderboard channel ID (integer)
 
 # Admin roles: list the role IDs which should be allowed to run admin commands.
-# Example: ADMIN_ROLE_IDS = [111111111111111111, 222222222222222222]
-ADMIN_ROLE_IDS: List[int] = [
-    # add integer role IDs here
-]
+ADMIN_ROLE_IDS = [1213495462632361994, 1097915860322091090]
 
 # Rolling window and DB path (set as desired)
 DEFAULT_ROLLING_WINDOW_GAMES: int = 5
