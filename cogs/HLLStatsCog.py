@@ -63,7 +63,7 @@ METRIC_DEFS: Dict[str, Dict[str, Any]] = {
 # Make sure any key you add exists as a key in METRIC_DEFS above.
 # Example: ["kills","deaths","kdr","kpm","dpm"]
 # =========================
-DEFAULT_ENABLED_METRICS = ["kills", "deaths", "kdr", "kpm", "dpm"]
+DEFAULT_ENABLED_METRICS = ["kills", "deaths", "kdr", "kpm", "dpm", "combat_effectiveness", "support_points", "defensive_points", "offensive_points"]
 # =========================
 
 # Helper: validate and canonicalize the default enabled metrics list
