@@ -7,7 +7,7 @@ from discord import app_commands, Embed
 from discord.utils import get
 
 PRESET_FILE = "role_presets.json"
-REQUIRED_ROLE_NAME = {"Infantry School Admin","Tank Trainer"}
+REQUIRED_ROLE_NAME = ("Infantry School Admin","Tank Trainer")
 GUILD_ID = 1097913605082579024  # Set your guild/server ID here
 
 logging.basicConfig(level=logging.INFO)
