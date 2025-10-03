@@ -28,9 +28,9 @@ NATO_SQUAD_NAMES = [
 
 # Creative base names for "Any Size" tanks. We append an index (e.g., "Big Boi 1", "Zoomer 3").
 ANYSIZE_CREATIVE_NAMES = [
-    "Big Boi", "Keith", "Big Chonker", "Autism Box", "Box of Mysteries", "Fuck Box",
-    "Royston", "Badger", "Bandit", "Maverick", "Kevin", "Rogue",
-    "Vanguard", "Warthog", "Coyote", "Mickey the Sticky", "Brawler", "Ghost",
+    "Anvil", "The Flying Scotsman", "Big Chonker", "Autism Box", "Box of Mysteries", "Lord Crump III",
+    "Royston", "Badger", "Coleslaw", "Machete", "Kevin", "Rogue",
+    "Vanguard", "Warthog", "Coyote", "Mickey the Sticky", "Brawler", "Gauntlet",
     "Rascal", "Goblin", "Mongoose", "Thumper", "Spitfire", "Bulldog", "Viper"
 ]
 
