@@ -1,9 +1,12 @@
 # hll_stats_cog.py
-# Enhancements (NEW):
+# Enhancements:
 # - Median Kills leaderboard
 # - Derived table player_weapon_totals for fast top-weapon lookups
 # - Cached top weapon resolution per leaderboard cycle
-# - Existing earlier enhancements retained (EWMA/fixed rolling, strict inclusion, deltas, median shown in /myhllstats)
+# - EWMA / fixed rolling modes + strict inclusion
+# - Deltas after ingest
+# - Median Kills shown in /myhllstats
+# - NEW COMMAND: /hllstats-set-rolling-window (admin) to change rolling window safely
 
 import io
 import csv
@@ -26,7 +29,7 @@ GUILD_ID: int = 1097913605082579024
 LEADERBOARD_CHANNEL_ID: int = 1099806153170489485
 ADMIN_ROLE_IDS = [1213495462632361994, 1097915860322091090]
 
-DEFAULT_ROLLING_WINDOW_GAMES: int = 3
+DEFAULT_ROLLING_WINDOW_GAMES: int = 3  # default for new guild settings rows
 DB_PATH: str = "hll_stats.sqlite3"
 
 # Metrics where we append top weapon info
@@ -131,7 +134,6 @@ def _safe_ratio(num: Optional[float], den: Optional[float]) -> Optional[float]:
         return None
     return num / den
 
-# Weapon parser (moved earlier for reuse)
 _WEAPON_PAIR_RE = re.compile(r'^\s*([^:=,]+)\s*[:=]\s*(\d+)\s*$')
 def _parse_weapons_field(raw: Optional[str]) -> Dict[str, int]:
     if not raw:
@@ -139,7 +141,6 @@ def _parse_weapons_field(raw: Optional[str]) -> Dict[str, int]:
     raw = raw.strip()
     if not raw:
         return {}
-    # Try JSON
     try:
         parsed = json.loads(raw)
         if isinstance(parsed, dict):
@@ -231,7 +232,6 @@ CREATE TABLE IF NOT EXISTS guild_settings (
   enabled_metrics TEXT NOT NULL
 );
 
-/* NEW: Derived table for weapon totals */
 CREATE TABLE IF NOT EXISTS player_weapon_totals (
   guild_id TEXT NOT NULL,
   player_id TEXT NOT NULL,
@@ -247,7 +247,6 @@ CREATE INDEX IF NOT EXISTS idx_pwt_player ON player_weapon_totals (guild_id, pla
 
 async def init_db(conn: aiosqlite.Connection) -> None:
     await conn.executescript(SCHEMA_SQL)
-    # Any future additive schema changes can be handled here (ensure_column, etc.)
     await conn.commit()
 
 # =========================
@@ -262,6 +261,12 @@ class HLLStatsCog(commands.Cog):
     async def cog_load(self) -> None:
         self.db = await aiosqlite.connect(DB_PATH)
         await init_db(self.db)
+        # Auto-migrate any rows still at legacy default 5 -> current default (3)
+        await self.db.execute(
+            "UPDATE guild_settings SET rolling_window_games=? WHERE guild_id=? AND rolling_window_games=5",
+            (DEFAULT_ROLLING_WINDOW_GAMES, str(GUILD_ID))
+        )
+        await self.db.commit()
 
     async def cog_unload(self) -> None:
         if self.db:
@@ -342,10 +347,7 @@ class HLLStatsCog(commands.Cog):
             await self.db.commit()
             return (cur.lastrowid, True)
         except aiosqlite.IntegrityError:
-            async with self.db.execute(
-                "SELECT id FROM games WHERE guild_id=? AND file_hash=?",
-                (str(guild_id), file_hash)
-            ) as cur:
+            async with self.db.execute("SELECT id FROM games WHERE guild_id=? AND file_hash=?", (str(guild_id), file_hash)) as cur:
                 row = await cur.fetchone()
             if row:
                 return (row[0], False)
@@ -505,7 +507,7 @@ class HLLStatsCog(commands.Cog):
 
     async def get_player_median_stat(self, guild_id: int, player_id: str, column: str) -> Optional[float]:
         assert self.db
-        if column not in {"kills"}:  # we only use kills median right now
+        if column not in {"kills"}:
             return None
         async with self.db.execute(
             f"SELECT {column} FROM stats WHERE guild_id=? AND player_id=? AND active=1 AND {column} IS NOT NULL ORDER BY {column}",
@@ -531,9 +533,6 @@ class HLLStatsCog(commands.Cog):
             return [(r[0], r[1]) for r in await cur.fetchall() if r[1] is not None]
 
     async def get_median_kills_leaderboard(self, guild_id: int, limit: int = 10) -> List[Tuple[str, float]]:
-        """
-        Compute median kills per player (active stats). Simplicity > micro-optimization.
-        """
         assert self.db
         async with self.db.execute(
             "SELECT player_id, kills FROM stats WHERE guild_id=? AND active=1 AND kills IS NOT NULL ORDER BY player_id, id",
@@ -572,7 +571,7 @@ class HLLStatsCog(commands.Cog):
                 if ROLLING_MODE == "ewma":
                     alpha = 2 / (window + 1)
                     ew = None
-                    for v in reversed(vals):  # oldest -> newest
+                    for v in reversed(vals):
                         ew = v if ew is None else alpha * v + (1 - alpha) * ew
                     v_final = ew if ew is not None else None
                 else:
@@ -585,14 +584,8 @@ class HLLStatsCog(commands.Cog):
         results.sort(key=lambda x: x[1], reverse=True)
         return results[:limit]
 
-    # ---- Weapon totals (derived) ----
     async def upsert_player_weapon_totals(self, guild_id: int, aggregates: Dict[str, Dict[str, int]]) -> None:
-        """
-        aggregates: {player_id: {weapon: kills_to_add}}
-        Performs incremental adds (UPSERT).
-        """
         assert self.db
-        # Use single transaction
         for pid, wmap in aggregates.items():
             for weapon, inc in wmap.items():
                 await self.db.execute(
@@ -606,15 +599,10 @@ class HLLStatsCog(commands.Cog):
                 )
 
     async def get_top_weapon_map(self, guild_id: int, player_ids: Set[str]) -> Dict[str, Tuple[Optional[str], int]]:
-        """
-        Return dict player_id -> (weapon, kills) using derived table.
-        Any player missing data => (None, 0).
-        """
         assert self.db
         if not player_ids:
             return {}
         out: Dict[str, Tuple[Optional[str], int]] = {pid: (None, 0) for pid in player_ids}
-        # Chunk to avoid param limit
         pids = list(player_ids)
         chunk_size = 500
         for i in range(0, len(pids), chunk_size):
@@ -633,7 +621,6 @@ class HLLStatsCog(commands.Cog):
                         out[pid] = (weapon, kills)
         return out
 
-    # ---- Batch aggregate before/after ingest for deltas ----
     async def get_aggregate_for_players(self, guild_id: int, player_ids: Iterable[str]) -> Dict[str, Dict[str, float]]:
         assert self.db
         result: Dict[str, Dict[str, float]] = {}
@@ -669,7 +656,6 @@ class HLLStatsCog(commands.Cog):
                     }
         return result
 
-    # -------- CSV ingestion + auto-linking ----------
     def _map_row(self, raw_row: Dict[str, Any]) -> Dict[str, Any]:
         norm_to_value: Dict[str, Any] = {}
         for k, v in raw_row.items():
@@ -682,7 +668,6 @@ class HLLStatsCog(commands.Cog):
             return None
         player_id = get_field("playerid", "steamid", "playeridsteamid")
         name = get_field("name")
-
         kills = _parse_float(get_field("kills"))
         deaths = _parse_float(get_field("deaths"))
         kdr = _parse_float(get_field("kdr", "killsdeathratio", "kd"))
@@ -698,7 +683,6 @@ class HLLStatsCog(commands.Cog):
         max_ds = _parse_float(get_field("maxdeathstreak"))
         weapons = get_field("weapons", "killsbyweapons", "killsbyweaponsweaponscolumn")
         death_by_weapons = get_field("deathbyweapons")
-
         known = {
             "playerid","steamid","playeridsteamid","name","kills","deaths",
             "kdr","killsdeathratio","kd","killspermin","kpm","killsminute",
@@ -709,7 +693,6 @@ class HLLStatsCog(commands.Cog):
         }
         extras = {k: v for k, v in raw_row.items()
                   if "".join(ch.lower() for ch in k if ch.isalnum()) not in known}
-
         return {
             "player_id": str(player_id).strip() if player_id is not None else None,
             "name": str(name).strip() if name is not None else None,
@@ -754,10 +737,9 @@ class HLLStatsCog(commands.Cog):
             await interaction.response.send_message("Guild-only.", ephemeral=True)
             return
         if not self._is_admin(interaction):
-            await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
+            await interaction.response.send_message("You do not have permission.", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True)
-
         async with self.db.execute(
             "SELECT id FROM games WHERE guild_id=? AND id=?",
             (str(interaction.guild_id), game_id)
@@ -766,9 +748,7 @@ class HLLStatsCog(commands.Cog):
         if not row:
             await interaction.followup.send(f"Game ID {game_id} not found.", ephemeral=True)
             return
-
         try:
-            # Delete stats for game
             await self.db.execute(
                 "DELETE FROM stats WHERE guild_id=? AND game_id=?",
                 (str(interaction.guild_id), game_id)
@@ -777,8 +757,6 @@ class HLLStatsCog(commands.Cog):
                 "DELETE FROM games WHERE guild_id=? AND id=?",
                 (str(interaction.guild_id), game_id)
             )
-            # NOTE: We do NOT recalculate player_weapon_totals here.
-            # (Optional: implement a full rebuild command if needed.)
             async with self.db.execute(
                 "SELECT player_id FROM players WHERE guild_id=?",
                 (str(interaction.guild_id),)
@@ -805,32 +783,31 @@ class HLLStatsCog(commands.Cog):
                 await self.db.execute("ROLLBACK")
             except Exception:
                 pass
-            await interaction.followup.send(f"Failed to delete game: {exc}", ephemeral=True)
+            await interaction.followup.send(f"Failed to delete: {exc}", ephemeral=True)
             return
-
         try:
             await self._post_or_update_leaderboards_in_channel(interaction.guild)
         except Exception:
             pass
-        await interaction.followup.send("Game deleted and orphan cleanup done.", ephemeral=True)
+        await interaction.followup.send("Game deleted; cleanup complete.", ephemeral=True)
 
     # -----------------------
     # Apply defaults
     # -----------------------
     @app_commands.command(name="hllstats-apply-default-metrics",
-                          description="Admin: set enabled metrics to DEFAULT_ENABLED_METRICS and refresh.")
+                          description="Admin: set enabled metrics to defaults and refresh.")
     @app_commands.guild_only()
     async def apply_default_metrics(self, interaction: discord.Interaction):
         if interaction.guild is None:
             await interaction.response.send_message("Guild-only.", ephemeral=True)
             return
         if not self._is_admin(interaction):
-            await interaction.response.send_message("You do not have permission.", ephemeral=True)
+            await interaction.response.send_message("No permission.", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True)
         defaults = [m for m in DEFAULT_ENABLED_METRICS if m in METRIC_DEFS]
         if not defaults:
-            await interaction.followup.send("Default metric list invalid.", ephemeral=True)
+            await interaction.followup.send("No valid defaults.", ephemeral=True)
             return
         await self.db.execute(
             "UPDATE guild_settings SET enabled_metrics=? WHERE guild_id=?",
@@ -840,9 +817,34 @@ class HLLStatsCog(commands.Cog):
         try:
             await self._post_or_update_leaderboards_in_channel(interaction.guild)
         except Exception as exc:
-            await interaction.followup.send(f"Updated metrics but refresh failed: {exc}", ephemeral=True)
+            await interaction.followup.send(f"Updated, refresh failed: {exc}", ephemeral=True)
             return
         await interaction.followup.send(f"Applied defaults: {defaults}", ephemeral=True)
+
+    # -----------------------
+    # NEW COMMAND: set rolling window
+    # -----------------------
+    @app_commands.command(name="hllstats-set-rolling-window",
+                          description="Admin: set rolling window size (games) and refresh leaderboards.")
+    @app_commands.describe(window="Number of recent games (1-50) to use for rolling metrics")
+    @app_commands.guild_only()
+    async def set_rolling_cmd(self, interaction: discord.Interaction, window: int):
+        if interaction.guild is None:
+            await interaction.response.send_message("Guild-only.", ephemeral=True)
+            return
+        if not self._is_admin(interaction):
+            await interaction.response.send_message("You do not have permission.", ephemeral=True)
+            return
+        if window < 1 or window > 50:
+            await interaction.response.send_message("Window must be between 1 and 50.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        await self.set_rolling_window(interaction.guild_id, window)
+        try:
+            await self._post_or_update_leaderboards_in_channel(interaction.guild)
+            await interaction.followup.send(f"Rolling window set to {window}. Leaderboards refreshed.", ephemeral=True)
+        except Exception as exc:
+            await interaction.followup.send(f"Window saved ({window}) but refresh failed: {exc}", ephemeral=True)
 
     # -----------------------
     # Ingest
@@ -857,20 +859,16 @@ class HLLStatsCog(commands.Cog):
         if interaction.guild_id != GUILD_ID:
             await interaction.response.send_message("This bot is locked to another guild.", ephemeral=True)
             return
-
         await self.ensure_guild_settings(interaction.guild_id)
         await interaction.response.defer(ephemeral=True, thinking=True)
-
         if not file.filename.lower().endswith(".csv"):
             await interaction.followup.send("File must be .csv", ephemeral=True)
             return
-
         try:
             raw_bytes = await file.read()
         except Exception:
             await interaction.followup.send("Failed to read attachment.", ephemeral=True)
             return
-
         file_hash = _sha256_bytes(raw_bytes)
         game_id, created = await self.insert_game(
             guild_id=interaction.guild_id,
@@ -881,16 +879,13 @@ class HLLStatsCog(commands.Cog):
             force=False
         )
         if not created:
-            await interaction.followup.send("Duplicate CSV (same content) already ingested.", ephemeral=True)
+            await interaction.followup.send("Duplicate CSV (already ingested).", ephemeral=True)
             return
-
         decoded = raw_bytes.decode("utf-8-sig", errors="replace")
         reader = csv.DictReader(io.StringIO(decoded))
         if not reader.fieldnames:
             await interaction.followup.send("CSV missing header row.", ephemeral=True)
             return
-
-        # Build members map
         members_map: Dict[str, int] = {}
         try:
             members = [m async for m in interaction.guild.fetch_members(limit=None)]
@@ -901,31 +896,24 @@ class HLLStatsCog(commands.Cog):
                         members_map.setdefault(norm, m.id)
         except Exception:
             members_map = {}
-
         processed = 0
         created_players = 0
         updated_players = 0
         missing_pid = 0
         auto_linked = 0
-
         async with self.db.execute(
             "SELECT player_id FROM players WHERE guild_id=?",
             (str(interaction.guild_id),)
         ) as cur:
             existing_pids = {r[0] for r in await cur.fetchall()}
-
         rows_buffer = list(reader)
         touched_players: List[str] = []
         for raw_row in rows_buffer:
             mp = self._map_row(raw_row)
             if mp.get("player_id"):
                 touched_players.append(mp["player_id"])
-
         before_stats = await self.get_aggregate_for_players(interaction.guild_id, touched_players)
-
-        # Accumulator for derived weapon totals
         weapon_accum: Dict[str, Dict[str, int]] = {}
-
         for raw_row in rows_buffer:
             mapped = self._map_row(raw_row)
             pid = mapped.get("player_id")
@@ -940,20 +928,14 @@ class HLLStatsCog(commands.Cog):
             else:
                 created_players += 1
                 existing_pids.add(pid)
-
-            # Insert stat
             await self.insert_stat(interaction.guild_id, game_id, mapped)
             processed += 1
-
-            # Derived weapons update
             if mapped.get("weapons"):
                 wmap = _parse_weapons_field(mapped["weapons"])
                 if wmap:
                     per_player = weapon_accum.setdefault(pid, {})
                     for w, k in wmap.items():
                         per_player[w] = per_player.get(w, 0) + k
-
-            # Auto-link
             norm_csv = _normalize_for_match(csv_name)
             if norm_csv and norm_csv in members_map:
                 discord_id = members_map[norm_csv]
@@ -962,11 +944,8 @@ class HLLStatsCog(commands.Cog):
                     auto_linked += 1
                 except Exception:
                     pass
-
-        # Update derived weapons table
         await self.upsert_player_weapon_totals(interaction.guild_id, weapon_accum)
         await self.commit()
-
         after_stats = await self.get_aggregate_for_players(interaction.guild_id, touched_players)
         changes_lines: List[str] = []
         for pid in sorted(set(touched_players)):
@@ -992,14 +971,12 @@ class HLLStatsCog(commands.Cog):
             if len(changes_lines) >= 20:
                 changes_lines.append("… (truncated)")
                 break
-
         posted_note = ""
         try:
             await self._post_or_update_leaderboards_in_channel(interaction.guild)
             posted_note = "Leaderboards updated."
         except Exception as exc:
             posted_note = f"Leaderboard update failed: {exc}"
-
         embed = discord.Embed(
             title="Stats Extracted",
             description=f"Processed {processed} rows from {file.filename}",
@@ -1013,7 +990,6 @@ class HLLStatsCog(commands.Cog):
             embed.add_field(name="Missing Player ID rows", value=str(missing_pid), inline=True)
         if changes_lines:
             embed.add_field(name="Recent Changes", value="\n".join(changes_lines), inline=False)
-
         await interaction.followup.send(embed=embed, ephemeral=True)
         await interaction.followup.send(posted_note, ephemeral=True)
 
@@ -1037,12 +1013,7 @@ class HLLStatsCog(commands.Cog):
         if channel is None or not isinstance(channel, discord.TextChannel):
             raise RuntimeError(f"Leaderboard channel not found or invalid (ID {LEADERBOARD_CHANNEL_ID})")
 
-        # Matches Embed
-        matches_embed = discord.Embed(
-            title="Matches — Included",
-            color=discord.Color.dark_blue(),
-            timestamp=datetime.datetime.utcnow()
-        )
+        matches_embed = discord.Embed(title="Matches — Included", color=discord.Color.dark_blue(), timestamp=datetime.datetime.utcnow())
         matches_embed.set_footer(text="Matches with active stats.")
         async with self.db.execute(
             """
@@ -1059,7 +1030,6 @@ class HLLStatsCog(commands.Cog):
             (str(guild.id), str(guild.id))
         ) as cur:
             match_rows = await cur.fetchall()
-
         if not match_rows:
             matches_embed.description = "No matches yet."
         else:
@@ -1073,7 +1043,6 @@ class HLLStatsCog(commands.Cog):
                 val = (f"File: {filename}\nUploader: {uploader_display}\n"
                        f"Uploaded: {created_at_str}\nRows: {active_rows}/{total_rows} active")
                 matches_embed.add_field(name=f"Match ID {gid}", value=val, inline=False)
-
         matches_msg = await self._find_bot_message_by_title(channel, matches_embed.title)
         if matches_msg:
             try:
@@ -1083,9 +1052,7 @@ class HLLStatsCog(commands.Cog):
         else:
             await channel.send(embed=matches_embed)
 
-        # ----------------------
-        # All-time Leaderboard Embed with caching top weapon lookups
-        # ----------------------
+        # All-time leaderboards
         all_time_results: Dict[str, List[Tuple[str, float]]] = {}
         all_time_player_ids_for_weapons: Set[str] = set()
         for mk in enabled_metrics:
@@ -1095,20 +1062,12 @@ class HLLStatsCog(commands.Cog):
             all_time_results[mk] = rows
             if mk in TOP_WEAPON_METRICS:
                 all_time_player_ids_for_weapons.update(pid for pid, _ in rows)
-
-        # Median kills leaderboard
         median_rows = await self.get_median_kills_leaderboard(guild.id, limit=10)
         all_time_player_ids_for_weapons.update(pid for pid, _ in median_rows if "kills" in TOP_WEAPON_METRICS)
-
         top_weapon_cache_all = await self.get_top_weapon_map(guild.id, all_time_player_ids_for_weapons)
 
-        all_embed = discord.Embed(
-            title="Leaderboards — All-time",
-            color=discord.Color.gold(),
-            timestamp=datetime.datetime.utcnow()
-        )
+        all_embed = discord.Embed(title="Leaderboards — All-time", color=discord.Color.gold(), timestamp=datetime.datetime.utcnow())
         all_embed.set_footer(text="All-time top 10 per metric.")
-
         for mk in enabled_metrics:
             if mk not in METRIC_DEFS:
                 continue
@@ -1128,8 +1087,6 @@ class HLLStatsCog(commands.Cog):
                         extra = f" (Top: {wpn} {wkills})"
                 lines.append(f"{i}. {latest_name} — {disp}{extra}")
             all_embed.add_field(name=METRIC_DEFS[mk]["label"], value="\n".join(lines), inline=False)
-
-        # Add Median Kills field
         if median_rows:
             lines = []
             for i, (pid, val) in enumerate(median_rows, start=1):
@@ -1141,7 +1098,6 @@ class HLLStatsCog(commands.Cog):
                         extra = f" (Top: {wpn} {wkills})"
                 lines.append(f"{i}. {latest_name} — {int(val)}{extra}")
             all_embed.add_field(name=MEDIAN_KILLS_LABEL, value="\n".join(lines), inline=False)
-
         all_msg = await self._find_bot_message_by_title(channel, all_embed.title)
         if all_msg:
             try:
@@ -1151,9 +1107,7 @@ class HLLStatsCog(commands.Cog):
         else:
             await channel.send(embed=all_embed)
 
-        # ----------------------
-        # Rolling Leaderboards with cache
-        # ----------------------
+        # Rolling leaderboards
         rolling_results: Dict[str, List[Tuple[str, float]]] = {}
         rolling_player_ids_for_weapons: Set[str] = set()
         for mk in enabled_metrics:
@@ -1163,9 +1117,7 @@ class HLLStatsCog(commands.Cog):
             rolling_results[mk] = rows
             if mk in TOP_WEAPON_METRICS:
                 rolling_player_ids_for_weapons.update(pid for pid, _ in rows)
-
         top_weapon_cache_roll = await self.get_top_weapon_map(guild.id, rolling_player_ids_for_weapons)
-
         roll_embed = discord.Embed(
             title=f"Leaderboards — Rolling (last {window})",
             color=discord.Color.orange(),
@@ -1174,7 +1126,6 @@ class HLLStatsCog(commands.Cog):
         desc_mode = "EWMA" if ROLLING_MODE == "ewma" else "Fixed window"
         strict_note = "strict" if ROLLING_STRICT_MIN else "partial"
         roll_embed.set_footer(text=f"{desc_mode} • window={window} • {strict_note}")
-
         for mk in enabled_metrics:
             if mk not in METRIC_DEFS:
                 continue
@@ -1194,7 +1145,6 @@ class HLLStatsCog(commands.Cog):
                         extra = f" (Top: {wpn} {wkills})"
                 lines.append(f"{i}. {latest_name} — {disp}{extra}")
             roll_embed.add_field(name=METRIC_DEFS[mk]["label"], value="\n".join(lines), inline=False)
-
         roll_msg = await self._find_bot_message_by_title(channel, roll_embed.title)
         if roll_msg:
             try:
@@ -1218,7 +1168,6 @@ class HLLStatsCog(commands.Cog):
         if interaction.guild_id != GUILD_ID:
             await interaction.followup.send("This instance is configured for a different guild.", ephemeral=True)
             return
-
         settings = await self.get_settings(interaction.guild_id)
         window = settings["rolling_window_games"]
         enabled = settings["enabled_metrics"]
@@ -1226,7 +1175,6 @@ class HLLStatsCog(commands.Cog):
         if not pid:
             await interaction.followup.send("No player ID linked. Ingest a CSV with your name to auto-link.", ephemeral=True)
             return
-
         latest_name = await self.get_latest_name(interaction.guild_id, pid) or "Unknown"
         all_time = await self.get_all_time_stats(interaction.guild_id, pid)
         if not all_time:
@@ -1234,12 +1182,10 @@ class HLLStatsCog(commands.Cog):
             return
         rolling = await self.get_rolling_stats(interaction.guild_id, pid, window)
         median_kills = await self.get_player_median_stat(interaction.guild_id, pid, "kills")
-
         def fmt(mk: str, v: Optional[float]) -> str:
             if v is None:
                 return "—"
             return METRIC_DEFS[mk]["fmt"](v)
-
         all_time_lines = [f"Games: {all_time['games']}"]
         if median_kills is not None:
             all_time_lines.append(f"Median Kills: {int(median_kills)}")
@@ -1247,7 +1193,6 @@ class HLLStatsCog(commands.Cog):
             if mk not in METRIC_DEFS:
                 continue
             all_time_lines.append(f"{METRIC_DEFS[mk]['label']}: {fmt(mk, all_time.get(mk))}")
-
         rolling_lines = []
         if rolling:
             roll_map = {
@@ -1271,7 +1216,6 @@ class HLLStatsCog(commands.Cog):
                         rolling_lines.append(f"{METRIC_DEFS[mk]['label']}: (N/A)")
         else:
             rolling_lines.append(f"No games in rolling window.")
-
         embed = discord.Embed(
             title=f"My HLL Stats • {latest_name}",
             color=discord.Color.blurple()
