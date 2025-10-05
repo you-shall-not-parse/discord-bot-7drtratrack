@@ -24,7 +24,7 @@ DB_FILE = "recleaderboard.db"
 # Minutes allowed to provide a screenshot when one is required
 PROOF_TIMEOUT_MINUTES = 5
 
-STATS = ["Most Sniper Kills", "Longest Sniper Kill", "Most OPs Destroyed as Recon", "Most Garrisons Dismantled as Recon", "Most Structures Destroyed"]
+STATS = ["Most Sniper Kills", "Longest Sniper Kill", "Most OPs Destroyed", "Most Garrisons Dismantled", "Most Structures Destroyed"]
 
 # Text shown under the embed title
 LEADERBOARD_DESCRIPTION = (
