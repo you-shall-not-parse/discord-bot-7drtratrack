@@ -6,7 +6,7 @@ from datetime import datetime, time
 import pytz
 
 # ---------------- Config ----------------
-BIRTHDAY_CHANNEL_ID = 1099248200776421406   # channel for birthday embed & daily messages
+BIRTHDAY_CHANNEL_ID = 1098333222540152944   # channel for birthday embed & daily messages
 SUMMARY_CHANNEL_ID = 1098333222540152944    # channel for monthly summaries
 GUILD_ID = 1097913605082579024              # your testing server ID
 TIMEZONE = "Europe/London"
