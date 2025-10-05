@@ -1,3 +1,5 @@
+# Merged with the infantry leaderboard and turned off on the 5th of Oct 2025 - Ben Crump
+
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
