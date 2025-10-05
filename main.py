@@ -57,7 +57,7 @@ async def main():
         await bot.load_extension("cogs.BirthdayCog")
         await bot.load_extension("cogs.HLLStatsCog")
         await bot.load_extension("cogs.HLLInfLeaderboard")
-        await bot.load_extension("cogs.HLLRecLeaderboard")
+        # await bot.load_extension("cogs.HLLRecLeaderboard")
         await bot.load_extension("cogs.HLLArmLeaderboard")
         await bot.load_extension("cogs.GameMonCog")
         await bot.load_extension("cogs.GetBackDemon")
