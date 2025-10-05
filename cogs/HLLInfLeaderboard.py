@@ -24,7 +24,7 @@ DB_FILE = "leaderboard.db"
 # Minutes allowed to provide a screenshot when one is required
 PROOF_TIMEOUT_MINUTES = 5
 
-STATS = ["Most Kills", "Most Artillery Kills", "Most Vehicles Destroyed", "Most Killstreak", "Most Satchel Kills", "Most OPs Destroyed as Infantry"]
+STATS = ["Most Kills", "Most Artillery Kills", "Most Vehicles Destroyed", "Most Killstreak", "Most Satchel Kills", "Most OPs Destroyed as Infantry", "Most Garrisons Destroyed as Inf", "Most Melee Kills"]
 
 # Text shown under the embed title
 LEADERBOARD_DESCRIPTION = (
