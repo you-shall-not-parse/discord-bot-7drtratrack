@@ -24,7 +24,7 @@ DB_FILE = "leaderboard.db"
 # Minutes allowed to provide a screenshot when one is required
 PROOF_TIMEOUT_MINUTES = 5
 
-STATS = ["Most Kills", "Most Artillery Kills", "Most Vehicles Destroyed", "Most Killstreak", "Most Satchel Kills", "Most OPs Destroyed", "Most Garrisons Destroyed", "Most Melee Kills", "Most Sniper Kills", "Longest Sniper Kill"]
+STATS = ["Most Kills", "Most Artillery Kills", "Most Vehicles Destroyed", "Most Killstreak", "Most Satchel Kills", "Most OPs Destroyed", "Most Garrisons Destroyed", "Most Melee Kills", "Most Sniper Kills", "Longest Sniper Kill", "Most Nodes Destroyed"]
 
 # Text shown under the embed title
 LEADERBOARD_DESCRIPTION = (
@@ -32,7 +32,7 @@ LEADERBOARD_DESCRIPTION = (
     "**You must have a screenshot to back up your submissions, it is requested on a random basis and if called upon you must post it "
     f"in <#{1419010992578363564}> otherwise your scores will be revoked.**\n\n"
     "Leaderboard shows the highest single verified submissions (pending proofs are excluded). "
-    "Admins and SNCO can use /hllinfscoreadmin to change your stats anytime as required. No Arty on the kills or killstreak!"
+    "Admins and SNCO can use /hllinfscoreadmin to change your stats anytime as required. **No Arty on the kills or killstreak!**"
 )
 LEADERBOARD_DESCRIPTION_MONTHLY = (
     "Showing highest single verified submissions for the current month. Use /hllhighs-inftopscores to view all-time leaders."
