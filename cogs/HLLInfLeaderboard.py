@@ -24,7 +24,7 @@ DB_FILE = "leaderboard.db"
 # Minutes allowed to provide a screenshot when one is required
 PROOF_TIMEOUT_MINUTES = 5
 
-STATS = ["Most Kills", "Most Artillery Kills", "Most Vehicles Destroyed", "Most Killstreak", "Most Satchel Kills", "Most OPs Destroyed", "Most Garrisons Destroyed", "Most Melee Kills", "Most Sniper Kills", "Longest Sniper Kill", "Most Nodes Destroyed"]
+STATS = ["Most Kills", "Most Artillery Kills", "Most Vehicles Destroyed", "Most Killstreak", "Most Satchel Kills", "Most OPs Destroyed", "Most Garrisons Destroyed", "Most Melee Kills", "Most Sniper Kills", "Longest Sniper Kill", "Most Nodes Destroyed", "HLL Time Played (Hours)"]
 
 # Text shown under the embed title
 LEADERBOARD_DESCRIPTION = (
