@@ -27,6 +27,12 @@ TEXT_OPTIONS = {
         "color": 0x00FF00,
         "author": None
     },
+    "Stroopwafel": {
+        "text": "Bees waffle is ready and hot",
+        "gif_file": waf.gif,
+        "color": 0x00FF00,
+        "author": None
+    }
 }
 
 class GetBackDemon(commands.Cog):
