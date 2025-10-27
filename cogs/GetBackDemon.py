@@ -29,7 +29,7 @@ TEXT_OPTIONS = {
     },
     "Stroopwafel": {
         "text": "Bees waffle is ready and hot",
-        "gif_file": waf.gif,
+        "gif_file": "waf.gif",
         "color": 0x00FF00,
         "author": None
     }
