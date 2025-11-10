@@ -7,9 +7,9 @@ from datetime import datetime
 import os
 
 # === CONFIGURATION ===
-PDF_PATH = "/home/ubuntu/books/Warhammer_Lore_Book.pdf"  # update manually
+PDF_PATH = "/cogs/Warhammer_Lore_Book.pdf"  # update manually
 BOOK_TITLE = "Warhammer Lore Compendium"
-STATE_DIR = "/home/ubuntu/botdata"
+STATE_DIR = "/cogs"
 STATE_FILE = os.path.join(STATE_DIR, "lore_state.txt")
 TEMP_IMAGE_PATH = "current_page.jpg"
 
