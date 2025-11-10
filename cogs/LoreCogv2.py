@@ -12,8 +12,8 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 
 # Update these manually when changing books
-PDF_PATH = os.path.join(DATA_DIR, "Warhammer_Lore_Book.pdf")
-BOOK_TITLE = "Warhammer Lore Compendium"
+PDF_PATH = os.path.join(DATA_DIR, "Horus_Rising.pdf")
+BOOK_TITLE = "Horus Rising - Dan Abnett"
 
 # Internal files
 STATE_FILE = os.path.join(DATA_DIR, "lore_state.txt")
