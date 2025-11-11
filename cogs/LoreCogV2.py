@@ -56,7 +56,7 @@ class LoreCogV2(commands.Cog):
         pages[0].save(TEMP_IMAGE_PATH, "JPEG")
         return TEMP_IMAGE_PATH
 
-    async def post_page(self, channel: discord.abc.Messageable):
+    async def post_page_to_channel(self, channel: discord.abc.Messageable, manual=False, user_name=None):
         """Post the next page into the given channel/thread."""
         try:
             reader = PdfReader(PDF_PATH)
@@ -64,7 +64,8 @@ class LoreCogV2(commands.Cog):
             current_page = self.get_page_state() + 1
 
             if current_page > total_pages:
-                await channel.send(f"✅ **{BOOK_TITLE}** finished! All {total_pages} pages posted.")
+                msg = f"✅ **{BOOK_TITLE}** finished! All {total_pages} pages posted."
+                await channel.send(msg)
                 self.save_page_state(0)
                 return
 
@@ -78,7 +79,10 @@ class LoreCogV2(commands.Cog):
                 timestamp=datetime.utcnow()
             )
             embed.set_image(url="attachment://page.jpg")
-            embed.set_footer(text=f"Automatic daily post")
+            if manual and user_name:
+                embed.set_footer(text=f"Requested by {user_name}")
+            else:
+                embed.set_footer(text="Automatic daily post")
 
             await channel.send(embed=embed, file=file)
 
@@ -95,8 +99,44 @@ class LoreCogV2(commands.Cog):
         description="Post the next page of the current lore book."
     )
     async def lorecog_manpage(self, interaction: discord.Interaction):
+        """Manually post the next lore page."""
         await interaction.response.defer(thinking=True)
-        await self.post_page(interaction.channel)
+        try:
+            reader = PdfReader(PDF_PATH)
+            total_pages = len(reader.pages)
+            current_page = self.get_page_state() + 1
+
+            if current_page > total_pages:
+                await interaction.edit_original_response(
+                    content=f"✅ **{BOOK_TITLE}** finished! All {total_pages} pages posted."
+                )
+                self.save_page_state(0)
+                return
+
+            # Render PDF page to image
+            image_path = await self.render_page(current_page)
+            file = discord.File(image_path, filename="page.jpg")
+
+            embed = discord.Embed(
+                title=f"{BOOK_TITLE}",
+                description=f"📖 Page {current_page} of {total_pages}",
+                color=discord.Color.dark_red(),
+                timestamp=datetime.utcnow()
+            )
+            embed.set_image(url="attachment://page.jpg")
+            embed.set_footer(text=f"Requested by {interaction.user.display_name}")
+
+            # Replace the deferred thinking message with the embed
+            await interaction.edit_original_response(embed=embed, file=file)
+
+            # Clean up and save state
+            os.remove(image_path)
+            self.save_page_state(current_page)
+            print(f"📖 Posted page {current_page}/{total_pages} from {BOOK_TITLE}")
+
+        except Exception as e:
+            await interaction.edit_original_response(content=f"❌ Error: `{e}`")
+            print(f"Error in /lorecog_manpage: {e}")
 
     @app_commands.command(
         name="lorecog_reset",
@@ -109,7 +149,6 @@ class LoreCogV2(commands.Cog):
     # === Background Daily Posting Task ===
     @tasks.loop(hours=24)
     async def daily_task(self):
-        # Wait until bot is ready
         await self.bot.wait_until_ready()
         while not self.bot.is_closed():
             now = datetime.utcnow()
@@ -119,14 +158,21 @@ class LoreCogV2(commands.Cog):
             wait_seconds = (target - now).total_seconds()
             await asyncio.sleep(wait_seconds)
 
+            # Post daily page using defer/edit pattern
             channel = self.bot.get_channel(POST_CHANNEL_ID)
             if channel:
-                await self.post_page(channel)
+                # Create a temporary webhook-like interaction via a dummy message
+                msg = await channel.send("⏳ Horus Rising is preparing today's page...")
+                try:
+                    await self.post_page_to_channel(channel)
+                    await msg.delete()
+                except Exception as e:
+                    await msg.edit(content=f"❌ Error posting daily page: {e}")
             else:
                 print(f"❌ Could not find channel with ID {POST_CHANNEL_ID}")
 
-            # Sleep until next day (24h)
-            await asyncio.sleep(1)  # short pause to restart loop cleanly
+            # Short pause before next iteration
+            await asyncio.sleep(1)
 
     @daily_task.before_loop
     async def before_daily_task(self):
