@@ -7,17 +7,17 @@ from datetime import datetime
 import os
 
 # === CONFIGURATION ===
-# Store book, state, and temp image in /data (one folder up from /cogs)
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 
-# Update these manually when changing books
+# Update PDF and book title
 PDF_PATH = os.path.join(DATA_DIR, "Horus_Rising.pdf")
-BOOK_TITLE = "Horus Rising - Dan Abnett"
+BOOK_TITLE = "Horus Rising"
 
 # Internal files
 STATE_FILE = os.path.join(DATA_DIR, "lore_state.txt")
 TEMP_IMAGE_PATH = os.path.join(DATA_DIR, "current_page.jpg")
+POPPLER_PATH = "/usr/bin"  # path to Poppler binaries on Ubuntu
 
 
 class LoreCogV2(commands.Cog):
@@ -48,7 +48,9 @@ class LoreCogV2(commands.Cog):
 
     async def render_page(self, page_num):
         """Convert a PDF page to image and return image path."""
-        pages = convert_from_path(PDF_PATH, first_page=page_num, last_page=page_num)
+        pages = convert_from_path(
+            PDF_PATH, first_page=page_num, last_page=page_num, poppler_path=POPPLER_PATH
+        )
         pages[0].save(TEMP_IMAGE_PATH, "JPEG")
         return TEMP_IMAGE_PATH
 
