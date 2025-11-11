@@ -107,8 +107,8 @@ class LoreCogV2(commands.Cog):
             current_page = self.get_page_state() + 1
 
             if current_page > total_pages:
-                await interaction.edit_original_response(
-                    content=f"✅ **{BOOK_TITLE}** finished! All {total_pages} pages posted."
+                await interaction.followup.send(
+                    f"✅ **{BOOK_TITLE}** finished! All {total_pages} pages posted."
                 )
                 self.save_page_state(0)
                 return
@@ -126,8 +126,8 @@ class LoreCogV2(commands.Cog):
             embed.set_image(url="attachment://page.jpg")
             embed.set_footer(text=f"Requested by {interaction.user.display_name}")
 
-            # Replace the deferred thinking message with the embed
-            await interaction.edit_original_response(embed=embed, file=file)
+            # Send embed with file using followup
+            await interaction.followup.send(embed=embed, file=file)
 
             # Clean up and save state
             os.remove(image_path)
@@ -135,7 +135,7 @@ class LoreCogV2(commands.Cog):
             print(f"📖 Posted page {current_page}/{total_pages} from {BOOK_TITLE}")
 
         except Exception as e:
-            await interaction.edit_original_response(content=f"❌ Error: `{e}`")
+            await interaction.followup.send(f"❌ Error: `{e}`")
             print(f"Error in /lorecog_manpage: {e}")
 
     @app_commands.command(
@@ -158,16 +158,9 @@ class LoreCogV2(commands.Cog):
             wait_seconds = (target - now).total_seconds()
             await asyncio.sleep(wait_seconds)
 
-            # Post daily page using defer/edit pattern
             channel = self.bot.get_channel(POST_CHANNEL_ID)
             if channel:
-                # Create a temporary webhook-like interaction via a dummy message
-                msg = await channel.send("⏳ Horus Rising is preparing today's page...")
-                try:
-                    await self.post_page_to_channel(channel)
-                    await msg.delete()
-                except Exception as e:
-                    await msg.edit(content=f"❌ Error posting daily page: {e}")
+                await self.post_page_to_channel(channel)
             else:
                 print(f"❌ Could not find channel with ID {POST_CHANNEL_ID}")
 
