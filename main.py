@@ -49,7 +49,7 @@ async def main():
     async with bot:
         await bot.load_extension("cogs.bulkrole")
         await bot.load_extension("cogs.certify")
-        await bot.load_extension("cogs.LoreCogV2")
+        # await bot.load_extension("cogs.LoreCogV2")
         await bot.load_extension("cogs.recruitform")
         await bot.load_extension("cogs.SquadUp")
         await bot.load_extension("cogs.CalendarCog")
