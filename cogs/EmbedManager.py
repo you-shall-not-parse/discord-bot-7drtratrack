@@ -81,7 +81,7 @@ class EmbedManager(commands.Cog):
         )
         embed1.add_field(
             name="Links",
-            value="[Website](https://example.com)\n[Support](https://example.com/support)",
+            value="[Merch](https://7dr-hll-merch.myshopify.com/\n[Support](https://example.com/support)",
             inline=False
         )
         blocks.append({
