@@ -7,7 +7,7 @@ import os
 # CONFIG
 # ==========================================================
 
-GUILD_ID = 123456789012345678  # Your guild ID for future slash commands
+GUILD_ID = 1097913605082579024  # Your guild ID for future slash commands
 EMBED_STORE_FILE = "stored_embeds.json"
 
 
@@ -95,7 +95,7 @@ class EmbedManager(commands.Cog):
             inline=False,
         )
 
-        embeds[123456789012345678] = embed1  # <--- replace with your channel ID
+        embeds[123456789012345678] = 1099806153170489485  # <--- replace with your channel ID
 
 
 
@@ -118,7 +118,7 @@ class EmbedManager(commands.Cog):
             inline=False
         )
 
-        embeds[234567890123456789] = embed2  # <--- replace with another channel ID
+        embeds[234567890123456789] = 1099806153170489485  # <--- replace with another channel ID
 
         return embeds
 
