@@ -83,18 +83,15 @@ class EmbedManager(commands.Cog):
         channel_id = 1099806153170489485  # <--- put the channel ID here
 
         embed = discord.Embed(
-            title="📘 Server Welcome",
-            description=(
-                "Welcome to the server.\n"
-                "This embed is written directly in code.\n\n"
-                "**Edit this text → restart bot → updates automatically.**"
-            ),
-            color=discord.Color.blue()
+            title="📘 About Us",
+            description="",
+            color=discord.Color.red()
         )
 
         embed.add_field(
-            name="Rules",
-            value="1. Be nice.\n2. No spam.\n3. Follow the guidelines.",
+            name="",
+            value="We're 7DR a miltary simulation (milsim) EU/UK and US Hell Let Loose console clan that models itself on the 7th Armoured Division, a real life British armed forces division that fought throughout both World Wars, for more information on that unit see #the-7th-armoured-division channel!" \n
+"We have organised Hell Let Loose casual and competitive clan scrims on a weekly basis and an active server",
             inline=False
         )
 
@@ -104,7 +101,7 @@ class EmbedManager(commands.Cog):
             inline=False
         )
 
-        blocks.append({"channel_id": channel_id, "embed": embed})
+        blocks.append({"channel_id": channel_id, "embed": embed1})
 
         # ------------------------------------------------------------
         # EMBED BLOCK 2
@@ -112,24 +109,24 @@ class EmbedManager(commands.Cog):
         channel_id = 1099806153170489485  # <--- another channel ID
 
         embed = discord.Embed(
-            title="🎮 Game Servers",
-            description="Here is the latest server information.\n\u200b",
+            title="Frequently Asked Questions (FAQs)",
+            description="",
             color=discord.Color.green()
         )
 
         embed.add_field(
-            name="Current Servers",
-            value="• EU1 — Online\n• EU2 — Restarting\n• US — Online",
+            name="How do I join your clan?",
+            value="Please fill in a recruit form in #recruitform-requests and we'll get back to you! Ensure you specify the training school you'd like to join - Infantry, Armour or Recon. You must be over 18 years old and level 20 in-game. If your application is accepted you will join an infantry school and on completion join a unit!",
             inline=False
         )
 
         embed.add_field(
-            name="Upcoming Events",
-            value="• Friday Op — 20:00 UTC\n• Training Night — 19:00 UTC",
+            name="How do I find a squad?",
+            value="As a blueberry you'll be able to see #looking-for-squad channel. drop a message in there to link up with clan members or fellow blueberries!",
             inline=False
         )
 
-        blocks.append({"channel_id": channel_id, "embed": embed})
+        blocks.append({"channel_id": channel_id, "embed": embed2})
 
         # ------------------------------------------------------------
         # Add more embed blocks here as needed
