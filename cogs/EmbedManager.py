@@ -64,7 +64,7 @@ class EmbedManager(commands.Cog):
 
         # ---------------- EMBED 1 ----------------
         embed1 = discord.Embed(
-            title=":15emoji: About Us :22abuk:",
+            title=":rat: About Us :rat:",
             description="",
             color=discord.Color.red()
         )
