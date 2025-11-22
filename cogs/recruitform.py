@@ -168,7 +168,8 @@ class RecruitFormCog(commands.Cog):
             ),
             color=discord.Color.blue()
         )
-
+        embed.set_image(url="https://cdn.discordapp.com/attachments/1098976074852999261/1441857335378182154/ChatGPT_Image_Nov_22_2025_06_24_48_PM.png?ex=692351c9&is=69220049&hm=9dc55973e194a532f6b4fd576afd712a132713c0d7d48a100b16fb92191ccfe4&")
+        
         view = RecruitButtonView(self)
         # Register the view so interactions are handled even if the message is persistent
         try:
