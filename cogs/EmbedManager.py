@@ -94,7 +94,7 @@ class EmbedManager(commands.Cog):
 
         # ---------------- EMBED 2 ----------------
         embed2 = discord.Embed(
-            title="Blueberry:blueberries: Frequently Asked Questions (FAQs)",
+            title="Blueberry :blueberries: Frequently Asked Questions (FAQs)",
             description="",
             color=discord.Color.red()
         )
