@@ -116,7 +116,7 @@ class EmbedManager(commands.Cog):
         embed2.add_field(
             name="How do I see my in-game stats?",
             value=(
-                "[Here are our HLL Server Stats](https://7dr-stats.hlladmin.com/games)"
+                "[Here are our HLL Server Stats](https://7dr-stats.hlladmin.com/games) you can click on whichever game you played in and see your kills, deaths and much more!"
             ),
             inline=False
         )
