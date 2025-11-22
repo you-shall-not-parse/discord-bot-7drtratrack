@@ -62,7 +62,7 @@ class EmbedManager(commands.Cog):
         blocks = []
 
         # ---------------- EMBED 1 ----------------
-        channel_id = 1099806153170489485
+        channel_id = 1441744889145720942
         embed1 = discord.Embed(
             title="📘 About Us",
             description="",
@@ -88,7 +88,7 @@ class EmbedManager(commands.Cog):
         blocks.append({"channel_id": channel_id, "embed": embed1})
 
         # ---------------- EMBED 2 ----------------
-        channel_id = 1099806153170489485
+        channel_id = 1441744889145720942
         embed2 = discord.Embed(
             title="Frequently Asked Questions (FAQs)",
             description="",
