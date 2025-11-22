@@ -51,6 +51,7 @@ async def main():
         await bot.load_extension("cogs.certify")
         # await bot.load_extension("cogs.LoreCogV2")
         await bot.load_extension("cogs.recruitform")
+        await bot.load_extension("cogs.EmbedManager")
         await bot.load_extension("cogs.SquadUp")
         await bot.load_extension("cogs.CalendarCog")
         await bot.load_extension("cogs.BirthdayCog")
