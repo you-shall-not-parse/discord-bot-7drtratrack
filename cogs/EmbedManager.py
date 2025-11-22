@@ -69,14 +69,13 @@ class EmbedManager(commands.Cog):
             color=discord.Color.red()
         )
         embed1.add_field(
-            name="About 7DR",
+            name="About 7DR"\n,
             value=(
                 "We're 7DR, a military simulation (milsim) EU/UK and US Hell Let Loose console clan "
                 "that models itself on the 7th Armoured Division, a real British armed forces unit "
                 "that fought throughout both World Wars. For more information on that division, "
-                "see <#1098337552194351114>!\n\n"
-                "We run organised Hell Let Loose casual and competitive clan scrims every week, "
-                "and we maintain an active server."
+                "see <#1098337552194351114>!\n"
+                "We run organised Hell Let Loose casual and competitive clan scrims every week, and we maintain an active server."
             ),
             inline=False
         )
@@ -87,7 +86,7 @@ class EmbedManager(commands.Cog):
         )
         blocks.append({
             "key": "about_us",
-            "channel_id": 1099806153170489485,
+            "channel_id": 1441744889145720942,
             "embed": embed1
         })
 
@@ -98,7 +97,7 @@ class EmbedManager(commands.Cog):
             color=discord.Color.green()
         )
         embed2.add_field(
-            name="How do I join your clan?",
+            name="How do I join 7DR?",
             value=(
                 "Please fill in a recruit form in <#1401634001248190515> and we'll get back to you! Make sure to state which training school you'd like to join: **Infantry**, **Armour**, or **Recon**.\n"
                 "You must be **18+** and **level 20** in-game."
@@ -110,13 +109,13 @@ class EmbedManager(commands.Cog):
             name="How do I find a squad?",
             value=(
                 "As a blueberry you'll be able to see the <#1099090838203666474> channel."
-                "Drop a message in there to link up with clan members or other blueberries!"
+                " Drop a message in there to link up with clan members or other blueberries!"
             ),
             inline=False
         )
         blocks.append({
             "key": "faq",
-            "channel_id": 1099806153170489485,
+            "channel_id": 1441744889145720942,
             "embed": embed2
         })
 
