@@ -126,8 +126,9 @@ class EmbedManager(commands.Cog):
             color=discord.Color.red()
         )
         embed3.add_field(
+            name="how tf do i get rid of this",
             value=(
-                ":pencil:｜Information \n"
+                "Information \n"
                 "- <#1098337552194351114> \n"
                 "- <#1296885095138852967> \n"
                 "- <#1098525492631572564> \n"
