@@ -94,7 +94,7 @@ class EmbedManager(commands.Cog):
         embed2 = discord.Embed(
             title="Frequently Asked Questions (FAQs)",
             description="",
-            color=discord.Color.green()
+            color=discord.Color.red()
         )
         embed2.add_field(
             name="How do I join 7DR?",
@@ -117,6 +117,41 @@ class EmbedManager(commands.Cog):
             "key": "faq",
             "channel_id": 1441744889145720942,
             "embed": embed2
+        })
+
+        # ---------------- EMBED 3 ----------------
+        embed3 = discord.Embed(
+            title="Community Server Directory",
+            description="",
+            color=discord.Color.red()
+        )
+        embed3.add_field(
+            name="",
+            value=(
+                "- <#1098337552194351114> \n"
+                "- <#1296885095138852967> \n"
+                "- <#1098525492631572564> \n"
+                "- <#1098316982459314279> \n"          
+                "- <#1099248200776421406> \n"
+                "- <#1441744889145720942> \n"          
+                "- <#1441751747935735878> \n"
+                "- <#1098330967166419055> \n"
+                "- <#1401634001248190515> \n"   
+                "- <#1098331019364552845> \n"   
+                "- <#1098665953706909848> \n"
+                "- <#1441511200474271875> \n"
+                "- <#1099090838203666474> \n"
+                "- <#1398672228803018763> \n"
+                "- <#1399082728313458778> \n"
+                "- <#1409966793321091255> \n"
+                "- <#1212477923542704188> \n"
+            ),
+            inline=False
+        )
+        blocks.append({
+            "key": "faq",
+            "channel_id": 1441744889145720942,
+            "embed": embed3
         })
 
         return blocks
