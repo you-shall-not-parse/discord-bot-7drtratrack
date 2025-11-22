@@ -81,7 +81,7 @@ class EmbedManager(commands.Cog):
         )
         embed1.add_field(
             name="Links",
-            value="[Merch](https://7dr-hll-merch.myshopify.com/\n[Support](https://example.com/support)",
+            value="[Merch](https://7dr-hll-merch.myshopify.com/)",
             inline=False
         )
         blocks.append({
@@ -133,7 +133,7 @@ class EmbedManager(commands.Cog):
             color=discord.Color.red()
         )
         embed3.add_field(
-            name="The servers you will see as a@ Blueberry!",
+            name="The servers you will see as a @Blueberry!",
             value=(
                 ":pencil:｜**Information** \n"
                 "- <#1098337552194351114> \n"
