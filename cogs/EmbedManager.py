@@ -68,6 +68,8 @@ class EmbedManager(commands.Cog):
             description="",
             color=discord.Color.red()
         )
+        embed1.set_image(url="https://cdn.discordapp.com/attachments/1098976074852999261/1441835029415333898/Polish_20250427_003737777.jpg?ex=69233d03&is=6921eb83&hm=4083c0e5f9354f596453c08be9831dc13a53c614f15ca49bc8e0c8dc58ce5001")
+        
         embed1.add_field(
             name="About 7DR",
             value=(
