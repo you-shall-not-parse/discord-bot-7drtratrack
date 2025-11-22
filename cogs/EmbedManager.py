@@ -108,8 +108,8 @@ class EmbedManager(commands.Cog):
         embed2.add_field(
             name="How do I find a squad?",
             value=(
-                "As a blueberry you'll be able to see the <#1099090838203666474> channel."
-                " Drop a message in there to link up with clan members or other blueberries!"
+                "As a non-clan member (blueberry) you'll be able to see the <#1099090838203666474> channel."
+                " Drop a message in there to link up with clan members or other non-clan members (we call em' blueberries!)"
             ),
             inline=False
         )
@@ -117,6 +117,15 @@ class EmbedManager(commands.Cog):
             name="How do I see my in-game stats?",
             value=(
                 "[Here are our HLL Server Stats](https://7dr-stats.hlladmin.com/games)"
+            ),
+            inline=False
+        )
+        embed2.add_field(
+            name="When can I play with 7DR?",
+            value=(
+                "We won't always be available to play :( and occasionally will be playing clan matches in a locked server"
+                ", or we might be otherwise occupied... no need to stress however, we will notify you in <#1441511200474271875>"
+                " when we are planning to seed our server and you can join in on the fun!"
             ),
             inline=False
         )
@@ -133,7 +142,7 @@ class EmbedManager(commands.Cog):
             color=discord.Color.red()
         )
         embed3.add_field(
-            name="The servers you will see as a @Blueberry!",
+            name="The servers you will see as a non-clan member (@Blueberry)!",
             value=(
                 ":pencil:｜**Information** \n"
                 "- <#1098337552194351114> \n"
