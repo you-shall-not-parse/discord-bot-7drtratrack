@@ -57,12 +57,12 @@ class EmbedManager(commands.Cog):
     def get_embed_blocks(self):
         """
         Returns a list of embed blocks.
-        Each block is a dict: {"channel_id": ..., "embed": discord.Embed}
+        Each block is a dict: {"key": ..., "channel_id": ..., "embed": discord.Embed}
         """
+
         blocks = []
 
         # ---------------- EMBED 1 ----------------
-        channel_id = 1441744889145720942
         embed1 = discord.Embed(
             title="📘 About Us",
             description="",
@@ -74,7 +74,7 @@ class EmbedManager(commands.Cog):
                 "We're 7DR, a military simulation (milsim) EU/UK and US Hell Let Loose console clan "
                 "that models itself on the 7th Armoured Division, a real British armed forces unit "
                 "that fought throughout both World Wars. For more information on that division, "
-                "see the **#the-7th-armoured-division** channel!\n\n"
+                "see <#1098337552194351114>!\n\n"
                 "We run organised Hell Let Loose casual and competitive clan scrims every week, "
                 "and we maintain an active server."
             ),
@@ -85,10 +85,13 @@ class EmbedManager(commands.Cog):
             value="[Website](https://example.com)\n[Support](https://example.com/support)",
             inline=False
         )
-        blocks.append({"channel_id": channel_id, "embed": embed1})
+        blocks.append({
+            "key": "about_us",
+            "channel_id": 1099806153170489485,
+            "embed": embed1
+        })
 
         # ---------------- EMBED 2 ----------------
-        channel_id = 1441744889145720942
         embed2 = discord.Embed(
             title="Frequently Asked Questions (FAQs)",
             description="",
@@ -97,9 +100,8 @@ class EmbedManager(commands.Cog):
         embed2.add_field(
             name="How do I join your clan?",
             value=(
-                "Please fill in a recruit form in **#recruitform-requests** and we'll get back to you!\n"
-                "Make sure to state which training school you'd like to join: **Infantry**, **Armour**, or **Recon**.\n"
-                "You must be **18+** and **level 20** in-game.\n\n"
+                "Please fill in a recruit form in <#1401634001248190515> and we'll get back to you! Make sure to state which training school you'd like to join: **Infantry**, **Armour**, or **Recon**.\n"
+                "You must be **18+** and **level 20** in-game."
                 "If accepted, you will join an infantry school; once you complete your courses, you will be assigned to a unit."
             ),
             inline=False
@@ -107,49 +109,53 @@ class EmbedManager(commands.Cog):
         embed2.add_field(
             name="How do I find a squad?",
             value=(
-                "As a blueberry you'll be able to see the **#looking-for-squad** channel.\n"
+                "As a blueberry you'll be able to see the <#1099090838203666474> channel."
                 "Drop a message in there to link up with clan members or other blueberries!"
             ),
             inline=False
         )
-        blocks.append({"channel_id": channel_id, "embed": embed2})
+        blocks.append({
+            "key": "faq",
+            "channel_id": 1099806153170489485,
+            "embed": embed2
+        })
 
         return blocks
 
     # ---------------- SYNC LOGIC ----------------
-    async def sync_embed_block(self, channel_id: int, embed: discord.Embed):
-        channel = self.bot.get_channel(channel_id)
+    async def sync_embed_block(self, block):
+        channel = self.bot.get_channel(block["channel_id"])
         if channel is None:
-            print(f"[EmbedManager] Channel {channel_id} not found.")
+            print(f"[EmbedManager] Channel {block['channel_id']} not found.")
             return
 
-        stored_id = self.data.get(str(channel_id))
+        key = block["key"]
+        embed_to_post = block["embed"]
+        stored_id = self.data.get(key)
 
-        # Fetch existing message if exists
         msg = None
         if stored_id:
             try:
                 msg = await channel.fetch_message(stored_id)
             except discord.NotFound:
-                print(f"[EmbedManager] Previous embed missing in {channel_id}, will post new.")
+                print(f"[EmbedManager] Previous embed '{key}' missing, will post new.")
 
-        # If message exists, compare
-        if msg and msg.embeds and msg.embeds[0].to_dict() != embed.to_dict():
-            print(f"[EmbedManager] Updating embed in channel {channel_id}")
-            await msg.edit(embed=embed)
+        if msg and msg.embeds and msg.embeds[0].to_dict() != embed_to_post.to_dict():
+            print(f"[EmbedManager] Updating embed '{key}' in channel {channel.id}")
+            await msg.edit(embed=embed_to_post)
         elif msg:
-            print(f"[EmbedManager] Embed unchanged in channel {channel_id}")
+            print(f"[EmbedManager] Embed '{key}' unchanged in channel {channel.id}")
         else:
-            new_msg = await channel.send(embed=embed)
-            self.data[str(channel_id)] = new_msg.id
-            print(f"[EmbedManager] Posted new embed to channel {channel_id}")
+            new_msg = await channel.send(embed=embed_to_post)
+            self.data[key] = new_msg.id
+            print(f"[EmbedManager] Posted new embed '{key}' to channel {channel.id}")
 
         save_data(self.data)
 
     async def sync_all_embeds(self):
         blocks = self.get_embed_blocks()
         for block in blocks:
-            await self.sync_embed_block(block["channel_id"], block["embed"])
+            await self.sync_embed_block(block)
 
     # ---------------- AUTO-SYNC ON READY ----------------
     @commands.Cog.listener()
