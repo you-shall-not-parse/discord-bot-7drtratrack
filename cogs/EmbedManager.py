@@ -69,7 +69,7 @@ class EmbedManager(commands.Cog):
             color=discord.Color.red()
         )
         embed1.add_field(
-            name="About 7DR\n",
+            name="About 7DR",
             value=(
                 "We're 7DR, a military simulation (milsim) EU/UK and US Hell Let Loose console clan "
                 "that models itself on the 7th Armoured Division, a real British armed forces unit "
@@ -101,7 +101,7 @@ class EmbedManager(commands.Cog):
             value=(
                 "Please fill in a recruit form in <#1401634001248190515> and we'll get back to you! Make sure to state which training school you'd like to join: **Infantry**, **Armour**, or **Recon**.\n"
                 "You must be **18+** and **level 20** in-game."
-                "If accepted, you will join an infantry school; once you complete your courses, you will be assigned to a unit."
+                " If accepted, you will join an infantry school; once you complete your courses, you will be assigned to a unit."
             ),
             inline=False
         )
