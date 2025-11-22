@@ -129,6 +129,13 @@ class EmbedManager(commands.Cog):
             ),
             inline=False
         )
+        embed2.add_field(
+            name="How do I report a player for TK or griefing?",
+            value=(
+                ""
+            ),
+            inline=False
+        )
         blocks.append({
             "key": "faq",
             "channel_id": 1441744889145720942,
