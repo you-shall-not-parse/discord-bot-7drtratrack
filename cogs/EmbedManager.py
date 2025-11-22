@@ -69,7 +69,7 @@ class EmbedManager(commands.Cog):
             color=discord.Color.red()
         )
         embed1.add_field(
-            name="About 7DR"\n,
+            name="About 7DR\n",
             value=(
                 "We're 7DR, a military simulation (milsim) EU/UK and US Hell Let Loose console clan "
                 "that models itself on the 7th Armoured Division, a real British armed forces unit "
