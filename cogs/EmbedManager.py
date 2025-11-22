@@ -153,7 +153,7 @@ class EmbedManager(commands.Cog):
             inline=False
         )
         blocks.append({
-            "key": "faq",
+            "key": "ServDir",
             "channel_id": 1441744889145720942,
             "embed": embed3
         })
