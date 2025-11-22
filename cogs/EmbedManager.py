@@ -126,9 +126,9 @@ class EmbedManager(commands.Cog):
             color=discord.Color.red()
         )
         embed3.add_field(
-            name="how tf do i get rid of this",
+            name="The servers you will see as a <#1440120995171012699>!",
             value=(
-                "Information \n"
+                ":pencil: Information \n"
                 "- <#1098337552194351114> \n"
                 "- <#1296885095138852967> \n"
                 "- <#1098525492631572564> \n"
@@ -136,19 +136,19 @@ class EmbedManager(commands.Cog):
                 "- <#1099248200776421406> \n"
                 "- <#1441744889145720942> \n"          
                 "- <#1441751747935735878> \n"
-                "Recruits \n"
+                ":military_helmet: Recruits \n"
                 "- <#1098330967166419055> \n"
                 "- <#1401634001248190515> \n"   
                 "- <#1098331019364552845> \n"   
                 "- <#1098665953706909848> \n"
-                "General \n"
+                ":speech_balloon: General \n"
                 "- <#1441511200474271875> \n"
                 "- <#1099090838203666474> \n"
                 "- <#1398672228803018763> \n"
                 "- <#1399082728313458778> \n"
-                "Voice Chat \n"
+                ":speaker: Voice Chat \n"
                 "- <#1409966793321091255> \n"
-                "Merchandise \n"
+                ":shirt: Merchandise \n"
                 "- <#1212477923542704188> \n"
             ),
             inline=False
