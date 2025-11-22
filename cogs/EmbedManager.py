@@ -94,7 +94,7 @@ class EmbedManager(commands.Cog):
 
         # ---------------- EMBED 2 ----------------
         embed2 = discord.Embed(
-            title="Frequently Asked Questions (FAQs)",
+            title="Blueberry:blueberries: Frequently Asked Questions (FAQs)",
             description="",
             color=discord.Color.red()
         )
@@ -103,7 +103,7 @@ class EmbedManager(commands.Cog):
             value=(
                 "Please fill in a recruit form in <#1401634001248190515> and we'll get back to you! Make sure to state which training school you'd like to join: Infantry, Armour, or Recon.\n"
                 "You must be 18+ and level 20 in-game."
-                " If accepted, you will join an infantry school; once you complete your courses, you will be assigned to a unit."
+                " If accepted, you will join a school of your choosing and once you complete your basic training you will be assigned to a unit."
             ),
             inline=False
         )
@@ -111,7 +111,7 @@ class EmbedManager(commands.Cog):
             name=":question: How do I find a squad?",
             value=(
                 "As a non-clan member (blueberry) you'll be able to see the <#1099090838203666474> channel."
-                " Drop a message in there to link up with clan members or other non-clan members (we call em' blueberries!)"
+                " Drop a message in there to link up with clan members or other non-clan members (blueberries)"
             ),
             inline=False
         )
@@ -127,12 +127,12 @@ class EmbedManager(commands.Cog):
             value=(
                 "We won't always be available to play :cry: and occasionally will be playing clan matches in a locked server"
                 ", or we might be otherwise occupied... no need to stress however, we will notify you in <#1441511200474271875>"
-                " when we are planning to seed our server and you can join in on the fun!"
+                " when we are planning to seed our server and you can join in on the fun, or let us know where you are and we will join you!"
             ),
             inline=False
         )
         embed2.add_field(
-            name=":question: How do I report a player for TK or griefing?",
+            name=":question: How do I report a player?",
             value=(
                 "Please contact a member of the clan in the <#1441511200474271875> channel and they will contact a server admin to investigate."
             ),
@@ -151,7 +151,7 @@ class EmbedManager(commands.Cog):
             color=discord.Color.red()
         )
         embed3.add_field(
-            name="The servers you will see as a non-clan member (@Blueberry)!",
+            name="The servers you will see as a non-clan member @Blueberry!",
             value=(
                 ":pencil:｜**Information** \n"
                 "- <#1098337552194351114> \n"
