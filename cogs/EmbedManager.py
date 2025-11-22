@@ -99,8 +99,8 @@ class EmbedManager(commands.Cog):
         embed2.add_field(
             name="How do I join 7DR?",
             value=(
-                "Please fill in a recruit form in <#1401634001248190515> and we'll get back to you! Make sure to state which training school you'd like to join: **Infantry**, **Armour**, or **Recon**.\n"
-                "You must be **18+** and **level 20** in-game."
+                "Please fill in a recruit form in <#1401634001248190515> and we'll get back to you! Make sure to state which training school you'd like to join: Infantry, Armour, or Recon.\n"
+                "You must be 18+ and level 20 in-game."
                 " If accepted, you will join an infantry school; once you complete your courses, you will be assigned to a unit."
             ),
             inline=False
