@@ -134,7 +134,7 @@ class EmbedManager(commands.Cog):
         embed2.add_field(
             name="How do I report a player for TK or griefing?",
             value=(
-                ""
+                "Please contact a member of the clan in the <#1441511200474271875> channel and they will contact a server admin to investigate."
             ),
             inline=False
         )
