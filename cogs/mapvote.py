@@ -1,121 +1,78 @@
 import discord
-from discord import app_commands
-from discord.ext import commands
-import requests
+from discord.ext import commands, tasks
+import asyncio
 
-# --------------------------------------------------
-# CONFIG
-# --------------------------------------------------
-RCON_HOST = "176.57.140.181"      # your server IP
-RCON_PORT = 30216                 # your RCON port
+# ---------------- CONFIG ----------------
+RCON_HOST = "176.57.140.181"
+RCON_PORT = 30216
 RCON_PASSWORD = "bedcc53"
 MAPVOTE_CHANNEL_ID = 1441751747935735878
-GUILD_ID = 1097913605082579024     # your guild ID
+GUILD_ID = 1097913605082579024
 
+MAPS = ["Foy", "Sainte-Mère-Église", "Omaha Beach", "Utah Beach"]
 
-# --------------------------------------------------
-# RCON HELPER
-# --------------------------------------------------
+VOTE_DURATION = 60  # seconds
+
+# ---------------- RCON HELPER ----------------
 def send_rcon(command: str):
-    """
-    Minimal RCON-over-HTTP shim using requests.
-    Your real RCON server must support HTTP/HLL-style API calls.
-    """
+    import requests
     url = f"http://{RCON_HOST}:{RCON_PORT}/rcon"
-    payload = {
-        "password": RCON_PASSWORD,
-        "command": command
-    }
-
+    payload = {"password": RCON_PASSWORD, "command": command}
     try:
         r = requests.post(url, json=payload, timeout=5)
-        if r.status_code != 200:
-            return f"HTTP {r.status_code}: {r.text}"
         return r.text
     except Exception as e:
         return f"Error: {e}"
 
-
-# --------------------------------------------------
-# MAP LIST + TIMERS
-# --------------------------------------------------
-MAPS = {
-    "Foy": "06:30",
-    "Sainte-Mère-Église": "06:30",
-    "Omaha Beach": "06:30",
-    "Utah Beach": "06:30",
-    "Carentan": "06:30",
-    "Hill 400": "06:30",
-    "Purple Heart Lane": "06:30",
-    "Kharkov": "06:30",
-    "Kursk": "06:30",
-    "El Alamein": "06:30",
-}
-
-
-# --------------------------------------------------
-# COG
-# --------------------------------------------------
+# ---------------- COG ----------------
 class MapVote(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.votes = {}
 
-    # --------------------------------------------------
-    # SYNC SLASH COMMANDS INSTANTLY
-    # --------------------------------------------------
     @commands.Cog.listener()
     async def on_ready(self):
         guild = discord.Object(id=GUILD_ID)
-        try:
-            synced = await self.bot.tree.sync(guild=guild)
-            print(f"[MapVote] Guild-sync OK: {len(synced)} command(s).")
-        except Exception as e:
-            print(f"[MapVote] Guild-sync error: {e}")
+        await self.bot.tree.sync(guild=guild)
+        print("[MapVote] Commands synced")
 
-    # --------------------------------------------------
-    # SLASH COMMAND: START MAP VOTE
-    # --------------------------------------------------
-    @app_commands.command(
-        name="start_mapvote",
-        description="Post a map vote poll and read current map timers."
-    )
-    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    @discord.app_commands.command(name="start_mapvote", description="Start a map vote")
+    @discord.app_commands.guilds(discord.Object(id=GUILD_ID))
     async def start_mapvote(self, interaction: discord.Interaction):
+        self.votes = {}  # reset votes
 
-        await interaction.response.send_message(
-            "Posting map vote poll...", ephemeral=True
-        )
-
-        # Build poll question
-        question = "🗺️ **Vote for the next map!**"
-        options = []
-
-        for name, timer in MAPS.items():
-            options.append(
-                discord.PollOption(
-                    text=f"{name} — ⏱️ {timer}",
-                )
-            )
-
-        poll = discord.Poll(
-            question=question,
-            options=options,
-            multiple=False,
-            duration=300  # 5 minutes
-        )
-
-        # Send to MAPVOTE_CHANNEL_ID
-        channel = interaction.guild.get_channel(MAPVOTE_CHANNEL_ID)
+        channel = self.bot.get_channel(MAPVOTE_CHANNEL_ID)
         if channel is None:
-            await interaction.followup.send(
-                "❌ Map vote channel not found. Check channel ID.", ephemeral=True
-            )
+            await interaction.response.send_message("Map vote channel not found", ephemeral=True)
             return
 
-        await channel.send(poll=poll)
+        # Build buttons for each map
+        view = discord.ui.View(timeout=VOTE_DURATION)
+        for map_name in MAPS:
+            button = discord.ui.Button(label=map_name, style=discord.ButtonStyle.primary)
+            
+            async def callback(interact, map_name=map_name):
+                self.votes[interact.user.id] = map_name
+                await interact.response.send_message(f"You voted for {map_name}", ephemeral=True)
+            
+            button.callback = callback
+            view.add_item(button)
 
-        await interaction.followup.send("✅ Map vote posted.", ephemeral=True)
+        await channel.send("🗺️ **Vote for the next map!**", view=view)
+        await interaction.response.send_message("Map vote started!", ephemeral=True)
 
+        # Wait for vote duration
+        await asyncio.sleep(VOTE_DURATION)
+        if self.votes:
+            # Count votes
+            from collections import Counter
+            counter = Counter(self.votes.values())
+            winner = counter.most_common(1)[0][0]
+            send_rcon(f'switchmap "{winner}"')
+            await channel.send(f"🏆 Map vote ended! Winning map: **{winner}**")
+        else:
+            await channel.send("No votes were cast.")
 
+# ---------------- SETUP ----------------
 async def setup(bot):
     await bot.add_cog(MapVote(bot))
