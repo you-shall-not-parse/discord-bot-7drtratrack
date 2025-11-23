@@ -9,7 +9,7 @@ import time
 # --------------------------------------------------
 RCON_HOST = "176.57.140.181"      # your server IP
 RCON_PORT = 30216               # your RCON port
-RCON_PASSWORD = "yourPassword"
+RCON_PASSWORD = "bedcc53"
 
 MAP_TIMERS = {
     "Foy Offensive US": 1800,
