@@ -6,9 +6,9 @@ from datetime import datetime, time
 import pytz
 
 # ---------------- Config ----------------
-BIRTHDAY_CHANNEL_ID = 1098333222540152944   # channel for birthday embed & daily messages
-SUMMARY_CHANNEL_ID = 1098333222540152944    # channel for monthly summaries
-GUILD_ID = 1097913605082579024              # your testing server ID
+BIRTHDAY_CHANNEL_ID = 1098333222540152944
+SUMMARY_CHANNEL_ID = 1098333222540152944
+GUILD_ID = 1097913605082579024
 TIMEZONE = "Europe/London"
 DB_FILE = "birthdays.db"
 # ----------------------------------------
@@ -26,13 +26,8 @@ class BirthdayCog(commands.Cog):
         )
         self.conn.commit()
 
-        # Ensure display_age column exists (for older DBs)
+        # Ensure column exists for older DBs
         self._ensure_display_age_column()
-
-        # Start tasks
-        self.check_birthdays.start()
-        self.post_monthly_summary.start()
-        self.bot.loop.create_task(self.ensure_embed_posted())
 
     def _ensure_display_age_column(self):
         self.c.execute("PRAGMA table_info(birthdays)")
@@ -43,8 +38,10 @@ class BirthdayCog(commands.Cog):
 
     def cog_unload(self):
         self.conn.close()
-        self.check_birthdays.cancel()
-        self.post_monthly_summary.cancel()
+        if self.check_birthdays.is_running():
+            self.check_birthdays.cancel()
+        if self.post_monthly_summary.is_running():
+            self.post_monthly_summary.cancel()
 
     # ---------------- Database ----------------
     def set_birthday(self, guild_id: int, user_id: int, date_str: str, display_age: bool):
@@ -103,16 +100,10 @@ class BirthdayCog(commands.Cog):
         year: int = 2000,
         display_age: bool = False
     ):
-        # Validate day
-        if not (1 <= day <= 31):
-            await interaction.response.send_message("⚠ Invalid day. Must be 1-31.", ephemeral=True)
-            return
-
-        # Validate date combination
         try:
             date_obj = datetime(year, month.value, day)
         except ValueError:
-            await interaction.response.send_message("⚠ Invalid date combination.", ephemeral=True)
+            await interaction.response.send_message("⚠ Invalid date.", ephemeral=True)
             return
 
         date_str = date_obj.strftime("%d/%m/%Y")
@@ -131,20 +122,21 @@ class BirthdayCog(commands.Cog):
     async def birthdaysplease(self, interaction: discord.Interaction):
         now = datetime.now(pytz.timezone(TIMEZONE))
         month_birthdays = self.get_month_birthdays(interaction.guild.id, now.month)
+
         if not month_birthdays:
-            await interaction.response.send_message("📭 No birthdays this month.", ephemeral=True)
-            return
+            return await interaction.response.send_message("📭 No birthdays this month.", ephemeral=True)
 
         lines = []
         for uid, date_str, display_age in sorted(month_birthdays, key=lambda x: datetime.strptime(x[1], "%d/%m/%Y")):
             user = interaction.guild.get_member(uid)
-            if user:
-                line = f"🎂 {user.mention} - {date_str}"
-                if display_age:
-                    bday = datetime.strptime(date_str, "%d/%m/%Y").date()
-                    age = now.year - bday.year - ((now.month, now.day) < (bday.month, bday.day))
-                    line += f" ({age} years old)"
-                lines.append(line)
+            if not user:
+                continue
+            line = f"🎂 {user.mention} - {date_str}"
+            if display_age:
+                bday = datetime.strptime(date_str, "%d/%m/%Y").date()
+                age = now.year - bday.year - ((now.month, now.day) < (bday.month, bday.day))
+                line += f" ({age} years old)"
+            lines.append(line)
 
         embed = discord.Embed(
             title=f"🎉 Birthdays in {now.strftime('%B')} 🎉",
@@ -157,30 +149,40 @@ class BirthdayCog(commands.Cog):
     @tasks.loop(time=time(hour=9, minute=0))
     async def check_birthdays(self):
         tz = pytz.timezone(TIMEZONE)
-        now = datetime.now(tz).date()
+        today = datetime.now(tz).date()
+
         for guild in self.bot.guilds:
             birthdays_today = [
                 (uid, date_str, display_age)
-                for uid, date_str, display_age in self.get_month_birthdays(guild.id, now.month)
-                if datetime.strptime(date_str, "%d/%m/%Y").day == now.day
+                for uid, date_str, display_age in self.get_month_birthdays(guild.id, today.month)
+                if datetime.strptime(date_str, "%d/%m/%Y").day == today.day
             ]
-            if birthdays_today:
-                channel = guild.get_channel(BIRTHDAY_CHANNEL_ID)
-                if channel:
-                    for uid, date_str, display_age in birthdays_today:
-                        user = guild.get_member(uid)
-                        if user:
-                            msg = f"🎉 Happy Birthday to {user.mention}!"
-                            if display_age:
-                                bday = datetime.strptime(date_str, "%d/%m/%Y").date()
-                                age = now.year - bday.year - ((now.month, now.day) < (bday.month, bday.day))
-                                msg += f" ({age} years old)"
-                            await channel.send(msg)
+
+            if not birthdays_today:
+                continue
+
+            channel = guild.get_channel(BIRTHDAY_CHANNEL_ID)
+            if not channel:
+                continue
+
+            for uid, date_str, display_age in birthdays_today:
+                user = guild.get_member(uid)
+                if not user:
+                    continue
+
+                msg = f"🎉 Happy Birthday to {user.mention}!"
+                if display_age:
+                    bday = datetime.strptime(date_str, "%d/%m/%Y").date()
+                    age = today.year - bday.year - ((today.month, today.day) < (bday.month, bday.day))
+                    msg += f" ({age} years old)"
+
+                await channel.send(msg)
 
     @tasks.loop(time=time(hour=9, minute=5))
     async def post_monthly_summary(self):
         tz = pytz.timezone(TIMEZONE)
         now = datetime.now(tz)
+
         if now.day != 1:
             return
 
@@ -192,19 +194,22 @@ class BirthdayCog(commands.Cog):
             lines = []
             for uid, date_str, display_age in sorted(month_birthdays, key=lambda x: datetime.strptime(x[1], "%d/%m/%Y")):
                 user = guild.get_member(uid)
-                if user:
-                    line = f"🎂 {user.mention} - {date_str}"
-                    if display_age:
-                        bday = datetime.strptime(date_str, "%d/%m/%Y").date()
-                        age = now.year - bday.year - ((now.month, now.day) < (bday.month, bday.day))
-                        line += f" ({age} years old)"
-                    lines.append(line)
+                if not user:
+                    continue
+
+                line = f"🎂 {user.mention} - {date_str}"
+                if display_age:
+                    bday = datetime.strptime(date_str, "%d/%m/%Y").date()
+                    age = now.year - bday.year - ((now.month, now.day) < (bday.month, bday.day))
+                    line += f" ({age} years old)"
+                lines.append(line)
 
             embed = discord.Embed(
                 title=f"📅 Birthdays in {now.strftime('%B')}",
                 description="\n".join(lines),
                 color=discord.Color.gold(),
             )
+
             channel = guild.get_channel(SUMMARY_CHANNEL_ID)
             if channel:
                 await channel.send(embed=embed)
@@ -212,34 +217,42 @@ class BirthdayCog(commands.Cog):
     # ---------------- Embed Info ----------------
     async def ensure_embed_posted(self):
         await self.bot.wait_until_ready()
+
         for guild in self.bot.guilds:
             channel = guild.get_channel(BIRTHDAY_CHANNEL_ID)
             if not channel:
                 continue
+
             async for message in channel.history(limit=100):
                 if message.author == self.bot.user and message.embeds:
-                    embed = message.embeds[0]
-                    if embed.title == "🎂 Birthday Manager 🎂":
-                        break
-            else:
-                embed = discord.Embed(
-                    title="🎂 Birthday Manager 🎂",
-                    description=(
-                        "Use `/setbirthday day month [year] [display_age]` in #general-chat to set your birthday.\n"
-                        "Example: `/setbirthday 15 June 1995 True`\n"
-                        "Age will only be shown if you select True."
-                    ),
-                    color=discord.Color.blue()
-                )       
-                embed.set_image(url="https://cdn.discordapp.com/attachments/1098667103030100040/1442248383258689697/Happy_birthday_20251123_201738_0000.png?ex=6924bdfa&is=69236c7a&hm=e8e7e7d0e8a943d8ea3a13f90a3268f8a9482cc58b18aadd309ded7768076f3f&")
-                
-                await channel.send(embed=embed)
+                    if message.embeds[0].title == "🎂 Birthday Manager 🎂":
+                        return
 
-    # Add this method to sync commands after the bot is ready
+            embed = discord.Embed(
+                title="🎂 Birthday Manager 🎂",
+                description=(
+                    "Use `/setbirthday day month [year] [display_age]` in #general-chat to set your birthday.\n"
+                    "Example: `/setbirthday 15 June 1995 True`\n"
+                    "Age will only be shown if you select True."
+                ),
+                color=discord.Color.blue()
+            )
+
+            embed.set_image(url="https://cdn.discordapp.com/attachments/1098667103030100040/1442248383258689697/Happy_birthday_20251123_201738_0000.png")
+
+            await channel.send(embed=embed)
+
+    # ---------------- on_ready ----------------
     @commands.Cog.listener()
     async def on_ready(self):
-        await self.bot.tree.sync(guild=self.guild)
+        if not self.check_birthdays.is_running():
+            self.check_birthdays.start()
 
+        if not self.post_monthly_summary.is_running():
+            self.post_monthly_summary.start()
+
+        await self.ensure_embed_posted()
+        await self.bot.tree.sync(guild=self.guild)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(BirthdayCog(bot))
