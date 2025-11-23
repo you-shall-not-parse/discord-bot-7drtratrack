@@ -1,137 +1,92 @@
 import discord
-from discord.ext import commands
-import socket
-import asyncio
+from discord.ext import commands, tasks
+from discord import app_commands
+import requests
+import datetime
 
-# --------------------------------------------------
-# CONFIG
-# --------------------------------------------------
-RCON_HOST = "176.57.140.181"      # your server IP
-RCON_PORT = 30216               # your RCON port
+# ===================== CONFIG =====================
+MAP_VOTE_CHANNEL_ID = 1441751747935735878   # <<--- YOUR CHANNEL ID HERE
+
+RCON_IP = "176.57.140.181"
+RCON_PORT = 30216
 RCON_PASSWORD = "bedcc53"
-MAPVOTE_CHANNEL_ID = 1441751747935735878
 
-POLL_DURATION = 60  # Seconds
+MAP_LIST = [
+    "Foy",
+    "Stalingrad",
+    "Purple Heart Lane",
+    "Omaha Beach",
+]
 
-# Map timers (example values — update with yours)
-MAP_TIMERS = {
-    "Foy Offensive US": 1800,
-    "Foy Offensive GER": 900,
-    "Utah Beach Warfare": 2500,
-    "SME Warfare": 400,
-    "Kursk Warfare": 6000,
-}
+# How long a map vote lasts
+VOTE_DURATION_SECONDS = 180
 
 
-# --------------------------------------------------
-# RAW TCP RCON FUNCTION
-# --------------------------------------------------
-def send_rcon(command: str):
-    """
-    Sends a raw TCP RCON command to a Hell Let Loose server.
-    Protocol:
-      1) connect TCP
-      2) send: 'password <pass>\n'
-      3) send: '<command>\n'
-    """
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(5)
-        s.connect((RCON_HOST, RCON_PORT))
-
-        # Authenticate
-        s.sendall(f"password {RCON_PASSWORD}\n".encode("utf-8"))
-        auth_reply = s.recv(4096).decode()
-
-        if "accepted" not in auth_reply.lower():
-            s.close()
-            return False, f"Auth failed: {auth_reply}"
-
-        # Send command
-        s.sendall(f"{command}\n".encode("utf-8"))
-        result = s.recv(4096).decode()
-
-        s.close()
-        return True, result
-
-    except Exception as e:
-        return False, str(e)
-
-
-# --------------------------------------------------
-# MAP VOTE COG
-# --------------------------------------------------
 class MapVote(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    # Helper to display timers
-    def format_time(self, seconds):
-        if seconds < 60:
-            return f"{seconds}s ago"
-        m = seconds // 60
-        h = m // 60
-        if h > 0:
-            return f"{h}h {m % 60}m ago"
-        return f"{m}m ago"
+    # -----------------------------------------------------------
+    # RCON REQUEST FUNCTION
+    # -----------------------------------------------------------
+    def rcon_command(self, command: str):
+        url = f"http://{RCON_IP}:{RCON_PORT}/rcon"
+        payload = {"password": RCON_PASSWORD, "command": command}
 
-    @commands.command(name="mapvote")
-    async def mapvote(self, ctx):
-        """Starts a map vote using Discord's native poll system."""
+        try:
+            response = requests.post(url, json=payload, timeout=5)
+            response.raise_for_status()
+            return response.text
+        except Exception as e:
+            print(f"RCON ERROR: {e}")
+            return None
 
-        # Build poll answers with timers
-        answers = []
-        for mapname, seconds in MAP_TIMERS.items():
-            timer_text = self.format_time(seconds)
-            answers.append(discord.PollAnswer(text=f"{mapname} — ⏱️ {timer_text}"))
+    # -----------------------------------------------------------
+    # SLASH COMMAND – START MAP VOTE
+    # -----------------------------------------------------------
+    @app_commands.command(name="start_mapvote", description="Start a map vote poll")
+    async def start_mapvote(self, interaction: discord.Interaction):
+        await interaction.response.send_message("Starting map vote…", ephemeral=True)
 
-        poll = discord.Poll(
-            question="🗺️ Vote for the next map!",
-            duration=POLL_DURATION,
-            allow_multiselect=False,
-            answers=answers
-        )
-
-        # --------------------------------------------------
-        # ALWAYS POST TO SPECIFIC CHANNEL
-        # --------------------------------------------------
-        channel = ctx.guild.get_channel(MAPVOTE_CHANNEL_ID)
+        channel = self.bot.get_channel(MAP_VOTE_CHANNEL_ID)
         if channel is None:
-            return await ctx.send(f"❌ Cannot find map vote channel `{MAPVOTE_CHANNEL_ID}`")
+            await interaction.followup.send("❌ Map vote channel not found.", ephemeral=True)
+            return
 
-        # Send poll
-        msg = await channel.send(poll=poll)
-        await channel.send(f"🗳️ **Map vote open for {POLL_DURATION} seconds!**")
+        # -------------------------------------------------------
+        # TIMER DISPLAY
+        # -------------------------------------------------------
+        end_time = datetime.datetime.utcnow() + datetime.timedelta(seconds=VOTE_DURATION_SECONDS)
+        end_unix = int(end_time.timestamp())
 
-        # Wait until poll closes
-        await asyncio.sleep(POLL_DURATION + 2)
+        description = (
+            f"🗳️ **Vote for the next map!**\n"
+            f"Voting ends <t:{end_unix}:R>\n"
+            f"\n**Maps:**\n"
+        )
+        for m in MAP_LIST:
+            description += f"• {m}\n"
 
-        # Re-fetch message to get closed poll results
-        msg = await channel.fetch_message(msg.id)
-        poll_obj = msg.poll
+        # -------------------------------------------------------
+        # CREATE POLL (Discord API 2024+)
+        # -------------------------------------------------------
+        poll = discord.Poll(question="Which map should we play next?")
+        for name in MAP_LIST:
+            poll.add_answer(discord.PollAnswer(text=name))
 
-        if not poll_obj:
-            return await channel.send("❌ Could not read poll results (Discord API issue).")
+        await channel.send(content=description, poll=poll)
 
-        # Determine winner
-        winner = max(poll_obj.answers, key=lambda a: a.vote_count)
-        clean_name = winner.text.split(" —")[0]
-
-        # Run RCON command
-        success, reply = send_rcon(f'switchmap "{clean_name}"')
-
-        if success:
-            await channel.send(
-                f"🏆 Winning Map: **{clean_name}**\n"
-                f"✔️ Map switched successfully!"
-            )
-        else:
-            await channel.send(
-                f"🏆 Winning Map: **{clean_name}**\n"
-                f"❌ RCON Error: `{reply}`"
-            )
+    # -----------------------------------------------------------
+    # READY EVENT (sync commands)
+    # -----------------------------------------------------------
+    @commands.Cog.listener()
+    async def on_ready(self):
+        try:
+            synced = await self.bot.tree.sync()
+            print(f"Synced {len(synced)} slash command(s).")
+        except Exception as e:
+            print(f"Slash sync error: {e}")
 
 
-# --------------------------------------------------
 async def setup(bot):
     await bot.add_cog(MapVote(bot))
