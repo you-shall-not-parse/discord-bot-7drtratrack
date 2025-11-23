@@ -230,7 +230,8 @@ class BirthdayCog(commands.Cog):
                         "Age will only be shown if you select True."
                     ),
                     color=discord.Color.blue(),
-                )
+                )       embed1.set_image(url="https://cdn.discordapp.com/attachments/1098667103030100040/1442248383258689697/Happy_birthday_20251123_201738_0000.png?ex=6924bdfa&is=69236c7a&hm=e8e7e7d0e8a943d8ea3a13f90a3268f8a9482cc58b18aadd309ded7768076f3f&")
+
                 await channel.send(embed=embed)
 
     # Add this method to sync commands after the bot is ready
