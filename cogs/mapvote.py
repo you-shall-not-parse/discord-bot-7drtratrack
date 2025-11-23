@@ -10,7 +10,7 @@ RCON_HOST = "176.57.140.181"      # your server IP
 RCON_PORT = 30216                 # your RCON port
 RCON_PASSWORD = "bedcc53"
 MAPVOTE_CHANNEL_ID = 1441751747935735878
-GUILD_ID = 1097913605082579024    # your guild ID
+GUILD_ID = 1097913605082579024     # your guild ID
 
 
 # --------------------------------------------------
