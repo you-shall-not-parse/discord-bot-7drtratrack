@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 import asyncio
 import requests
+import json
 
 # --------------------------------------------------
 # CONFIG
@@ -12,8 +13,13 @@ RCON_PASSWORD = "bedcc53"
 MAPVOTE_CHANNEL_ID = 1441751747935735878
 GUILD_ID = 1097913605082579024
 
-# List of maps and optional "timer" (e.g., how recently played)
+# User-friendly map names -> server map names
 MAPS = {
+    "Elsenborn": "elsenbornridge_warfare_day",
+}
+
+# Optional timers (how recently played)
+MAP_TIMERS = {
     "Foy": "06:30",
     "Sainte-Mère-Église": "06:30",
     "Omaha Beach": "06:30",
@@ -22,20 +28,41 @@ MAPS = {
 
 VOTE_DURATION = 60  # seconds
 
-
 # --------------------------------------------------
 # RCON HELPER
 # --------------------------------------------------
-def send_rcon(command: str):
+def send_rcon_set_map(map_name: str):
     """
-    Sends a command to the RCON server and returns the response.
+    Sends the set_map command to the server with JSON arguments.
+    Returns the server JSON response as a formatted string.
     """
     url = f"http://{RCON_HOST}:{RCON_PORT}/rcon"
-    payload = {"password": RCON_PASSWORD, "command": command}
+    payload = {
+        "password": RCON_PASSWORD,
+        "command": "set_map",
+        "arguments": {"map_name": map_name}
+    }
+
     try:
         r = requests.post(url, json=payload, timeout=5)
         r.raise_for_status()
-        return r.text
+        return json.dumps(r.json(), indent=2)
+    except Exception as e:
+        return f"Error: {e}"
+
+def get_current_map():
+    """
+    Query the current map from the server.
+    Replace 'getmap' with the correct command if needed.
+    """
+    url = f"http://{RCON_HOST}:{RCON_PORT}/rcon"
+    payload = {"password": RCON_PASSWORD, "command": "getmap"}
+    try:
+        r = requests.post(url, json=payload, timeout=5)
+        r.raise_for_status()
+        result = r.json()
+        # If the server returns {"result":"map_name"} or similar
+        return result.get("result", "Unknown") if isinstance(result, dict) else str(result)
     except Exception as e:
         return f"Error: {e}"
 
@@ -75,15 +102,16 @@ class MapVote(commands.Cog):
             return
 
         # ---------------- GET CURRENT MAP ----------------
-        current_map = send_rcon("getmap") or "Unknown"
+        current_map = get_current_map()
 
         # ---------------- CREATE BUTTONS ----------------
         view = discord.ui.View(timeout=VOTE_DURATION)
-        for map_name, timer in MAPS.items():
-            label = f"{map_name} ⏱️ {timer}"
+        for display_name, server_name in MAPS.items():
+            timer = MAP_TIMERS.get(display_name, "")
+            label = f"{display_name} ⏱️ {timer}" if timer else display_name
             button = discord.ui.Button(label=label, style=discord.ButtonStyle.primary)
 
-            async def callback(interact, map_name=map_name):
+            async def callback(interact, map_name=display_name):
                 self.votes[interact.user.id] = map_name
                 await interact.response.send_message(
                     f"You voted for {map_name}", ephemeral=True
@@ -109,14 +137,15 @@ class MapVote(commands.Cog):
         if self.votes:
             from collections import Counter
             counter = Counter(self.votes.values())
-            winner = counter.most_common(1)[0][0]
+            winner_display = counter.most_common(1)[0][0]
+            winner_map_name = MAPS[winner_display]
 
-            # Send RCON switchmap command
-            rcon_response = send_rcon(f'switchmap "{winner}"')
+            # Send RCON set_map command
+            rcon_response = send_rcon_set_map(winner_map_name)
 
             # Post results in channel
             await channel.send(
-                f"🏆 Map vote ended! Winning map: **{winner}**\n"
+                f"🏆 Map vote ended! Winning map: **{winner_display}**\n"
                 f"💻 RCON response:\n```{rcon_response}```"
             )
         else:
