@@ -124,7 +124,7 @@ class MapVote(commands.Cog):
                 f"🗺️ Vote for the next map! (Current: {current_map})",
                 emoji=None
             ),
-            duration=poll_duration,
+            poll_duration = timedelta(seconds=VOTE_DURATION_SECONDS)
             multiple=False
         )
 
