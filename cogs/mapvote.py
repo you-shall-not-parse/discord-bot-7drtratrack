@@ -120,14 +120,16 @@ class MapVote(commands.Cog):
         await interaction.response.send_message("Map vote started!", ephemeral=True)
 
         current_map = await get_current_map()
-
+        
+        poll_duration_minutes = max(1, VOTE_DURATION_SECONDS // 60)
+        
         # Build the poll
         poll = discord.Poll(
             question=discord.PollMedia(
                 f"🗺️ Vote for the next map! (Current: {current_map})",
                 emoji=None
             ),
-            duration=timedelta(seconds=VOTE_DURATION_SECONDS),
+            duration=poll_duration_minutes,
             multiple=False
         )
 
