@@ -4,37 +4,57 @@ from discord import app_commands
 from datetime import timedelta
 import asyncio
 import os
-
-# Load env
+import requests
 from dotenv import load_dotenv
+
 load_dotenv()
 
-import rcon.rcon as rcon
-from lib.config import config
+# --------------------------------------------------
+# RCON WEB API SIMPLE WRAPPER
+# (No complicated dependencies!)
+# --------------------------------------------------
+
+RCON_HOST = os.getenv("RCON_HOST")
+RCON_PORT = os.getenv("RCON_PORT")
+RCON_API_KEY = os.getenv("RCON_API_KEY")
+
+BASE_URL = f"http://{RCON_HOST}:{RCON_PORT}/api/"
+
+
+def rcon_post(endpoint: str, payload: dict):
+    """Simple POST to HLL Web RCON."""
+    try:
+        response = requests.post(
+            BASE_URL + endpoint,
+            json=payload,
+            headers={"x-api-key": RCON_API_KEY},
+            timeout=5
+        )
+        return response.json()
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def rcon_get(endpoint: str):
+    """Simple GET to HLL Web RCON."""
+    try:
+        response = requests.get(
+            BASE_URL + endpoint,
+            headers={"x-api-key": RCON_API_KEY},
+            timeout=5
+        )
+        return response.json()
+    except Exception as e:
+        return {"error": str(e)}
 
 
 # --------------------------------------------------
-# RCON CONFIG OVERRIDE
+# SIMPLE CONFIG (kept inside the cog by design)
 # --------------------------------------------------
-config._config_data = {
-    "rcon": {
-        0: {
-            "host": os.getenv("RCON_HOST"),
-            "port": int(os.getenv("RCON_PORT")),
-            "api_key": os.getenv("RCON_API_KEY"),
-            "ssl": False,
-            "timeout": 5
-        }
-    }
-}
 
-
-# --------------------------------------------------
-# LOCAL CONFIG VALUES (NOT SECRET)
-# --------------------------------------------------
 GUILD_ID = 1097913605082579024
 MAPVOTE_CHANNEL_ID = 1441751747935735878
-VOTE_DURATION_SECONDS = 60  # <==== Your vote duration
+VOTE_DURATION_SECONDS = 60
 
 MAPS = {
     "Elsenborn": "elsenbornridge_warfare_day",
@@ -45,43 +65,36 @@ MAP_TIMERS = {
 }
 
 
-# -------------------------
-# RCON HELPERS
-# -------------------------
+# --------------------------------------------------
+# SMALL HELPERS
+# --------------------------------------------------
+
 async def get_current_map():
-    try:
-        cur = await rcon.get_Current_Map()
-        if hasattr(cur, "pretty_name"):
-            return cur.pretty_name
-        return str(cur)
-    except Exception as e:
-        return f"Unknown ({e})"
+    data = rcon_get("get_current_map")
+    if "result" in data and data["result"]:
+        return data["result"].get("pretty_name", "Unknown")
+    return "Unknown"
 
 
 async def set_map(map_id: str):
-    """Try multiple RCON methods."""
-    try:
-        payload_b = {"map_name": map_id}
-        payload_rot = {"map_names": [map_id]}
+    """Try both known API formats."""
+    try_methods = [
+        ("set_map", {"map_name": map_id}),
+        ("set_map_rotation", {"map_names": [map_id]}),
+    ]
 
-        if hasattr(rcon, "set_map"):
-            res = await rcon.set_map(payload_b)
-            return f"[set_map] {res}"
+    for endpoint, payload in try_methods:
+        result = rcon_post(endpoint, payload)
+        if result and "error" not in result:
+            return f"[{endpoint}] {result}"
 
-        if hasattr(rcon, "set_Map"):
-            res = await rcon.set_Map(payload_b)
-            return f"[set_Map] {res}"
-
-        res = await rcon.set_Map_Rotation(payload_rot)
-        return f"[set_Map_Rotation] {res}"
-
-    except Exception as e:
-        return f"ERROR: {e}"
+    return f"ERROR: {result}"
 
 
 # --------------------------------------------------
-# COG USING REAL DISCORD POLLS
+# MAIN COG
 # --------------------------------------------------
+
 class MapVote(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -89,73 +102,69 @@ class MapVote(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         guild = discord.Object(id=GUILD_ID)
-        await self.bot.tree.sync(guild=guild)
-        print("MapVote commands synced.")
+        try:
+            await self.bot.tree.sync(guild=guild)
+            print("[MapVote] Commands synced.")
+        except Exception as e:
+            print("Sync error:", e)
 
-    # ----------------------- COMMAND -----------------------
-    @app_commands.command(
-        name="start_mapvote",
-        description="Start a poll for the next HLL map."
-    )
+    # Slash command to start vote
+    @app_commands.command(name="start_mapvote", description="Start a poll to choose the next map.")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     async def start_mapvote(self, interaction: discord.Interaction):
 
         channel = self.bot.get_channel(MAPVOTE_CHANNEL_ID)
         if not channel:
-            return await interaction.response.send_message(
-                "❌ Map vote channel not found!",
-                ephemeral=True
-            )
+            return await interaction.response.send_message("❌ Map vote channel not found!", ephemeral=True)
 
-        await interaction.response.send_message("Starting poll...", ephemeral=True)
+        await interaction.response.send_message("Map vote started!", ephemeral=True)
 
-        current = await get_current_map()
+        current_map = await get_current_map()
 
-        # --------------------
-        # Create the poll
-        # --------------------
+        # Build the poll
         poll = discord.Poll(
             question=discord.PollMedia(
-                f"🗺️ Vote for the next map!\n(Current: {current})",
+                f"🗺️ Vote for the next map! (Current: {current_map})",
                 emoji=None
             ),
             duration=timedelta(seconds=VOTE_DURATION_SECONDS),
             multiple=False
         )
 
-        # Add map choices
-        for pretty, internal in MAPS.items():
-            label = f"{pretty} ⏱️ {MAP_TIMERS.get(pretty, '?')}"
-            poll.add_answer(text=label, emoji=None)
+        # Add answers
+        for pretty_name in MAPS.keys():
+            poll.add_answer(
+                text=f"{pretty_name} ⏱️ {MAP_TIMERS.get(pretty_name, '?')}",
+                emoji=None
+            )
 
-        # Send it
+        # Send the poll
         msg = await channel.send(poll=poll)
 
-        # -------- WAIT FOR POLL TO END --------
+        # Wait for expiration
         await asyncio.sleep(VOTE_DURATION_SECONDS + 2)
 
-        # Re-fetch to get results
+        # Fetch updated poll results
         msg = await channel.fetch_message(msg.id)
-        results = msg.poll.answers
 
         # Determine winner
-        winner = max(results, key=lambda a: a.vote_count)
-        winner_name = winner.text.split(" ⏱️")[0]
-        winner_id = MAPS[winner_name]
+        answers = msg.poll.answers
+        winner = max(answers, key=lambda a: a.vote_count)
 
-        # Set the map
-        rcon_result = await set_map(winner_id)
+        winner_clean_name = winner.text.split(" ⏱️")[0]
+        selected_map_id = MAPS[winner_clean_name]
 
+        # Send to RCON
+        result = await set_map(selected_map_id)
+
+        # Announce winner
         await channel.send(
-            f"🏆 **Poll finished!**\n"
-            f"Winner: **{winner_name}** ({winner.vote_count} votes)\n"
-            f"📡 RCON ID: `{winner_id}`\n"
-            f"💬 RCON response:\n```{rcon_result}```"
+            f"🏆 **Map vote finished!**\n"
+            f"Winner: **{winner_clean_name}** ({winner.vote_count} votes)\n"
+            f"RCON map ID: `{selected_map_id}`\n\n"
+            f"📡 RCON response:\n```{result}```"
         )
 
 
-# --------------------------------------------------
-# SETUP
-# --------------------------------------------------
 async def setup(bot):
     await bot.add_cog(MapVote(bot))
