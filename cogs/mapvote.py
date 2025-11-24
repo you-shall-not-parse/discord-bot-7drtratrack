@@ -54,7 +54,7 @@ def rcon_get(endpoint: str):
 
 GUILD_ID = 1097913605082579024
 MAPVOTE_CHANNEL_ID = 1441751747935735878
-VOTE_DURATION_SECONDS = 60
+VOTE_DURATION_SECONDS = 10
 
 MAPS = {
     "Elsenborn": "elsenbornridge_warfare_day",
@@ -127,7 +127,7 @@ class MapVote(commands.Cog):
                 f"🗺️ Vote for the next map! (Current: {current_map})",
                 emoji=None
             ),
-            duration=VOTE_DURATION_SECONDS,
+            duration=(timedelta(seconds=VOTE_DURATION_SECONDS),
             multiple=False
         )
 
