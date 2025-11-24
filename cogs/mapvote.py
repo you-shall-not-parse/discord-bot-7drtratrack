@@ -37,17 +37,11 @@ MAPVOTE_CHANNEL_ID = 1441751747935735878
 VOTE_DURATION_SECONDS = 60  # <==== Your vote duration
 
 MAPS = {
-    "Driel Skirmish (Day)": "DRL_S_1944_Day_P_Skirmish",
-    "Foy Warfare": "FOY_W_1944_Warfare",
-    "SME Warfare": "SME_W_1944_Warfare",
-    "Omaha Warfare": "OMA_W_1944_Warfare",
+    "Elsenborn": "elsenbornridge_warfare_day",
 }
 
 MAP_TIMERS = {
-    "Driel Skirmish (Day)": "06:30",
-    "Foy Warfare": "12:10",
-    "SME Warfare": "04:55",
-    "Omaha Warfare": "22:40",
+    "Elsenborn": "06:30",
 }
 
 
