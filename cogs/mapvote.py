@@ -118,10 +118,7 @@ class MapVote(commands.Cog):
 
         current_map = await get_current_map()
 
-        # FIXED: Must be timedelta
-        poll_duration = timedelta(seconds=VOTE_DURATION_SECONDS)
-
-        # Build the poll
+        poll_duration = max(1, int(VOTE_DURATION_SECONDS / 60))
         poll = discord.Poll(
             question=discord.PollMedia(
                 f"🗺️ Vote for the next map! (Current: {current_map})",
