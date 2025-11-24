@@ -11,7 +11,6 @@ load_dotenv()
 
 # --------------------------------------------------
 # RCON WEB API SIMPLE WRAPPER
-# (No complicated dependencies!)
 # --------------------------------------------------
 
 RCON_HOST = os.getenv("RCON_HOST")
@@ -22,7 +21,6 @@ BASE_URL = f"http://{RCON_HOST}:{RCON_PORT}/api/"
 
 
 def rcon_post(endpoint: str, payload: dict):
-    """Simple POST to HLL Web RCON."""
     try:
         response = requests.post(
             BASE_URL + endpoint,
@@ -36,7 +34,6 @@ def rcon_post(endpoint: str, payload: dict):
 
 
 def rcon_get(endpoint: str):
-    """Simple GET to HLL Web RCON."""
     try:
         response = requests.get(
             BASE_URL + endpoint,
@@ -49,12 +46,14 @@ def rcon_get(endpoint: str):
 
 
 # --------------------------------------------------
-# SIMPLE CONFIG (kept inside the cog by design)
+# CONFIG
 # --------------------------------------------------
 
 GUILD_ID = 1097913605082579024
 MAPVOTE_CHANNEL_ID = 1441751747935735878
-VOTE_DURATION_SECONDS = 10
+
+# How long the poll runs (in seconds)
+VOTE_DURATION_SECONDS = 10  
 
 MAPS = {
     "Elsenborn": "elsenbornridge_warfare_day",
@@ -66,7 +65,7 @@ MAP_TIMERS = {
 
 
 # --------------------------------------------------
-# SMALL HELPERS
+# HELPERS
 # --------------------------------------------------
 
 async def get_current_map():
@@ -77,7 +76,6 @@ async def get_current_map():
 
 
 async def set_map(map_id: str):
-    """Try both known API formats."""
     try_methods = [
         ("set_map", {"map_name": map_id}),
         ("set_map_rotation", {"map_names": [map_id]}),
@@ -108,7 +106,6 @@ class MapVote(commands.Cog):
         except Exception as e:
             print("Sync error:", e)
 
-    # Slash command to start vote
     @app_commands.command(name="start_mapvote", description="Start a poll to choose the next map.")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     async def start_mapvote(self, interaction: discord.Interaction):
@@ -120,20 +117,21 @@ class MapVote(commands.Cog):
         await interaction.response.send_message("Map vote started!", ephemeral=True)
 
         current_map = await get_current_map()
-        
-        poll_duration_minutes = max(1, VOTE_DURATION_SECONDS // 60)
-        
+
+        # FIXED: Must be timedelta
+        poll_duration = timedelta(seconds=VOTE_DURATION_SECONDS)
+
         # Build the poll
         poll = discord.Poll(
             question=discord.PollMedia(
                 f"🗺️ Vote for the next map! (Current: {current_map})",
                 emoji=None
             ),
-            duration=poll_duration_minutes,
+            duration=poll_duration,
             multiple=False
         )
 
-        # Add answers
+        # Add map options
         for pretty_name in MAPS.keys():
             poll.add_answer(
                 text=f"{pretty_name} ⏱️ {MAP_TIMERS.get(pretty_name, '?')}",
@@ -143,26 +141,23 @@ class MapVote(commands.Cog):
         # Send the poll
         msg = await channel.send(poll=poll)
 
-        # Wait for expiration
+        # Wait for the poll to finish
         await asyncio.sleep(VOTE_DURATION_SECONDS + 2)
 
-        # Fetch updated poll results
+        # Re-fetch updated poll results
         msg = await channel.fetch_message(msg.id)
 
-        # Determine winner
-        answers = msg.poll.answers
-        winner = max(answers, key=lambda a: a.vote_count)
+        winner = max(msg.poll.answers, key=lambda a: a.vote_count)
+        winner_clean = winner.text.split(" ⏱️")[0]
 
-        winner_clean_name = winner.text.split(" ⏱️")[0]
-        selected_map_id = MAPS[winner_clean_name]
+        selected_map_id = MAPS[winner_clean]
 
-        # Send to RCON
+        # Send command to RCON
         result = await set_map(selected_map_id)
 
-        # Announce winner
         await channel.send(
             f"🏆 **Map vote finished!**\n"
-            f"Winner: **{winner_clean_name}** ({winner.vote_count} votes)\n"
+            f"Winner: **{winner_clean}** ({winner.vote_count} votes)\n"
             f"RCON map ID: `{selected_map_id}`\n\n"
             f"📡 RCON response:\n```{result}```"
         )
