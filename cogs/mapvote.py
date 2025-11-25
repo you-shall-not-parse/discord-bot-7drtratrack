@@ -17,7 +17,7 @@ GUILD_ID = 1097913605082579024
 MAPVOTE_CHANNEL_ID = 1441751747935735878
 
 # Fallback match length (CRCON cannot provide this on your host)
-MATCH_LENGTH_MINUTES = 90   # <-- EDIT if needed (e.g., 60 for Warfare only)
+MATCH_LENGTH_MINUTES = 60   # <-- EDIT if needed (e.g., 60 for Warfare only)
 MATCH_LENGTH_SECONDS = MATCH_LENGTH_MINUTES * 60
 
 # Vote ends 2 minutes before match end
