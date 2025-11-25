@@ -11,7 +11,7 @@ from datetime import datetime, timezone, timedelta
 load_dotenv()
 
 # --------------------------------------------------
-# CONFIG (EDIT THESE)
+# CONFIG YOU EDIT
 # --------------------------------------------------
 
 GUILD_ID = 1097913605082579024
@@ -20,11 +20,14 @@ MAPVOTE_CHANNEL_ID = 1441751747935735878
 # Vote ends this many seconds before match end
 VOTE_END_OFFSET_SECONDS = 120
 
-# How often to refresh the embed / timers
-EMBED_UPDATE_INTERVAL = 1  # seconds
+# How often to refresh the embed
+EMBED_UPDATE_INTERVAL = 5  # seconds
 
-# Map voting pool (Pretty name -> CRCON map id)
-# Keep these defined in code (as you asked)
+# How many options to show each vote (dropdown max is 25)
+OPTIONS_PER_VOTE = 10  # set up to 25
+
+# Map pool (Pretty name -> CRCON map id)
+
 MAPS = {
     "Elsenborn Ridge Warfare (Day)": "elsenbornridge_warfare_day",
     "Carentan Warfare": "carentan_warfare",
@@ -42,18 +45,13 @@ MAP_CDN_IMAGES = {
     "Hill 400 Warfare": "https://cdn.discordapp.com/attachments/1365401621110067281/1365404269116919930/Hill400_SP_NoHQ_1.png?ex=6925fed1&is=6924ad51&hm=4e2db05512162439e98154adf75f940803750f35f6f47f8dd908d1de1e9ec7ad",
 }
 
-# How many options to show in each vote.
-# Discord dropdown max is 25. If you have more maps, we randomly sample.
-OPTIONS_PER_VOTE = 25  # set up to 25
+# ---------------- Broadcast texts (you fill these) ----------------
+BROADCAST_START = ""          # e.g. "Next-map voting is OPEN on Discord!"
+BROADCAST_ENDING_SOON = ""    # e.g. "Vote closes in 2 minutes!"
+BROADCAST_NO_VOTES = "No votes, the map rotation wins :("
 
-# --- Announcement text (edit these whenever you want) ---
-DISCORD_VOTE_START_MSG = "🗺️ **Next-map voting is now OPEN!** Vote in the dropdown below."
-DISCORD_2MIN_WARNING = "⏳ **Next-map vote closes in 2 minutes! Get your votes in now.**"
-DISCORD_VOTE_END_MSG = "🏁 **Voting closed!** Setting next map now…"
-
-INGAME_VOTE_START_MSG = "Next-map vote is OPEN on Discord! Cast your vote now."
-INGAME_2MIN_WARNING = "Next-map vote closes in 2 minutes! Vote now in Discord."
-INGAME_VOTE_END_MSG = "Voting closed. Next map will be set shortly."
+# Winner broadcast is FIXED by your rule:
+# "<winning map> has won the vote!"
 
 # --------------------------------------------------
 # CRCON API WRAPPER (Bearer token)
@@ -90,7 +88,10 @@ def rcon_post(endpoint: str, payload: dict):
 # --------------------------------------------------
 
 async def get_gamestate():
-    """Uses /api/get_gamestate for timing + current map."""
+    """
+    Uses /api/get_gamestate for current map + time remaining.
+    We accept the response even if time remaining is 0.
+    """
     data = rcon_get("get_gamestate")
     if not data or data.get("failed") or "error" in data:
         return None
@@ -110,8 +111,57 @@ async def get_gamestate():
     }
 
 async def broadcast_ingame(message: str):
-    """Your host uses /api/broadcast."""
+    """Hosted CRCON uses /api/broadcast."""
+    if not message:
+        return None
     return rcon_post("broadcast", {"message": message})
+
+async def rot_add_map(map_name: str, after_map_name: str, after_map_ordinal: int = 1):
+    """
+    Add map immediately after current map without resetting rotation.
+    Try multiple CRCON endpoint styles.
+    """
+    try_methods = [
+        ("rot_add", {
+            "map_name": map_name,
+            "after_map_name": after_map_name,
+            "after_map_ordinal": after_map_ordinal
+        }),
+        # Fallback generic runner if host provides it:
+        ("run_command", {
+            "command": "RotAdd",
+            "arguments": {
+                "map_name": map_name,
+                "after_map_name": after_map_name,
+                "after_map_ordinal": after_map_ordinal
+            }
+        }),
+        ("command", {
+            "command": "RotAdd",
+            "arguments": {
+                "map_name": map_name,
+                "after_map_name": after_map_name,
+                "after_map_ordinal": after_map_ordinal
+            }
+        }),
+    ]
+
+    last_err = None
+    for endpoint, payload in try_methods:
+        result = rcon_post(endpoint, payload)
+        if result and "error" not in result and not result.get("failed"):
+            return result
+        last_err = result
+
+    return last_err or {"error": "rot_add failed"}
+
+def fmt_vote_secs(seconds: float | None):
+    if seconds is None:
+        return "Unknown"
+    seconds = max(0, int(seconds))
+    m = seconds // 60
+    s = seconds % 60
+    return f"{m:02d}:{s:02d}"
 
 # --------------------------------------------------
 # VOTE STATE
@@ -120,14 +170,15 @@ async def broadcast_ingame(message: str):
 class VoteState:
     def __init__(self):
         self.active = False
-        self.vote_message_id = None
+
         self.vote_channel = None
+        self.vote_message_id = None
 
         self.match_map_id = None
         self.match_map_pretty = None
-        self.match_start_detected_at = None  # datetime UTC
 
-        self.vote_end_at = None  # datetime UTC
+        self.vote_start_at = None
+        self.vote_end_at = None
         self.warning_sent = False
 
         self.options_pretty_to_id = {}
@@ -137,18 +188,30 @@ class VoteState:
     def reset_for_new_match(self, gs):
         self.active = True
         self.vote_message_id = None
+        self.vote_channel = None
 
         self.match_map_id = gs["current_map_id"]
         self.match_map_pretty = gs["current_map_pretty"]
-        self.match_start_detected_at = datetime.now(timezone.utc)
 
+        now = datetime.now(timezone.utc)
+        self.vote_start_at = now
         self.warning_sent = False
+
         self.user_votes.clear()
         self.vote_counts.clear()
 
-        # vote end time based on time_remaining right now
-        now = datetime.now(timezone.utc)
-        self.vote_end_at = now + timedelta(seconds=max(0, gs["time_remaining"] - VOTE_END_OFFSET_SECONDS))
+        # If CRCON gives real remaining time, use it.
+        # If 0, we still schedule off match_time as a best-effort,
+        # BUT display remains 0 per your instruction.
+        tr = float(gs["time_remaining"])
+        if tr > 0:
+            end_in = max(0, tr - VOTE_END_OFFSET_SECONDS)
+        else:
+            # best effort scheduling when timers are broken
+            mt = int(gs.get("match_time", 5400))
+            end_in = max(0, mt - VOTE_END_OFFSET_SECONDS)
+
+        self.vote_end_at = now + timedelta(seconds=end_in)
 
     def set_options(self, options_pretty_to_id):
         self.options_pretty_to_id = options_pretty_to_id
@@ -169,6 +232,7 @@ class VoteState:
     def winner_map_id(self):
         if not self.vote_counts:
             return None
+        # stable winner: highest votes, ties resolved by first encountered
         return max(self.vote_counts.items(), key=lambda kv: kv[1])[0]
 
 # --------------------------------------------------
@@ -225,9 +289,7 @@ class MapVote(commands.Cog):
         self.bot = bot
         self.state = VoteState()
 
-        # for match-change detection
         self.last_map_id = None
-        self.last_time_remaining = None
 
         self.tick_task.start()
 
@@ -254,13 +316,6 @@ class MapVote(commands.Cog):
         if self.state.vote_end_at:
             vote_remaining = max(0, (self.state.vote_end_at - now).total_seconds())
 
-        def fmt_secs(s):
-            if s is None:
-                return "Unknown"
-            m = int(s) // 60
-            sec = int(s) % 60
-            return f"{m:02d}:{sec:02d}"
-
         # live vote summary (only maps with votes)
         if self.state.vote_counts:
             sorted_votes = sorted(self.state.vote_counts.items(), key=lambda kv: kv[1], reverse=True)
@@ -277,11 +332,11 @@ class MapVote(commands.Cog):
             description=(
                 f"**Current map:** {current_pretty}\n"
                 f"**Match remaining:** `{raw_remaining}`\n"
-                f"**Vote closes in:** `{fmt_secs(vote_remaining)}` (2 mins before end)\n\n"
-                f"{DISCORD_VOTE_START_MSG}\n\n"
+                f"**Vote closes in:** `{fmt_vote_secs(vote_remaining)}` (2 mins before end)\n\n"
+                f"Vote in the dropdown below. You can change vote any time.\n\n"
                 f"**Live votes:**\n{votes_text}"
             ),
-            color=discord.Color.green()
+            color=discord.Color.red()
         )
 
         # current map image from your CDN
@@ -289,7 +344,7 @@ class MapVote(commands.Cog):
         if img_url:
             embed.set_image(url=img_url)
 
-        embed.set_footer(text="Vote any time during the match. You can change your vote.")
+        embed.set_footer(text="Vote runs during the match. Winner is queued as next map.")
         return embed
 
     async def update_vote_embed(self):
@@ -316,11 +371,12 @@ class MapVote(commands.Cog):
         self.state.vote_channel = channel
         self.state.reset_for_new_match(gs)
 
-        # pick options (exclude current map)
+        # options pool (exclude current map)
         pool = [(pretty, mid) for pretty, mid in MAPS.items() if mid != gs["current_map_id"]]
         random.shuffle(pool)
-        pool = pool[:min(OPTIONS_PER_VOTE, 25, len(pool))]
 
+        take = min(OPTIONS_PER_VOTE, 25, len(pool))
+        pool = pool[:take]
         options_dict = {pretty: mid for pretty, mid in pool}
         self.state.set_options(options_dict)
 
@@ -339,36 +395,39 @@ class MapVote(commands.Cog):
         self.state.vote_message_id = msg.id
 
         # announce start
-        await channel.send(DISCORD_VOTE_START_MSG)
-        ingame = await broadcast_ingame(INGAME_VOTE_START_MSG)
-        print("[MapVote] In-game vote-start broadcast:", ingame)
+        if BROADCAST_START:
+            await broadcast_ingame(BROADCAST_START)
 
-    # ---------- END VOTE & SET MAP ----------
-    async def end_vote_and_set_map(self):
+    # ---------- END VOTE & QUEUE WINNER ----------
+    async def end_vote_and_queue_winner(self):
         self.state.active = False
         channel = self.state.vote_channel
         if not channel:
             return
 
-        await channel.send(DISCORD_VOTE_END_MSG)
-        await broadcast_ingame(INGAME_VOTE_END_MSG)
-
         winner_id = self.state.winner_map_id()
+
+        # no votes -> do nothing to rotation
         if not winner_id:
-            await channel.send("🏁 Vote closed — no votes were cast. Rotation stays unchanged.")
+            await channel.send("🏁 Vote closed — no votes were cast.")
+            await broadcast_ingame(BROADCAST_NO_VOTES)
             return
 
-        result = rcon_post("set_map", {"map_name": winner_id})
+        # Insert winner after CURRENT map (A behaviour)
+        current_id = self.state.match_map_id
+        result = await rot_add_map(winner_id, current_id, 1)
+
         pretty = next((k for k, v in MAPS.items() if v == winner_id), winner_id)
+
+        # broadcast winner wording fixed by your rule
+        await broadcast_ingame(f"{pretty} has won the vote!")
 
         await channel.send(
             f"🏆 **Vote closed!**\n"
             f"Winner: **{pretty}**\n"
-            f"Map ID: `{winner_id}`\n\n"
+            f"Queued next via RotAdd after `{current_id}`.\n\n"
             f"📡 CRCON response:\n```{result}```"
         )
-
-        await broadcast_ingame(f"Next map set to: {pretty}")
 
     # ---------- BACKGROUND LOOP ----------
     @tasks.loop(seconds=EMBED_UPDATE_INTERVAL)
@@ -378,24 +437,15 @@ class MapVote(commands.Cog):
             return
 
         current_map_id = gs["current_map_id"]
-        time_remaining = gs["time_remaining"]
 
-        # Detect new match:
-        # 1) map id changed OR
-        # 2) time_remaining jumped up a lot (server reset)
-        new_match = False
+        # Detect new match by map change (most reliable given timer bug)
         if self.last_map_id and current_map_id != self.last_map_id:
-            new_match = True
-        elif self.last_time_remaining is not None and time_remaining > self.last_time_remaining + 300:
-            new_match = True
-
-        self.last_map_id = current_map_id
-        self.last_time_remaining = time_remaining
-
-        if new_match:
             print(f"[MapVote] New match detected: {gs['current_map_pretty']}")
             await self.start_new_vote_for_match(gs)
+            self.last_map_id = current_map_id
             return
+
+        self.last_map_id = current_map_id
 
         if not self.state.active:
             return
@@ -412,30 +462,19 @@ class MapVote(commands.Cog):
             if remaining_vote <= 120 and not self.state.warning_sent:
                 self.state.warning_sent = True
                 try:
-                    await self.state.vote_channel.send(DISCORD_2MIN_WARNING)
+                    if BROADCAST_ENDING_SOON:
+                        await broadcast_ingame(BROADCAST_ENDING_SOON)
+                    await self.state.vote_channel.send("⏳ **Next-map vote closes in 2 minutes!**")
                 except Exception:
                     pass
-                ingame = await broadcast_ingame(INGAME_2MIN_WARNING)
-                print("[MapVote] In-game 2min warning:", ingame)
 
             # End vote
             if remaining_vote <= 0:
-                await self.end_vote_and_set_map()
+                await self.end_vote_and_queue_winner()
 
     @tick_task.before_loop
     async def before_tick(self):
         await self.bot.wait_until_ready()
-
-    # ---------- OPTIONAL TEST COMMAND ----------
-    @app_commands.command(name="force_mapvote", description="Force-start a vote now (testing).")
-    @app_commands.guilds(discord.Object(id=GUILD_ID))
-    async def force_mapvote(self, interaction: discord.Interaction):
-        gs = await get_gamestate()
-        if not gs:
-            return await interaction.response.send_message("Could not read gamestate.", ephemeral=True)
-
-        await self.start_new_vote_for_match(gs)
-        await interaction.response.send_message("Forced vote started.", ephemeral=True)
 
 
 async def setup(bot):
