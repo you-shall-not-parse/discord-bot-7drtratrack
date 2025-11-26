@@ -87,12 +87,16 @@ def rcon_post(endpoint: str, payload: dict):
 # --------------------------------------------------
 
 async def get_gamestate():
-    """
-    Uses /api/get_gamestate for current map + time remaining.
-    We accept the response even if time remaining is 0.
-    """
+    """Get current map + time remaining safely from CRCON."""
     data = rcon_get("get_gamestate")
-    if not data or data.get("failed") or "error" in data:
+
+    # Only treat non-null errors as real errors
+    if (
+        not data
+        or data.get("failed")
+        or (isinstance(data.get("error"), str) and data.get("error"))
+    ):
+        print("[MapVote] Could not read gamestate:", data)
         return None
 
     res = data.get("result") or {}
@@ -102,12 +106,13 @@ async def get_gamestate():
         "current_map_id": current_map.get("id"),
         "current_map_pretty": current_map.get("pretty_name"),
         "current_image_name": current_map.get("image_name"),
-        "time_remaining": float(res.get("time_remaining", 0.0)),
-        "raw_time_remaining": res.get("raw_time_remaining", "0:00:00"),
-        "match_time": int(res.get("match_time", 0)),
+        "time_remaining": float(res.get("time_remaining") or 0.0),
+        "raw_time_remaining": res.get("raw_time_remaining") or "0:00:00",
+        "match_time": int(res.get("match_time") or 0),
         "next_map_id": (res.get("next_map") or {}).get("id"),
-        "game_mode": res.get("game_mode", "unknown")
+        "game_mode": res.get("game_mode", "unknown"),
     }
+
 
 async def broadcast_ingame(message: str):
     """Hosted CRCON uses /api/broadcast."""
