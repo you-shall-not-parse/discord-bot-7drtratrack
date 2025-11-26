@@ -27,7 +27,6 @@ EMBED_UPDATE_INTERVAL = 5  # seconds
 OPTIONS_PER_VOTE = 10  # set up to 25
 
 # Map pool (Pretty name -> CRCON map id)
-
 MAPS = {
     "Elsenborn Ridge Warfare (Day)": "elsenbornridge_warfare_day",
     "Carentan Warfare": "carentan_warfare",
@@ -44,10 +43,11 @@ MAP_CDN_IMAGES = {
     "Foy Warfare": "https://cdn.discordapp.com/attachments/1365401621110067281/1365404141337186304/Foy_SP_NoHQ.png?ex=6925feb3&is=6924ad33&hm=280c8db3b1d8da6b9fc32c4439cf31952a63e5aae1a1b587d1e3a4287a489774",
     "Hill 400 Warfare": "https://cdn.discordapp.com/attachments/1365401621110067281/1365404269116919930/Hill400_SP_NoHQ_1.png?ex=6925fed1&is=6924ad51&hm=4e2db05512162439e98154adf75f940803750f35f6f47f8dd908d1de1e9ec7ad",
 }
+}
 
 # ---------------- Broadcast texts (you fill these) ----------------
-BROADCAST_START = ""          # e.g. "Next-map voting is OPEN on Discord!"
-BROADCAST_ENDING_SOON = ""    # e.g. "Vote closes in 2 minutes!"
+BROADCAST_START = "test"          # e.g. "Next-map voting is OPEN on Discord!"
+BROADCAST_ENDING_SOON = "test"    # e.g. "Vote closes in 2 minutes!"
 BROADCAST_NO_VOTES = "No votes, the map rotation wins :("
 
 # Winner broadcast is FIXED by your rule:
