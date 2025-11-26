@@ -297,13 +297,31 @@ class MapVote(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        # guild-sync for instant command appearance
         guild = discord.Object(id=GUILD_ID)
         try:
             await self.bot.tree.sync(guild=guild)
             print("[MapVote] Commands synced.")
         except Exception as e:
             print("[MapVote] Sync error:", e)
+
+
+    # ------------------------------------------------------
+    # MANUAL SLASH COMMAND – FORCE START A MAP VOTE
+    # ------------------------------------------------------
+    @app_commands.command(
+        name="force_mapvote",
+        description="Force start a new map vote using the current match state."
+    )
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    async def force_mapvote(self, interaction: discord.Interaction):
+        await interaction.response.send_message("⏳ Starting map vote…", ephemeral=True)
+
+        gs = await get_gamestate()
+        if not gs:
+            return await interaction.followup.send("❌ Could not read gamestate.", ephemeral=True)
+
+        await self.start_new_vote_for_match(gs)
+        await interaction.followup.send("✅ Map vote created in the vote channel.", ephemeral=True)
 
     # ---------- EMBED ----------
     def build_embed(self, gs):
