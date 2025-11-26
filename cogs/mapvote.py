@@ -28,7 +28,7 @@ OPTIONS_PER_VOTE = 10  # set up to 25
 
 # Map pool (Pretty name -> CRCON map id)
 MAPS = {
-    "Elsenborn Ridge Warfare (Day)": "elsenbornridge_warfare_day",
+    "Elsenborn Ridge Warfare": "elsenbornridge_warfare_day",
     "Carentan Warfare": "carentan_warfare",
     "Foy Warfare": "foy_warfare",
     "Hill 400 Warfare": "hill400_warfare",
