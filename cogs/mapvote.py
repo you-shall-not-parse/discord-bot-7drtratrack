@@ -240,7 +240,7 @@ class MapVote(commands.Cog):
         self.bot = bot
         self.state = VoteState()
         self.last_map = None
-        self.tick.start()
+        self.tick_task.start()
 
     def cog_unload(self):
         self.tick.cancel()
