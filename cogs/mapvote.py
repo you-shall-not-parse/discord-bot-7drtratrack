@@ -268,51 +268,53 @@ class MapVote(commands.Cog):
     # ------------------------------------------------------
     # Embed Builder
     # ------------------------------------------------------
-    def make_embed(self, gs):
-        pretty = gs["current_pretty"]
-        raw = gs["raw_time_remaining"]
+def make_embed(self, gs):
+    pretty = gs["current_pretty"]
+    raw = gs["raw_time_remaining"]
 
-        # player detection
-        empty = (gs["axis_players"] + gs["allied_players"] == 0)
+    axis = gs["axis_players"]
+    allied = gs["allied_players"]
+    server_empty = (axis + allied == 0)
 
-        now = datetime.now(timezone.utc)
-        if self.state.vote_end_at:
-            secs = (self.state.vote_end_at - now).total_seconds()
-        else:
-            secs = 0
+    now = datetime.now(timezone.utc)
+    if self.state.vote_end_at:
+        secs = (self.state.vote_end_at - now).total_seconds()
+    else:
+        secs = 0
 
-        # Live vote list
-        if self.state.vote_counts:
-            txt = []
-            for map_id, cnt in sorted(self.state.vote_counts.items(), key=lambda x: x[1], reverse=True):
-                pretty_name = next((k for k, v in MAPS.items() if v == map_id), map_id)
-                txt.append(f"**{pretty_name}** — {cnt} votes")
-            votes = "\n".join(txt)
-        else:
-            votes = "*No votes yet.*"
+    # Live vote list
+    if self.state.vote_counts:
+        txt = []
+        for map_id, cnt in sorted(self.state.vote_counts.items(), key=lambda x: x[1], reverse=True):
+            pretty_name = next((k for k, v in MAPS.items() if v == map_id), map_id)
+            txt.append(f"**{pretty_name}** — {cnt} votes")
+        votes = "\n".join(txt)
+    else:
+        votes = "*No votes yet.*"
 
-        desc = (
-            f"**Current map:** {pretty}\n"
-            f"**Match time remaining:** `{raw}`\n"
-            f"**Vote closes in:** `{fmt_secs(secs)}`\n\n"
-        )
+    desc = (
+        f"**Current map:** {pretty}\n"
+        f"**Match remaining:** `{raw}`\n"
+        f"**Axis Players:** `{axis}` — **Allied Players:** `{allied}`\n"
+        f"**Vote closes in:** `{fmt_secs(secs)}`\n\n"
+    )
 
-        if empty:
-            desc += "**⚠️ Server empty — vote paused.**\n\n"
+    if server_empty:
+        desc += "**⚠️ Server empty — vote paused.**\n\n"
 
-        desc += f"**Live Votes:**\n{votes}"
+    desc += f"**Live Votes:**\n{votes}"
 
-        embed = discord.Embed(
-            title="🗺️ Next Map Vote",
-            description=desc,
-            color=discord.Color.red()
-        )
+    embed = discord.Embed(
+        title="🗺️ Next Map Vote",
+        description=desc,
+        color=discord.Color.red()
+    )
 
-        img = MAP_CDN_IMAGES.get(pretty)
-        if img:
-            embed.set_image(url=img)
+    img = MAP_CDN_IMAGES.get(pretty)
+    if img:
+        embed.set_image(url=img)
 
-        return embed
+    return embed
 
     # ------------------------------------------------------
     # Update Embed
