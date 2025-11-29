@@ -21,7 +21,7 @@ MAPVOTE_CHANNEL_ID = 1441751747935735878
 VOTE_END_OFFSET_SECONDS = 120
 
 # Embed update speed (testing = 1 second)
-EMBED_UPDATE_INTERVAL = 1
+EMBED_UPDATE_INTERVAL = 5
 
 # How many map options to show
 OPTIONS_PER_VOTE = 10
@@ -155,34 +155,24 @@ async def get_game_status():
             time_remaining = 0.0
     raw_time_remaining = secs_to_hms_str(time_remaining)
 
+            
     # ---- get_slots ----
     slots_data = rcon_get("get_slots")
     num_players = 0
     max_players = 0
-    if slots_data and not slots_data.get("failed") and not slots_data.get("error"):
-        slots_res = slots_data.get("result") or slots_data
-        # be flexible about key names
-        num_players = (
-            slots_res.get("num_players")
-            or slots_res.get("player_count")
-            or slots_res.get("players")
-            or 0
-        )
-        max_players = (
-            slots_res.get("max_players")
-            or slots_res.get("max_slots")
-            or slots_res.get("max")
-            or 0
-        )
-        try:
-            num_players = int(num_players)
-        except Exception:
-            num_players = 0
-        try:
-            max_players = int(max_players)
-        except Exception:
-            max_players = 0
 
+    if slots_data and not slots_data.get("failed") and not slots_data.get("error"):
+        res = slots_data.get("result") or {}
+        try:
+            num_players = int(res.get("current_players") or 0)
+        except:
+            num_players = 0
+
+        try:
+            max_players = int(res.get("max_players") or 0)
+        except:
+            max_players = 0
+    
     return {
         "current_map_id": current_map_id,
         "current_map_pretty": current_map_pretty,
