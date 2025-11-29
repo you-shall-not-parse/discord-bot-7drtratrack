@@ -20,7 +20,7 @@ GUILD_ID = 1097913605082579024
 MAPVOTE_CHANNEL_ID = 1441751747935735878
 
 # Role allowed to use /force_mapvote and /mapvote_stop
-MAPVOTE_ADMIN_ROLE_ID = 123456789012345678  # TODO: set this to your real role ID
+MAPVOTE_ADMIN_ROLE_ID = 1213495462632361994  # TODO: set this to your real role ID
 
 # Vote ends this many seconds before match end
 VOTE_END_OFFSET_SECONDS = 120
