@@ -28,7 +28,7 @@ OPTIONS_PER_VOTE = 10
 
 # Pretty name → CRCON ID
 MAPS = {
-    "Elsenborn Ridge Warfare": "elsenbornridge_warfare",
+    "Elsenborn Ridge Warfare": "elsenbornridge_warfare_day",
     "Carentan Warfare": "carentan_warfare",
     "Foy Warfare": "foy_warfare",
     "Hill 400 Warfare": "hill400_warfare",
