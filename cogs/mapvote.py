@@ -21,10 +21,10 @@ MAPVOTE_CHANNEL_ID = 1441751747935735878
 VOTE_END_OFFSET_SECONDS = 120
 
 # Embed update speed (testing = 1 second)
-EMBED_UPDATE_INTERVAL = 1  
+EMBED_UPDATE_INTERVAL = 1
 
 # How many map options to show
-OPTIONS_PER_VOTE = 10  
+OPTIONS_PER_VOTE = 10
 
 # Pretty name → CRCON ID
 MAPS = {
@@ -64,6 +64,7 @@ def rcon_get(endpoint: str):
         )
         return r.json()
     except Exception as e:
+        print(f"[MapVote] rcon_get error on {endpoint}: {e}")
         return {"error": str(e)}
 
 
@@ -77,6 +78,7 @@ def rcon_post(endpoint: str, payload: dict):
         )
         return r.json()
     except Exception as e:
+        print(f"[MapVote] rcon_post error on {endpoint}: {e}")
         return {"error": str(e)}
 
 
@@ -87,23 +89,27 @@ def rcon_post(endpoint: str, payload: dict):
 async def get_gamestate():
     data = rcon_get("get_gamestate")
 
-    if (not data) or data.get("failed"):
+    if (not data) or data.get("failed") or data.get("error"):
         print("[MapVote] Gamestate read failed:", data)
         return None
 
     res = data.get("result") or {}
     cur = res.get("current_map") or {}
 
-    return {
-        "current_map_id": cur.get("id"),
-        "current_map_pretty": cur.get("pretty_name"),
-        "current_image_name": cur.get("image_name"),
-        "time_remaining": float(res.get("time_remaining") or 0),
-        "raw_time_remaining": res.get("raw_time_remaining") or "0:00:00",
-        "match_time": int(res.get("match_time") or 0),
-        "axis_players": int(res.get("num_axis_players") or 0),
-        "allied_players": int(res.get("num_allied_players") or 0),
-    }
+    try:
+        return {
+            "current_map_id": cur.get("id"),
+            "current_map_pretty": cur.get("pretty_name"),
+            "current_image_name": cur.get("image_name"),
+            "time_remaining": float(res.get("time_remaining") or 0),
+            "raw_time_remaining": res.get("raw_time_remaining") or "0:00:00",
+            "match_time": int(res.get("match_time") or 0),
+            "axis_players": int(res.get("num_axis_players") or 0),
+            "allied_players": int(res.get("num_allied_players") or 0),
+        }
+    except Exception as e:
+        print("[MapVote] Error parsing gamestate:", e, data)
+        return None
 
 
 async def broadcast_ingame(message: str):
@@ -113,7 +119,6 @@ async def broadcast_ingame(message: str):
 
 
 async def rot_add_map(map_name: str, after_map_name: str, ordinal=1):
-    # Try preferred method
     payload = {
         "map_name": map_name,
         "after_map_name": after_map_name,
@@ -139,8 +144,8 @@ def fmt_vote_secs(sec):
 class VoteState:
     def __init__(self):
         self.active = False
-        self.vote_channel = None
-        self.vote_message_id = None
+        self.vote_channel: discord.TextChannel | None = None
+        self.vote_message_id: int | None = None
 
         self.match_map_id = None
         self.match_map_pretty = None
@@ -148,9 +153,9 @@ class VoteState:
         self.vote_end_at = None
         self.warning_sent = False
 
-        self.options = {}
-        self.user_votes = {}     # user_id → map_id
-        self.vote_counts = {}    # map_id → int
+        self.options: dict[str, str] = {}   # pretty → map_id
+        self.user_votes: dict[int, str] = {}     # user_id → map_id
+        self.vote_counts: dict[str, int] = {}    # map_id → int
 
     def reset_for_match(self, gs):
         self.active = True
@@ -167,14 +172,17 @@ class VoteState:
         else:
             end_in = max(0, gs["match_time"] - VOTE_END_OFFSET_SECONDS)
 
+        self.vote_start_at = now
         self.vote_end_at = now + timedelta(seconds=end_in)
+        self.warning_sent = False
+
         self.user_votes.clear()
         self.vote_counts.clear()
 
-    def set_options(self, mapping):
+    def set_options(self, mapping: dict[str, str]):
         self.options = mapping
 
-    def record_vote(self, user_id, map_id):
+    def record_vote(self, user_id: int, map_id: str):
         old = self.user_votes.get(user_id)
         if old == map_id:
             return
@@ -200,7 +208,7 @@ class VoteState:
 # --------------------------------------------------
 
 class MapVoteSelect(discord.ui.Select):
-    def __init__(self, vote_state, cog_ref):
+    def __init__(self, vote_state: VoteState, cog_ref: "MapVote"):
         self.state = vote_state
         self.cog = cog_ref
 
@@ -218,7 +226,10 @@ class MapVoteSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         if not self.state.active:
-            return await interaction.response.send_message("Voting not active.", ephemeral=True)
+            return await interaction.response.send_message(
+                "Voting not active.",
+                ephemeral=True
+            )
 
         map_id = self.values[0]
         self.state.record_vote(interaction.user.id, map_id)
@@ -227,11 +238,13 @@ class MapVoteSelect(discord.ui.Select):
             f"Vote recorded for `{map_id}`",
             ephemeral=True
         )
+
+        # Update the embed after each vote
         await self.cog.update_vote_embed()
 
 
 class MapVoteView(discord.ui.View):
-    def __init__(self, state, cog):
+    def __init__(self, state: VoteState, cog: "MapVote"):
         super().__init__(timeout=None)
         self.add_item(MapVoteSelect(state, cog))
 
@@ -241,23 +254,32 @@ class MapVoteView(discord.ui.View):
 # --------------------------------------------------
 
 class MapVote(commands.Cog):
-    def __init__(self, bot):
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.state = VoteState()
         self.last_map_id = None
+        self.vote_view: MapVoteView | None = None
 
-        self.tick_task.start()
+        # DO NOT start the loop here – do it in on_ready
+        # self.tick_task.start()
 
     def cog_unload(self):
-        self.tick_task.cancel()
+        if self.tick_task.is_running():
+            self.tick_task.cancel()
 
     @commands.Cog.listener()
     async def on_ready(self):
+        # Sync commands once per startup
         try:
             await self.bot.tree.sync(guild=discord.Object(id=GUILD_ID))
             print("[MapVote] Commands synced.")
         except Exception as e:
             print("[MapVote] Sync error:", e)
+
+        # Start background task once
+        if not self.tick_task.is_running():
+            self.tick_task.start()
+            print("[MapVote] tick_task started")
 
     # --------------------------------------------------
     # FORCE START SLASH COMMAND
@@ -298,7 +320,7 @@ class MapVote(commands.Cog):
             lines = []
             for map_id, count in sorted_votes:
                 pretty = next((p for p, mid in MAPS.items() if mid == map_id), map_id)
-                lines.append(f"**{pretty}** — {count} votes")
+                lines.append(f"**{pretty}** — {count} vote{'s' if count != 1 else ''}")
             votetext = "\n".join(lines)
         else:
             votetext = "*No votes yet.*"
@@ -327,15 +349,23 @@ class MapVote(commands.Cog):
     # --------------------------------------------------
     async def update_vote_embed(self):
         if not (self.state.vote_channel and self.state.vote_message_id):
+            # This will happen if vote hasn't started properly yet
+            print("[MapVote] Skipping update: vote_channel or vote_message_id not set.")
             return
 
         gs = await get_gamestate()
         if not gs:
+            print("[MapVote] Skipping update: gamestate unavailable.")
             return
 
         try:
             msg = await self.state.vote_channel.fetch_message(self.state.vote_message_id)
-            await msg.edit(embed=self.build_embed(gs), view=MapVoteView(self.state, self))
+
+            # Reuse the same view instead of recreating it every second
+            if self.vote_view is None:
+                self.vote_view = MapVoteView(self.state, self)
+
+            await msg.edit(embed=self.build_embed(gs), view=self.vote_view)
         except Exception as e:
             print("[MapVote] Failed to update embed:", e)
 
@@ -344,33 +374,35 @@ class MapVote(commands.Cog):
     # --------------------------------------------------
     async def start_vote(self, gs):
         channel = self.bot.get_channel(MAPVOTE_CHANNEL_ID)
-        if not channel:
+        if not channel or not isinstance(channel, discord.TextChannel):
             print("[MapVote] Vote channel invalid")
             return
 
-        self.state.vote_channel = channel
+        # Reset state & set channel
         self.state.reset_for_match(gs)
+        self.state.vote_channel = channel
 
-        # Build option list
+        # Build option list (exclude current map)
         pool = [(p, mid) for p, mid in MAPS.items() if mid != gs["current_map_id"]]
         random.shuffle(pool)
         pool = pool[:min(len(pool), OPTIONS_PER_VOTE, 25)]
         self.state.set_options({p: mid for p, mid in pool})
 
-        # Clean old messages
+        # Clean old messages from bot
         try:
             async for m in channel.history(limit=50):
                 if m.author == self.bot.user:
                     await m.delete()
-        except:
-            pass
+        except Exception as e:
+            print("[MapVote] Failed to clean old messages:", e)
 
-        # Send embed
+        # Send embed with persistent view
         embed = self.build_embed(gs)
-        view = MapVoteView(self.state, self)
-        msg = await channel.send(embed=embed, view=view)
+        self.vote_view = MapVoteView(self.state, self)
+        msg = await channel.send(embed=embed, view=self.vote_view)
         self.state.vote_message_id = msg.id
 
+        print(f"[MapVote] Vote started for {gs['current_map_pretty']}")
         await broadcast_ingame(BROADCAST_START)
 
     # --------------------------------------------------
@@ -380,6 +412,7 @@ class MapVote(commands.Cog):
         self.state.active = False
         channel = self.state.vote_channel
         if not channel:
+            print("[MapVote] end_vote_and_queue called with no channel")
             return
 
         winner_id = self.state.winner()
@@ -400,49 +433,62 @@ class MapVote(commands.Cog):
             f"Queued next via RotAdd.\n"
             f"CRCON Response:\n```{result}```"
         )
+        print(f"[MapVote] Vote ended, winner {pretty}")
 
     # --------------------------------------------------
     # BACKGROUND LOOP — updates every second
     # --------------------------------------------------
     @tasks.loop(seconds=EMBED_UPDATE_INTERVAL)
     async def tick_task(self):
+        # Simple heartbeat to confirm loop running
+        # print("[MapVote] tick_task running")
+
         gs = await get_gamestate()
         if not gs:
             return
 
         # Detect map change = new match
-        if self.last_map_id and gs["current_map_id"] != self.last_map_id:
+        if self.last_map_id is not None and gs["current_map_id"] != self.last_map_id:
             print(f"[MapVote] New match detected: {gs['current_map_pretty']}")
             await self.start_vote(gs)
             self.last_map_id = gs["current_map_id"]
             return
 
-        self.last_map_id = gs["current_map_id"]
+        # Initialise last_map_id on first successful gs
+        if self.last_map_id is None:
+            self.last_map_id = gs["current_map_id"]
 
+        # If no active vote, nothing to do
         if not self.state.active:
             return
 
+        # Update the live embed
         await self.update_vote_embed()
 
-        # handle vote timing
+        # Handle vote timing
         now = datetime.now(timezone.utc)
         remaining = (self.state.vote_end_at - now).total_seconds() if self.state.vote_end_at else None
 
         if remaining is None:
             return
 
+        # Warning at 2 minutes left
         if remaining <= 120 and not self.state.warning_sent:
             self.state.warning_sent = True
             await broadcast_ingame(BROADCAST_ENDING_SOON)
-            await self.state.vote_channel.send("⏳ Vote closes in 2 minutes!")
+            if self.state.vote_channel:
+                await self.state.vote_channel.send("⏳ Vote closes in 2 minutes!")
 
+        # End vote
         if remaining <= 0:
             await self.end_vote_and_queue()
 
     @tick_task.before_loop
     async def before_tick(self):
+        print("[MapVote] Waiting until bot is ready before starting tick_task...")
         await self.bot.wait_until_ready()
+        print("[MapVote] Bot ready, tick_task will now run.")
 
 
-async def setup(bot):
+async def setup(bot: commands.Bot):
     await bot.add_cog(MapVote(bot))
