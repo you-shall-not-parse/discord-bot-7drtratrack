@@ -1,7 +1,6 @@
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
-from discord.app_commands import checks
 import asyncio
 import os
 import json
@@ -13,25 +12,25 @@ from datetime import datetime, timezone, timedelta
 load_dotenv()
 
 # --------------------------------------------------
-# CONFIG
+# CONFIG YOU EDIT
 # --------------------------------------------------
 
 GUILD_ID = 1097913605082579024
 MAPVOTE_CHANNEL_ID = 1441751747935735878
 
-# Role allowed to use /force_mapvote and /mapvote_stop
-MAPVOTE_ADMIN_ROLE_ID = 1213495462632361994  # TODO: set this to your real role ID
+# Role allowed to use the mapvote slash commands
+MAPVOTE_ADMIN_ROLE_ID = 123456789012345678  # <-- PUT YOUR ROLE ID HERE
 
 # Vote ends this many seconds before match end
 VOTE_END_OFFSET_SECONDS = 120
 
-# Embed update speed
+# Embed update speed (testing = 1 second)
 EMBED_UPDATE_INTERVAL = 1
 
 # How many map options to show
 OPTIONS_PER_VOTE = 10
 
-# Pretty name → CRCON ID
+# Pretty name → CRCON ID (map_names)
 MAPS = {
     "Elsenborn Ridge Warfare": "elsenbornridge_warfare_day",
     "Carentan Warfare": "carentan_warfare",
@@ -39,15 +38,15 @@ MAPS = {
     "Hill 400 Warfare": "hill400_warfare",
 }
 
-# Default rotation when map voting is OFF
+# Default server map rotation when voting is OFF
 DEFAULT_ROTATION = [
+    "foy_warfare_day",
+    "carentan_warfare_day",
+    "hill400_warfare_day",
     "elsenbornridge_warfare_day",
-    "carentan_warfare",
-    "foy_warfare",
-    "hill400_warfare",
 ]
 
-# CDN images by pretty_name (must match EXACT pretty_name)
+# CDN images for maps (by pretty name)
 MAP_CDN_IMAGES = {
     "Elsenborn Ridge Warfare": "https://cdn.discordapp.com/attachments/1365401621110067281/1365408158012407840/Elsenborn_Custom_MLL.png",
     "Carentan Warfare": "https://cdn.discordapp.com/attachments/1365401621110067281/1365403110197166191/Carentan_SP_NoHQ.png",
@@ -55,33 +54,32 @@ MAP_CDN_IMAGES = {
     "Hill 400 Warfare": "https://cdn.discordapp.com/attachments/1365401621110067281/1365404269116919930/Hill400_SP_NoHQ_1.png",
 }
 
-# NEW: CDN images for status modes (fill these yourself)
-STANDBY_STATUS_IMAGE = "https://cdn.discordapp.com/attachments/1365401621110067281/1365404269116919930/Hill400_SP_NoHQ_1.png"  # e.g. "https://cdn.discordapp.com/.../mapvote_standby.png"
-OFFLINE_STATUS_IMAGE = "https://cdn.discordapp.com/attachments/1365401621110067281/1365404269116919930/Hill400_SP_NoHQ_1.png"  # e.g. "https://cdn.discordapp.com/.../mapvote_offline.png"
+# Special CDN images for states (fill these in later)
+STANDBY_IMAGE_URL = ""  # when server is empty & timer 0/0
+OFFLINE_IMAGE_URL = ""  # when map voting is turned OFF
+UNKNOWN_MAP_IMAGE_URL = ""  # fallback if you want for unknown maps
 
-# Broadcast templates
-BROADCAST_START = "Next-map voting is OPEN on Discord!"
-BROADCAST_ENDING_SOON = "Vote closes in 2 minutes!"
+# Broadcast templates (per-player messages)
+BROADCAST_START = "🗳️ Next-map voting is OPEN on Discord!"
+BROADCAST_ENDING_SOON = "⏳ Vote closes in 2 minutes!"
 BROADCAST_NO_VOTES = "No votes, the map rotation wins :("
 
-# CRCON API
+# --------------------------------------------------
+# CRCON API (Bearer token)
+# --------------------------------------------------
+
 CRCON_PANEL_URL = "https://7dr.hlladmin.com/api/"
 CRCON_API_KEY = os.getenv("CRCON_API_KEY")
 
-# Persisted state file
 STATE_FILE = "mapvote_state.json"
 
-
-# --------------------------------------------------
-# CRCON HELPERS
-# --------------------------------------------------
 
 def rcon_get(endpoint: str):
     try:
         r = requests.get(
             CRCON_PANEL_URL + endpoint,
             headers={"Authorization": f"Bearer {CRCON_API_KEY}"},
-            timeout=10
+            timeout=10,
         )
         return r.json()
     except Exception as e:
@@ -95,7 +93,7 @@ def rcon_post(endpoint: str, payload: dict):
             CRCON_PANEL_URL + endpoint,
             json=payload,
             headers={"Authorization": f"Bearer {CRCON_API_KEY}"},
-            timeout=10
+            timeout=10,
         )
         try:
             return r.json()
@@ -106,13 +104,15 @@ def rcon_post(endpoint: str, payload: dict):
         return {"error": str(e)}
 
 
+# --------------------------------------------------
+# HELPERS
+# --------------------------------------------------
+
+
 async def get_gamestate():
-    """
-    Wrap CRCON get_gamestate in a Discord-friendly dict.
-    """
     data = rcon_get("get_gamestate")
 
-    if (not data) or data.get("failed") or data.get("error"):
+    if not data or data.get("failed") or data.get("error"):
         print("[MapVote] Gamestate read failed:", data)
         return None
 
@@ -124,29 +124,17 @@ async def get_gamestate():
             "current_map_id": cur.get("id"),
             "current_map_pretty": cur.get("pretty_name"),
             "current_image_name": cur.get("image_name"),
-            "time_remaining": float(res.get("time_remaining") or 0),
+            "time_remaining": float(res.get("time_remaining") or 0.0),
             "raw_time_remaining": res.get("raw_time_remaining") or "0:00:00",
             "match_time": int(res.get("match_time") or 0),
             "axis_players": int(res.get("num_axis_players") or 0),
             "allied_players": int(res.get("num_allied_players") or 0),
-            "server_name": res.get("server_name") or "Unknown",
+            "server_name": res.get("server_name") or "Unknown Server",
         }
     except Exception as e:
         print("[MapVote] Error parsing gamestate:", e, data)
         return None
 
-
-async def set_full_rotation(map_ids: list[str]):
-    """
-    Overwrite entire map rotation.
-    """
-    payload = {"map_names": map_ids}
-    return rcon_post("set_map_rotation", payload)
-
-
-# --------------------------------------------------
-# GENERIC HELPERS
-# --------------------------------------------------
 
 def fmt_vote_secs(sec):
     if sec is None:
@@ -157,7 +145,7 @@ def fmt_vote_secs(sec):
     return f"{m:02d}:{s:02d}"
 
 
-def load_persisted_state():
+def load_state_file():
     if not os.path.exists(STATE_FILE):
         return {}
     try:
@@ -168,47 +156,49 @@ def load_persisted_state():
         return {}
 
 
-def save_persisted_state(vote_message_id: int | None, offline: bool):
+def save_state_file(data: dict):
     try:
         with open(STATE_FILE, "w") as f:
-            json.dump(
-                {
-                    "vote_message_id": vote_message_id,
-                    "offline": offline,
-                },
-                f,
-                indent=4,
-            )
+            json.dump(data, f, indent=4)
     except Exception as e:
         print("[MapVote] Failed to save state file:", e)
+
+
+def app_has_role(role_id: int):
+    async def predicate(interaction: discord.Interaction) -> bool:
+        user = interaction.user
+        if not isinstance(user, discord.Member):
+            return False
+        return any(r.id == role_id for r in user.roles)
+
+    return app_commands.check(predicate)
 
 
 # --------------------------------------------------
 # VOTE STATE
 # --------------------------------------------------
 
+
 class VoteState:
     def __init__(self):
-        self.active = False
-
+        self.active: bool = False
         self.vote_channel: discord.TextChannel | None = None
-        self.vote_message_id: int | None = None  # Persistent main embed
+        self.vote_message_id: int | None = None
 
-        self.match_map_id = None
-        self.match_map_pretty = None
+        self.match_map_id: str | None = None
+        self.match_map_pretty: str | None = None
         self.vote_start_at: datetime | None = None
         self.vote_end_at: datetime | None = None
-        self.warning_sent = False
+        self.warning_sent: bool = False
 
-        self.options: dict[str, str] = {}     # pretty → map_id
+        self.options: dict[str, str] = {}  # pretty → map_id
         self.user_votes: dict[int, str] = {}  # user_id → map_id
-        self.vote_counts: dict[str, int] = {} # map_id → int
+        self.vote_counts: dict[str, int] = {}  # map_id → int
 
         self.total_match_length: int | None = None  # seconds
 
     def reset_for_match(self, gs: dict):
         self.active = True
-
         self.match_map_id = gs["current_map_id"]
         self.match_map_pretty = gs["current_map_pretty"]
 
@@ -216,21 +206,18 @@ class VoteState:
         tr = float(gs["time_remaining"] or 0)
         mt = int(gs["match_time"] or 0)
 
-        total_len = 0
-        if tr > 0 or mt > 0:
-            total_len = int(tr) + int(mt)
+        # dynamic total match length
+        total_len = int(tr) + int(mt)
         self.total_match_length = total_len if total_len > 0 else None
 
+        # decide when the vote should end
         if tr > 0:
-            if self.total_match_length is not None and self.total_match_length < 5400:
-                end_in = max(0, tr - 120)
-            else:
-                end_in = max(0, tr - VOTE_END_OFFSET_SECONDS)
+            end_in = max(0, tr - VOTE_END_OFFSET_SECONDS)
         else:
             if mt > 0:
                 end_in = max(0, mt - VOTE_END_OFFSET_SECONDS)
             else:
-                end_in = max(0, VOTE_END_OFFSET_SECONDS)
+                end_in = VOTE_END_OFFSET_SECONDS
 
         self.vote_start_at = now
         self.vote_end_at = now + timedelta(seconds=end_in)
@@ -265,6 +252,7 @@ class VoteState:
 # UI
 # --------------------------------------------------
 
+
 class MapVoteSelect(discord.ui.Select):
     def __init__(self, vote_state: VoteState, cog_ref: "MapVote"):
         self.state = vote_state
@@ -279,62 +267,72 @@ class MapVoteSelect(discord.ui.Select):
             placeholder="Vote for next map…",
             min_values=1,
             max_values=1,
-            options=options
+            options=options,
         )
 
     async def callback(self, interaction: discord.Interaction):
-        if not self.state.active or self.cog.offline:
+        if not self.state.active or not self.cog.enabled:
             return await interaction.response.send_message(
-                "Voting is not currently active.",
-                ephemeral=True
+                "Voting is not currently active.", ephemeral=True
             )
 
         map_id = self.values[0]
         self.state.record_vote(interaction.user.id, map_id)
 
         await interaction.response.send_message(
-            f"Vote recorded for `{map_id}`",
-            ephemeral=True
+            f"Vote recorded for `{map_id}`", ephemeral=True
         )
 
-        # Refresh embed after each vote
-        gs = await get_gamestate()
-        if gs:
-            await self.cog.update_main_embed(gs)
+        await self.cog.update_main_embed()  # refresh live votes
 
 
 class MapVoteView(discord.ui.View):
-    def __init__(self, state: VoteState, cog: "MapVote", enabled: bool):
+    def __init__(self, state: VoteState, cog: "MapVote"):
         super().__init__(timeout=None)
-        self.enabled = enabled
-        select = MapVoteSelect(state, cog)
-        select.disabled = not enabled
-        self.add_item(select)
+        self.add_item(MapVoteSelect(state, cog))
 
 
 # --------------------------------------------------
 # COG
 # --------------------------------------------------
 
+
 class MapVote(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.state = VoteState()
-        self.last_map_id = None
-
+        self.last_map_id: str | None = None
         self.vote_view: MapVoteView | None = None
-        self.offline: bool = False  # "Map voting offline" mode
 
-        persisted = load_persisted_state()
-        if persisted:
-            self.state.vote_message_id = persisted.get("vote_message_id")
-            self.offline = persisted.get("offline", False)
+        self.enabled: bool = True  # global toggle
+        self.embed_channel_id: int = MAPVOTE_CHANNEL_ID
+        self.embed_message_id: int | None = None
+
+        self._load_persistent_state()
+
+    # ---------------- PERSISTENCE ----------------
+
+    def _load_persistent_state(self):
+        data = load_state_file()
+        self.enabled = data.get("enabled", True)
+        self.embed_channel_id = data.get("embed_channel_id", MAPVOTE_CHANNEL_ID)
+        self.embed_message_id = data.get("embed_message_id")
+        self.last_map_id = data.get("last_map_id")
+
+    def _save_persistent_state(self):
+        data = {
+            "enabled": self.enabled,
+            "embed_channel_id": self.embed_channel_id,
+            "embed_message_id": self.embed_message_id,
+            "last_map_id": self.last_map_id,
+        }
+        save_state_file(data)
+
+    # ---------------- DISCORD LIFECYCLE ----------------
 
     def cog_unload(self):
-        if self.tick_task.is_running():
+        if hasattr(self, "tick_task") and self.tick_task.is_running():
             self.tick_task.cancel()
-
-    # ---------------- on_ready / startup ----------------
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -348,42 +346,41 @@ class MapVote(commands.Cog):
             self.tick_task.start()
             print("[MapVote] tick_task started")
 
-        # Ensure we have an embed on startup
-        await self.ensure_embed_on_startup()
+    # ---------------- UTILITIES ----------------
 
-    async def ensure_embed_on_startup(self):
-        channel = self.bot.get_channel(MAPVOTE_CHANNEL_ID)
-        if not channel or not isinstance(channel, discord.TextChannel):
-            print("[MapVote] Map vote channel invalid on startup")
-            return
+    async def ensure_main_message(self):
+        """Ensure there is a single embed message we always edit."""
+        channel = self.bot.get_channel(self.embed_channel_id)
+        if not isinstance(channel, discord.TextChannel):
+            print("[MapVote] Map vote channel invalid")
+            return None
 
         self.state.vote_channel = channel
 
-        # If we have a stored message ID, try to fetch it
-        if self.state.vote_message_id:
+        if self.embed_message_id is not None:
             try:
-                await channel.fetch_message(self.state.vote_message_id)
-                print(f"[MapVote] Reattached to existing message {self.state.vote_message_id}")
-                return
+                msg = await channel.fetch_message(self.embed_message_id)
+                self.state.vote_message_id = msg.id
+                return msg
             except discord.NotFound:
-                print("[MapVote] Stored message not found, creating a new one...")
-            except Exception as e:
-                print("[MapVote] Error fetching stored message:", e)
+                print("[MapVote] Stored message not found, creating new one")
+                self.embed_message_id = None
 
-        # No stored or valid message, create a fresh one
-        dummy_embed = discord.Embed(
-            title="🗺️ Map Vote",
-            description="Initialising map vote status...",
-            color=discord.Color.red()
-        )
-        msg = await channel.send(embed=dummy_embed, view=None)
+        # If we reach here, send a fresh embed
+        gs = await get_gamestate()
+        embed = self.build_embed(gs)
+
+        # Only show dropdown if enabled & we actually have options (active vote)
+        view = self.vote_view if (self.enabled and self.state.active) else None
+
+        msg = await channel.send(embed=embed, view=view)
+        self.embed_message_id = msg.id
         self.state.vote_message_id = msg.id
-        save_persisted_state(self.state.vote_message_id, self.offline)
-        print(f"[MapVote] Created new map vote message: {msg.id}")
-
-    # ---------------- Broadcast helper ----------------
+        self._save_persistent_state()
+        return msg
 
     async def broadcast_to_all(self, message: str):
+        """Per-player message using get_players + message_player."""
         if not message:
             return
 
@@ -397,369 +394,343 @@ class MapVote(commands.Cog):
             return
 
         for p in players:
-            uid = p.get("steam_id_64") or p.get("steam_id")
+            uid = p.get("steam_id_64") or p.get("steam_id") or p.get("player_id")
             if not uid:
                 continue
 
-            payload = {
-                "player_id": uid,
-                "message": message,
-                "by": "7DRBot",
-                "save_message": False
-            }
+            payload = {"player_id": uid, "message": message}
             _ = rcon_post("message_player", payload)
             await asyncio.sleep(0.1)
 
-    # ---------------- Slash commands ----------------
+    @staticmethod
+    def is_standby(gs: dict | None) -> bool:
+        """Standby when: timer 0/0 and no players on either team."""
+        if not gs:
+            return False
+        mt = gs["match_time"]
+        tr = gs["time_remaining"]
+        total_players = gs["axis_players"] + gs["allied_players"]
+        return mt == 0 and tr == 0 and total_players == 0
+
+    # ---------------- EMBED ----------------
+
+    def build_embed(self, gs: dict | None) -> discord.Embed:
+        now = datetime.now(timezone.utc)
+
+        if not gs:
+            status_text = "Unable to read game state."
+            status_type = "error"
+            current_map = "Unknown"
+            raw_time = "0:00:00"
+            axis = allied = 0
+            vote_left = None
+        else:
+            current_map = gs["current_map_pretty"] or "Unknown"
+            raw_time = gs["raw_time_remaining"]
+            axis = gs["axis_players"]
+            allied = gs["allied_players"]
+
+            if self.state.vote_end_at and self.state.active and self.enabled:
+                vote_left = (self.state.vote_end_at - now).total_seconds()
+            else:
+                vote_left = None
+
+            if not self.enabled:
+                status_type = "offline"
+                status_text = "🚫 Map voting is currently **OFFLINE**."
+            elif self.is_standby(gs):
+                status_type = "standby"
+                status_text = "🕒 Server is in **STANDBY** (no players, timer not started)."
+            elif self.state.active:
+                status_type = "active"
+                status_text = "🗳️ Map voting is **ACTIVE**."
+            else:
+                status_type = "idle"
+                status_text = "✅ Map voting is **ENABLED**, waiting for next match."
+
+        # Live votes text
+        if self.state.vote_counts and self.state.active and self.enabled:
+            sorted_votes = sorted(
+                self.state.vote_counts.items(), key=lambda x: x[1], reverse=True
+            )
+            lines = []
+            for map_id, count in sorted_votes:
+                pretty = next(
+                    (p for p, mid in MAPS.items() if mid == map_id), map_id
+                )
+                lines.append(
+                    f"**{pretty}** — {count} vote{'s' if count != 1 else ''}"
+                )
+            votetext = "\n".join(lines)
+        else:
+            votetext = "*No votes yet.*"
+
+        desc_lines = [
+            f"**Status:** {status_text}",
+            f"**Current map:** {current_map}",
+            f"**Match remaining:** `{raw_time}`",
+            f"**Players:** Allied: `{allied}` — Axis: `{axis}`",
+        ]
+
+        if self.state.active and self.enabled:
+            desc_lines.append(
+                f"**Vote closes in:** `{fmt_vote_secs(vote_left)}`"
+            )
+
+        desc_lines.append("")
+        desc_lines.append("**Live votes:**")
+        desc_lines.append(votetext)
+
+        embed = discord.Embed(
+            title="🗺️ Next Map Vote",
+            description="\n".join(desc_lines),
+            color=discord.Color.red(),
+        )
+
+        # Pick image
+        img_url = None
+        if not self.enabled and OFFLINE_IMAGE_URL:
+            img_url = OFFLINE_IMAGE_URL
+        elif gs and self.is_standby(gs) and STANDBY_IMAGE_URL:
+            img_url = STANDBY_IMAGE_URL
+        elif gs:
+            img_url = MAP_CDN_IMAGES.get(current_map)
+            if not img_url and UNKNOWN_MAP_IMAGE_URL:
+                img_url = UNKNOWN_MAP_IMAGE_URL
+
+        if img_url:
+            embed.set_image(url=img_url)
+
+        return embed
+
+    async def update_main_embed(self, gs: dict | None = None):
+        if gs is None:
+            gs = await get_gamestate()
+
+        msg = await self.ensure_main_message()
+        if not msg:
+            return
+
+        # Only show dropdown when voting is actually active & enabled
+        if self.enabled and self.state.active and self.state.options:
+            if not self.vote_view:
+                self.vote_view = MapVoteView(self.state, self)
+            view = self.vote_view
+        else:
+            view = None
+
+        try:
+            await msg.edit(embed=self.build_embed(gs), view=view)
+        except Exception as e:
+            print("[MapVote] Failed to update main embed:", e)
+
+    # ---------------- VOTE LIFECYCLE ----------------
+
+    async def start_vote(self, gs: dict):
+        """Start a fresh vote for the current match (if enabled)."""
+        if not self.enabled:
+            return
+
+        channel = self.bot.get_channel(MAPVOTE_CHANNEL_ID)
+        if not isinstance(channel, discord.TextChannel):
+            print("[MapVote] Vote channel invalid")
+            return
+
+        self.state.vote_channel = channel
+        self.state.reset_for_match(gs)
+
+        # Build options excluding current map
+        pool = [
+            (p, mid)
+            for p, mid in MAPS.items()
+            if mid != gs["current_map_id"]
+        ]
+        random.shuffle(pool)
+        pool = pool[: min(len(pool), OPTIONS_PER_VOTE, 25)]
+        self.state.set_options({p: mid for p, mid in pool})
+
+        self.vote_view = MapVoteView(self.state, self)
+        print(f"[MapVote] Vote started for {gs['current_map_pretty']}")
+
+        await self.broadcast_to_all(BROADCAST_START)
+        await self.update_main_embed(gs)
+        self._save_persistent_state()
+
+    async def end_vote_and_queue(self, gs: dict):
+        """End vote and set rotation appropriately."""
+        self.state.active = False
+        channel = self.state.vote_channel
+
+        if not gs:
+            gs = await get_gamestate()
+
+        current_map_id = gs["current_map_id"] if gs else None
+        winner_id = self.state.winner()
+
+        # Decide new rotation
+        if winner_id:
+            pretty = next(
+                (p for p, mid in MAPS.items() if mid == winner_id), winner_id
+            )
+            payload = {"map_names": [winner_id]}
+            result = rcon_post("set_map_rotation", payload)
+
+            if channel:
+                await channel.send(
+                    f"🏆 **Winner: {pretty}**\n"
+                    f"Rotation set to this map only.\n"
+                    f"CRCON Response:\n```{result}```"
+                )
+            await self.broadcast_to_all(f"{pretty} has won the vote!")
+            print(f"[MapVote] Vote ended, winner {pretty}")
+        else:
+            # No votes: keep current map forever (single-entry rotation)
+            if current_map_id:
+                payload = {"map_names": [current_map_id]}
+                result = rcon_post("set_map_rotation", payload)
+                if channel:
+                    await channel.send(
+                        "No votes — current map will repeat.\n"
+                        f"CRCON Response:\n```{result}```"
+                    )
+            await self.broadcast_to_all(BROADCAST_NO_VOTES)
+            print("[MapVote] Vote ended, no winner")
+
+        await self.update_main_embed(gs)
+        self._save_persistent_state()
+
+    # ---------------- SLASH COMMANDS ----------------
 
     @app_commands.command(
         name="force_mapvote",
-        description="Force start a map vote (or re-enable map voting if offline)"
+        description="Force start a map vote for the current match",
     )
     @app_commands.guilds(discord.Object(id=GUILD_ID))
-    @checks.has_role(MAPVOTE_ADMIN_ROLE_ID)
+    @app_has_role(MAPVOTE_ADMIN_ROLE_ID)
     async def force_mapvote_cmd(self, interaction: discord.Interaction):
-        await interaction.response.send_message("Fetching gamestate…", ephemeral=True)
+        await interaction.response.send_message(
+            "Fetching gamestate…", ephemeral=True
+        )
         gs = await get_gamestate()
         if not gs:
-            return await interaction.followup.send("❌ Could not read gamestate.", ephemeral=True)
+            return await interaction.followup.send(
+                "❌ Could not read gamestate.", ephemeral=True
+            )
 
-        # Re-enable system if it was offline
-        self.offline = False
-        save_persisted_state(self.state.vote_message_id, self.offline)
+        if self.is_standby(gs):
+            return await interaction.followup.send(
+                "Server is in standby (no timer/players). Map voting will start when a match actually begins.",
+                ephemeral=True,
+            )
 
         await self.start_vote(gs)
-        await interaction.followup.send("✅ Vote started (and map voting enabled).", ephemeral=True)
+        await interaction.followup.send("Vote started!", ephemeral=True)
 
     @app_commands.command(
         name="mapvote_stop",
-        description="Turn off map voting and restore default rotation"
+        description="Turn OFF map voting and restore default rotation",
     )
     @app_commands.guilds(discord.Object(id=GUILD_ID))
-    @checks.has_role(MAPVOTE_ADMIN_ROLE_ID)
+    @app_has_role(MAPVOTE_ADMIN_ROLE_ID)
     async def mapvote_stop_cmd(self, interaction: discord.Interaction):
-        await interaction.response.send_message("Stopping map voting…", ephemeral=True)
-
-        # Turn off voting
-        self.offline = True
+        self.enabled = False
         self.state.active = False
-        self.state.options.clear()
-        self.state.vote_counts.clear()
-        self.state.user_votes.clear()
-        save_persisted_state(self.state.vote_message_id, self.offline)
 
         # Restore default rotation
-        result = await set_full_rotation(DEFAULT_ROTATION)
+        result = rcon_post("set_map_rotation", {"map_names": DEFAULT_ROTATION})
 
-        # Update embed to "offline" mode
         gs = await get_gamestate()
-        if gs:
+        await self.update_main_embed(gs)
+
+        self._save_persistent_state()
+
+        await interaction.response.send_message(
+            f"Map voting turned **OFF**. Default rotation restored.\n```{result}```",
+            ephemeral=True,
+        )
+
+    @app_commands.command(
+        name="mapvote_start",
+        description="Turn ON map voting (auto for each match)",
+    )
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    @app_has_role(MAPVOTE_ADMIN_ROLE_ID)
+    async def mapvote_start_cmd(self, interaction: discord.Interaction):
+        self.enabled = True
+        self._save_persistent_state()
+
+        gs = await get_gamestate()
+        if gs and not self.is_standby(gs):
+            # Start vote immediately if a match is running
+            await self.start_vote(gs)
+        else:
             await self.update_main_embed(gs)
 
-        await interaction.followup.send(
-            f"🛑 Map voting stopped.\n"
-            f"Default rotation applied.\n"
-            f"CRCON response:\n```{result}```",
-            ephemeral=True
+        await interaction.response.send_message(
+            "Map voting turned **ON**. It will run each match while the server is active.",
+            ephemeral=True,
         )
 
-    # ---------------- Embed + view builders ----------------
-
-    def is_standby(self, gs: dict) -> bool:
-        # Standby = match timer hasn't started at all
-        return gs["match_time"] == 0 and gs["time_remaining"] == 0
-
-    def get_vote_view(self) -> MapVoteView | None:
-        if not self.state.options:
-            # No options yet means no select UI
-            return None
-
-        enabled = (not self.offline) and self.state.active
-        if self.vote_view is None or self.vote_view.enabled != enabled:
-            self.vote_view = MapVoteView(self.state, self, enabled)
-        return self.vote_view
-
-    def build_embed(self, gs: dict) -> discord.Embed:
-        current = gs["current_map_pretty"] or "Unknown"
-        raw_time = gs["raw_time_remaining"]
-        axis = gs["axis_players"]
-        allied = gs["allied_players"]
-
-        standby = self.is_standby(gs)
-        now = datetime.now(timezone.utc)
-        vote_left = None
-        if self.state.vote_end_at:
-            vote_left = (self.state.vote_end_at - now).total_seconds()
-
-        if self.offline:
-            # OFFLINE MODE
-            desc = (
-                f"**Status:** 🛑 Map voting is **OFFLINE**\n"
-                f"**Server:** {gs['server_name']}\n"
-                f"**Current map:** {current}\n"
-                f"**Match timer:** `{raw_time}`\n"
-                f"**Players:** Allied: `{allied}` — Axis: `{axis}`\n\n"
-                f"An admin has disabled map voting. Rotation is set to the default list."
-            )
-            embed = discord.Embed(
-                title="🛑 Map Voting Offline",
-                description=desc,
-                color=discord.Color.dark_grey()
-            )
-            if OFFLINE_STATUS_IMAGE:
-                embed.set_image(url=OFFLINE_STATUS_IMAGE)
-            else:
-                img = MAP_CDN_IMAGES.get(current)
-                if img:
-                    embed.set_image(url=img)
-            return embed
-
-        if standby:
-            # STANDBY MODE
-            desc = (
-                f"**Status:** ⏸️ Standby (match not started)\n"
-                f"**Server:** {gs['server_name']}\n"
-                f"**Current map:** {current}\n"
-                f"**Match timer:** `{raw_time}`\n"
-                f"**Players:** Allied: `{allied}` — Axis: `{axis}`\n\n"
-                f"Waiting for the match timer to start.\n"
-                f"Voting will activate automatically once the round begins."
-            )
-            embed = discord.Embed(
-                title="⏸️ Map Voting Standby",
-                description=desc,
-                color=discord.Color.orange()
-            )
-            if STANDBY_STATUS_IMAGE:
-                embed.set_image(url=STANDBY_STATUS_IMAGE)
-            else:
-                img = MAP_CDN_IMAGES.get(current)
-                if img:
-                    embed.set_image(url=img)
-            return embed
-
-        if self.state.active:
-            # ACTIVE VOTE
-            # Live votes text
-            if self.state.vote_counts:
-                sorted_votes = sorted(
-                    self.state.vote_counts.items(),
-                    key=lambda x: x[1],
-                    reverse=True
-                )
-                lines = []
-                for map_id, count in sorted_votes:
-                    pretty = next((p for p, mid in MAPS.items() if mid == map_id), map_id)
-                    lines.append(f"**{pretty}** — {count} vote{'s' if count != 1 else ''}")
-                votetext = "\n".join(lines)
-            else:
-                votetext = "*No votes yet.*"
-
-            if self.state.total_match_length:
-                total_m = self.state.total_match_length // 60
-                total_s = self.state.total_match_length % 60
-                total_str = f"{total_m:02d}:{total_s:02d}"
-                length_line = f"**Match length (detected):** `{total_str}`\n"
-            else:
-                length_line = ""
-
-            desc = (
-                f"**Status:** 🗳️ Map voting is **ACTIVE**\n"
-                f"**Current map:** {current}\n"
-                f"**Match remaining:** `{raw_time}`\n"
-                f"{length_line}"
-                f"**Players:** Allied: `{allied}` — Axis: `{axis}`\n"
-                f"**Vote closes in:** `{fmt_vote_secs(vote_left)}`\n\n"
-                f"**Live votes:**\n{votetext}"
-            )
-
-            embed = discord.Embed(
-                title="🗺️ 7DR Hell Let Loose Map Voting",
-                description=desc,
-                color=discord.Color.red()
-            )
-            img = MAP_CDN_IMAGES.get(current)
-            if img:
-                embed.set_image(url=img)
-            return embed
-
-        # FALLBACK (should rarely appear)
-        desc = (
-            f"**Status:** Idle\n"
-            f"**Current map:** {current}\n"
-            f"**Match timer:** `{raw_time}`\n"
-            f"**Players:** Allied: `{allied}` — Axis: `{axis}`\n\n"
-            f"Map voting will start automatically when the next round begins."
-        )
-        embed = discord.Embed(
-            title="🗺️ Map Vote",
-            description=desc,
-            color=discord.Color.blue()
-        )
-        img = MAP_CDN_IMAGES.get(current)
-        if img:
-            embed.set_image(url=img)
-        return embed
-
-    async def update_main_embed(self, gs: dict):
-        """
-        Edit the single persistent embed according to current mode + gamestate.
-        """
-        if not (self.state.vote_channel and self.state.vote_message_id):
-            return
-
-        try:
-            msg = await self.state.vote_channel.fetch_message(self.state.vote_message_id)
-        except discord.NotFound:
-            # Message disappeared – recreate
-            await self.ensure_embed_on_startup()
-            if not self.state.vote_message_id:
-                return
-            msg = await self.state.vote_channel.fetch_message(self.state.vote_message_id)
-        except Exception as e:
-            print("[MapVote] Failed to fetch embed message:", e)
-            return
-
-        embed = self.build_embed(gs)
-        view = self.get_vote_view()
-        await msg.edit(embed=embed, view=view)
-
-    # ---------------- Vote lifecycle ----------------
-
-    async def start_vote(self, gs: dict):
-        """
-        Start a fresh vote for the current match.
-        """
-        if not self.state.vote_channel:
-            channel = self.bot.get_channel(MAPVOTE_CHANNEL_ID)
-            if not channel or not isinstance(channel, discord.TextChannel):
-                print("[MapVote] Vote channel invalid")
-                return
-            self.state.vote_channel = channel
-
-        # Reset state for this match
-        self.state.reset_for_match(gs)
-
-        # Build options (exclude current map)
-        pool = [(p, mid) for p, mid in MAPS.items() if mid != gs["current_map_id"]]
-        random.shuffle(pool)
-        pool = pool[:min(len(pool), OPTIONS_PER_VOTE, 25)]
-        self.state.set_options({p: mid for p, mid in pool})
-
-        # Make sure we have a message to edit
-        if not self.state.vote_message_id:
-            await self.ensure_embed_on_startup()
-
-        # Update embed to show active vote
-        await self.update_main_embed(gs)
-        self.last_map_id = gs["current_map_id"]
-
-        print(f"[MapVote] Vote started for {gs['current_map_pretty']}")
-        await self.broadcast_to_all(BROADCAST_START)
-
-    async def end_vote_and_queue(self):
-        """
-        End a vote and set the map rotation accordingly.
-        """
-        self.state.active = False
-
-        channel = self.state.vote_channel
-        if not channel:
-            print("[MapVote] end_vote_and_queue called with no channel")
-            return
-
-        winner_id = self.state.winner()
-        current_map_id = self.state.match_map_id
-
-        if not current_map_id:
-            print("[MapVote] No match_map_id when ending vote; aborting rotation change.")
-            await channel.send("⚠️ Could not determine current map – rotation unchanged.")
-            return
-
-        if not winner_id:
-            # No votes – repeat the same map forever
-            await self.broadcast_to_all(BROADCAST_NO_VOTES)
-            result = await set_full_rotation([current_map_id])
-            await channel.send(
-                "❌ No votes were cast.\n"
-                "Map rotation set to repeat the **current map**.\n"
-                f"CRCON Response:\n```{result}```"
-            )
-            print("[MapVote] No votes, repeating current map.")
-            return
-
-        pretty = next((p for p, mid in MAPS.items() if mid == winner_id), winner_id)
-
-        # Winner → single-map rotation
-        result = await set_full_rotation([winner_id])
-
-        await self.broadcast_to_all(f"{pretty} has won the vote!")
-        await channel.send(
-            f"🏆 **Winner: {pretty}**\n"
-            f"Map rotation set to play **only this map**.\n"
-            f"CRCON Response:\n```{result}```"
-        )
-        print(f"[MapVote] Vote ended, winner {pretty}")
-
-    # ---------------- Background loop ----------------
+    # ---------------- BACKGROUND LOOP ----------------
 
     @tasks.loop(seconds=EMBED_UPDATE_INTERVAL)
     async def tick_task(self):
         gs = await get_gamestate()
+        await self.ensure_main_message()  # make sure we always have the embed
+
         if not gs:
+            await self.update_main_embed(None)
             return
 
-        # Ensure we have the channel set
-        if not self.state.vote_channel:
-            channel = self.bot.get_channel(MAPVOTE_CHANNEL_ID)
-            if isinstance(channel, discord.TextChannel):
-                self.state.vote_channel = channel
+        standby = self.is_standby(gs)
 
-        standby_now = self.is_standby(gs)
-
-        # Always keep embed up to date
-        if self.state.vote_message_id and self.state.vote_channel:
-            await self.update_main_embed(gs)
-
-        # If offline, do nothing else
-        if self.offline:
-            self.last_map_id = gs["current_map_id"]
-            return
-
-        # Initialize last_map_id
+        # Track last_map_id to detect new matches
         if self.last_map_id is None:
             self.last_map_id = gs["current_map_id"]
-            # If match is already active and no vote, start one
-            if not standby_now and not self.state.active:
-                await self.start_vote(gs)
+
+        # If map changed → new match
+        if (
+            gs["current_map_id"] != self.last_map_id
+            and self.enabled
+            and not standby
+        ):
+            print(f"[MapVote] New match detected: {gs['current_map_pretty']}")
+            await self.start_vote(gs)
+            self.last_map_id = gs["current_map_id"]
+            self._save_persistent_state()
+            await self.update_main_embed(gs)
             return
 
-        # Detect map change → new match
-        if gs["current_map_id"] != self.last_map_id:
-            print(f"[MapVote] New map detected: {gs['current_map_pretty']}")
-            self.last_map_id = gs["current_map_id"]
-            if standby_now:
-                # New map but timer not started yet → standby
+        # If voting disabled, just keep embed in OFFLINE state
+        if not self.enabled:
+            self.state.active = False
+            await self.update_main_embed(gs)
+            return
+
+        # If server is in standby, stop active vote and show standby state
+        if standby:
+            if self.state.active:
+                print("[MapVote] Entering standby, stopping vote")
                 self.state.active = False
-                return
-            else:
-                await self.start_vote(gs)
-                return
+            await self.update_main_embed(gs)
+            return
 
-        # Same map as last tick
+        # If enabled & not standby & no active vote yet, start one
         if not self.state.active:
-            if standby_now:
-                # Still in standby
-                return
-            else:
-                # Match active but vote not started yet
-                await self.start_vote(gs)
-                return
+            await self.start_vote(gs)
+            self.last_map_id = gs["current_map_id"]
+            self._save_persistent_state()
+            return
 
-        # At this point we have an active vote
+        # If we get here, active vote is running → update embed & timers
+        await self.update_main_embed(gs)
+
         now = datetime.now(timezone.utc)
-        remaining = (self.state.vote_end_at - now).total_seconds() if self.state.vote_end_at else None
-
+        remaining = (
+            (self.state.vote_end_at - now).total_seconds()
+            if self.state.vote_end_at
+            else None
+        )
         if remaining is None:
             return
 
@@ -768,16 +739,21 @@ class MapVote(commands.Cog):
             self.state.warning_sent = True
             await self.broadcast_to_all(BROADCAST_ENDING_SOON)
             if self.state.vote_channel:
-                await self.state.vote_channel.send("⏳ Vote closes in 2 minutes!")
+                await self.state.vote_channel.send(
+                    "⏳ Vote closes in 2 minutes!"
+                )
 
         # End vote
         if remaining <= 0:
-            await self.end_vote_and_queue()
+            await self.end_vote_and_queue(gs)
 
     @tick_task.before_loop
     async def before_tick(self):
-        print("[MapVote] Waiting until bot is ready before starting tick_task...")
+        print(
+            "[MapVote] Waiting until bot is ready before starting tick_task..."
+        )
         await self.bot.wait_until_ready()
+        await self.ensure_main_message()
         print("[MapVote] Bot ready, tick_task will now run.")
 
 
