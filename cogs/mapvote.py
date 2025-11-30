@@ -54,14 +54,14 @@ DEFAULT_ROTATION = [
 # CDN images by pretty_name (must match EXACT pretty_name)
 MAP_CDN_IMAGES = {
     "Elsenborn Ridge Warfare": "https://cdn.discordapp.com/attachments/1365401621110067281/1365408158012407840/Elsenborn_Custom_MLL.png",
-    "Carentan Warfare": "https://cdn.discordapp.com/attachments/1365401621110067281/1365403110197166191/Carentan_SP_NoHQ.png",
+    "Carentan Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444490230957608980/ChatGPT_Image_Nov_30_2025_12_47_57_AM.png?ex=692ce5dc&is=692b945c&hm=f5273eb3a46804000a9801fba54e87beb84b292d4308c84aef610cc41e5fab0f",
     "Foy Warfare": "https://cdn.discordapp.com/attachments/1365401621110067281/1365404141337186304/Foy_SP_NoHQ.png",
     "Hill 400 Warfare": "https://cdn.discordapp.com/attachments/1365401621110067281/1365404269116919930/Hill400_SP_NoHQ_1.png",
 }
 
 # Extra CDN images for status modes – YOU define these
 STANDBY_CDN_IMAGE = "https://cdn.discordapp.com/attachments/1098976074852999261/1442258185137295380/file_000000009ba871f4b7700cb80af3a3f3.png?ex=692cb01b&is=692b5e9b&hm=8a65ad3f987dfd4e8876613ee2188d0fb9ae3b84abd7987163061535082a107e&"   # server empty / timer not running
-OFFLINE_CDN_IMAGE = "https://cdn.discordapp.com/attachments/1098976074852999261/1442258185137295380/file_000000009ba871f4b7700cb80af3a3f3.png?ex=692cb01b&is=692b5e9b&hm=8a65ad3f987dfd4e8876613ee2188d0fb9ae3b84abd7987163061535082a107e&"   # CRCON/API unreachable
+OFFLINE_CDN_IMAGE = "https://cdn.discordapp.com/attachments/1098976074852999261/1444486531531280505/ChatGPT_Image_Nov_30_2025_12_33_09_AM.png?ex=692ce26a&is=692b90ea&hm=aed9373b04d200da87f05112a0cf7128ba1e73f086ae346b556e872baa194fda"   # CRCON/API unreachable
 DISABLED_CDN_IMAGE = "https://cdn.discordapp.com/attachments/1098976074852999261/1442258185137295380/file_000000009ba871f4b7700cb80af3a3f3.png?ex=692cb01b&is=692b5e9b&hm=8a65ad3f987dfd4e8876613ee2188d0fb9ae3b84abd7987163061535082a107e&" # voting disabled by staff
 
 # Broadcast templates (per-player messages)
