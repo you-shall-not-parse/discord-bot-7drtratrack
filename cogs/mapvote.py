@@ -45,10 +45,10 @@ MAPS = {
 # (Used when /mapvote_stop is run)
 DEFAULT_ROTATION = [
     # TODO: fill this with your normal rotation map IDs, e.g.:
-    # "foy_warfare_day",
-    # "carentan_warfare_day",
-    # "elsenbornridge_warfare_day",
-    # "hill400_warfare_day",
+    "foy_warfare",
+    "carentan_warfare",
+    "elsenbornridge_warfare_day",
+    "hill400_warfare",
 ]
 
 # CDN images by pretty_name (must match EXACT pretty_name)
