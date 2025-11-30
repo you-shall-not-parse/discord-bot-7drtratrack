@@ -56,7 +56,7 @@ MAP_CDN_IMAGES = {
     "Elsenborn Ridge Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444494673149300796/ChatGPT_Image_Nov_30_2025_01_05_17_AM.png?ex=692ce9ff&is=692b987f&hm=58eb1b92873961cd43646d6953b0e634fe46b408f02b453e5a5a103c752d247f",
     "Carentan Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444490230957608980/ChatGPT_Image_Nov_30_2025_12_47_57_AM.png?ex=692ce5dc&is=692b945c&hm=f5273eb3a46804000a9801fba54e87beb84b292d4308c84aef610cc41e5fab0f",
     "Foy Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444492145913499800/ChatGPT_Image_Nov_30_2025_12_55_43_AM.png?ex=692ce7a4&is=692b9624&hm=c1db1630ebea4673c713122102c6124ea1907faafec170cf3f4fa3bab32f2e2c",
-    "Hill 400 Warfare": "https://cdn.discordapp.com/attachments/1365401621110067281/1365404269116919930/Hill400_SP_NoHQ_1.png",
+    "Hill 400 Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444497579210707004/ChatGPT_Image_Nov_30_2025_01_15_52_AM.png?ex=692cecb4&is=692b9b34&hm=d4148165f859a83df4d5f818a0b280bee4e988718280e2753d7d97031beeca42",
 }
 
 # Extra CDN images for status modes – YOU define these
