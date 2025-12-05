@@ -118,7 +118,7 @@ class EmbedManager(commands.Cog):
         embed2.add_field(
             name=":question: How do I see my in-game stats?",
             value=(
-                "[Here are our HLL Server Stats](https://7dr-stats.hlladmin.com/games)"
+                "[Here are our HLL server stats](https://7dr-stats.hlladmin.com/games), you can also delve into a stats tool which goes across multiple servers here https://hllrecords.com/"
             ),
             inline=False
         )
