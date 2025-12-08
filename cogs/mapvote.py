@@ -28,7 +28,7 @@ VOTE_END_OFFSET_SECONDS = 120
 EMBED_UPDATE_INTERVAL = 1
 
 # How many map options to show
-OPTIONS_PER_VOTE = 10
+OPTIONS_PER_VOTE = 25
 
 # Persistent state file (message id, enabled flag, etc.)
 MAPVOTE_STATE_FILE = "mapvote_state.json"
@@ -73,6 +73,22 @@ MAP_CDN_IMAGES = {
     "Carentan Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444515451727253544/file_00000000e5f871f488f94dd458b30c09.png?ex=69383219&is=6936e099&hm=40998a104cbffc2fe0b37c515f6158c9722606b7c1ec5d33bdc03e5eb4341e2a",
     "Foy Warfare": "https://media.discordapp.net/attachments/1098976074852999261/1444492145913499800/ChatGPT_Image_Nov_30_2025_12_55_43_AM.png?ex=69381c64&is=6936cae4&hm=dc9f2577c73c1b1bb2f5403c10b7f9a6ae5f926799ef6c5909025434de018429&=&format=webp&quality=lossless&width=1240&height=826",
     "Hill 400 Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444497579210707004/ChatGPT_Image_Nov_30_2025_01_15_52_AM.png?ex=69382174&is=6936cff4&hm=f9e16ba8d2b9f20dd799bd5970c11f38c1f427689585e2d139cfd1294888a612",
+    "St. Marie Du Mont": "https://cdn.discordapp.com/attachments/1098976074852999261/1444515451727253544/file_00000000e5f871f488f94dd458b30c09.png?ex=69383219&is=6936e099&hm=40998a104cbffc2fe0b37c515f6158c9722606b7c1ec5d33bdc03e5eb4341e2a",
+    "Utah Beach": "",
+    "St. Mere Eglise": "https://cdn.discordapp.com/attachments/1098976074852999261/1447681599117463692/file_000000009b64720e96132fbd67f95f72.png?ex=6938820d&is=6937308d&hm=148aca7f2e9de99f00b1f2cb6c55660ae5ece263e62afa83fbece2f9193610ef",
+    "El Alamein": "https://cdn.discordapp.com/attachments/1098976074852999261/1444673189551804506/file_00000000638471f599fc25ef38da4b05.png?ex=69381c41&is=6936cac1&hm=10c235e8e55b5a3c0acf3dfd24ad0e5556de2d63c7badbaba7e27e0fcbc44260",
+    "Mortain": "",
+    "Smolensk": "",
+    "Driel": "https://cdn.discordapp.com/attachments/1098976074852999261/1444671257730744360/file_00000000d254720eb1ce02f6506ae926.png?ex=69381a74&is=6936c8f4&hm=e2772de15b5aa855d3abad443e614d5b2280f7a4f529aaf759f515c70d3ca7cc&",
+    "Kursk": "",
+    "Carentan Warfare Night": "",
+    "Hurtgen Forest": "https://cdn.discordapp.com/attachments/1098976074852999261/1444676650653450411/file_000000005384720e8f124201b4e379a9.png?ex=69381f7a&is=6936cdfa&hm=e2d5ea8302bfd2744a5be5a199388945c8eb60218216aae29a5b2ea71aa1e302",
+    "Remagen": "",
+    "Omaha Beach": "",
+    "Kharkov": "https://cdn.discordapp.com/attachments/1098976074852999261/1444687960845979780/file_0000000068b47208b053f27323047cda.png?ex=69382a02&is=6936d882&hm=5c7745f15e886825b5b26d3ed4b18a33808332cd2dbedc71e5dba0f8bd9bda8c&",
+    "Purple Heart Lane": "",
+    "Tobruk": "",
+    "Stalingrad": "",
 }
 
 STANDBY_CDN_IMAGE = "https://cdn.discordapp.com/attachments/1098976074852999261/1442258185137295380/file_000000009ba871f4b7700cb80af3a3f3.png?ex=6937e4db&is=6936935b&hm=ffcf7d5e580476b6af6f2c5a1a1055ed656aa86034c14094d9434b0d2019f8cc&g"
@@ -374,14 +390,34 @@ class MapVote(commands.Cog):
         except Exception as e:
             print("[MapVote] Sync error:", e)
 
-        # Ensure initial embed exists in some state
+        # If we have an old message saved, delete it and clear state
+        try:
+            if self.saved_channel_id and self.saved_message_id:
+                channel = self.bot.get_channel(self.saved_channel_id)
+                if isinstance(channel, discord.TextChannel):
+                    try:
+                        old_msg = await channel.fetch_message(self.saved_message_id)
+                        await old_msg.delete()
+                        print(f"[MapVote] Deleted old embed message {self.saved_message_id}")
+                    except discord.NotFound:
+                        pass
+                    except Exception as e:
+                        print(f"[MapVote] Failed to delete old embed: {e}")
+            # Clear saved IDs so a fresh message is created
+            self.saved_message_id = None
+            self.saved_channel_id = MAPVOTE_CHANNEL_ID
+            self._save_state_file()
+        except Exception as e:
+            print(f"[MapVote] Error while clearing old embed: {e}")
+
+        # Ensure initial embed exists in some state (fresh)
         await self.ensure_initial_embed()
 
         # Start background task once
         if not self.tick_task.is_running():
             self.tick_task.start()
             print("[MapVote] tick_task started")
-
+        
     # --------------------------------------------------
     # Per-player broadcast using message_player
     # --------------------------------------------------
@@ -637,16 +673,15 @@ class MapVote(commands.Cog):
             self.saved_channel_id = channel.id
             self._save_state_file()
         else:
-            # Update existing message
+            # Replace existing message with a new one on restart or refresh
             try:
-                await msg.edit(embed=embed, view=view)
+                await msg.delete()
             except Exception as e:
-                print("[MapVote] Failed to edit mapvote message:", e)
-
-        # Attach to state for convenience
-        self.state.vote_channel = channel
-        self.state.vote_message_id = msg.id
-
+                print("[MapVote] Failed to delete existing mapvote message:", e)
+            msg = await channel.send(embed=embed, view=view)
+            self.saved_message_id = msg.id
+            self.saved_channel_id = channel.id
+            self._save_state_file()
         return msg
 
     async def ensure_initial_embed(self):
