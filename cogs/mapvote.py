@@ -595,13 +595,13 @@ class MapVote(commands.Cog):
             view = self.vote_view
 
         # Prepare a compact signature of the content we care about to skip redundant edits
-        new_sig = (status, embed.description, embed.image.url if embed.image else None)
+        # Include timestamp so per-second updates count as a change
+        new_sig = (status, embed.description, embed.image.url if embed.image else None, embed.timestamp)
 
         # Try to edit using partial message (doesn't require fetch)
         if self.saved_message_id:
             try:
                 partial_msg = channel.get_partial_message(self.saved_message_id)
-                # Only edit if content changed (timestamp already makes it unique)
                 if getattr(self, "_last_embed_sig", None) != new_sig:
                     await partial_msg.edit(embed=embed, view=view)
                     self._last_embed_sig = new_sig
