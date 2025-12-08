@@ -593,14 +593,14 @@ class MapVote(commands.Cog):
                 self.vote_view = MapVoteView(self.state, self)
             view = self.vote_view
 
+        # Try to fetch the existing message and edit it
         if self.saved_message_id:
             try:
-                partial_msg = channel.get_partial_message(self.saved_message_id)
-                # Always edit so per-second updates are visible
-                await partial_msg.edit(embed=embed, view=view)
+                msg = await channel.fetch_message(self.saved_message_id)
+                await msg.edit(embed=embed, view=view)
                 self.state.vote_channel = channel
-                self.state.vote_message_id = self.saved_message_id
-                return partial_msg
+                self.state.vote_message_id = msg.id
+                return msg
             except discord.NotFound:
                 print("[MapVote] Saved message not found, will create new one")
                 self.saved_message_id = None
@@ -608,9 +608,10 @@ class MapVote(commands.Cog):
                 print("[MapVote] No permission to edit message, creating new one")
                 self.saved_message_id = None
             except Exception as e:
-                print(f"[MapVote] Failed to edit via partial message: {e}, creating new")
+                print(f"[MapVote] Failed to edit existing message: {e}, creating new")
                 self.saved_message_id = None
 
+        # Create new message if needed
         try:
             msg = await channel.send(embed=embed, view=view)
             self.saved_message_id = msg.id
@@ -766,6 +767,8 @@ class MapVote(commands.Cog):
 
     @tasks.loop(seconds=EMBED_UPDATE_INTERVAL)
     async def tick_task(self):
+        # Debug: confirm the loop fires
+        print(f"[MapVote] tick at {datetime.now(timezone.utc).strftime('%H:%M:%S')}")
         gs = await fetch_gamestate()
         status = classify_status(gs, self.mapvote_enabled)
 
@@ -789,7 +792,6 @@ class MapVote(commands.Cog):
         await self.ensure_embed("ACTIVE", gs)
         await self.check_match_events(gs)
 
-        # handle countdown if vote active
         if self.state.active and self.state.vote_end_at:
             now = datetime.now(timezone.utc)
             remaining = (self.state.vote_end_at - now).total_seconds()
