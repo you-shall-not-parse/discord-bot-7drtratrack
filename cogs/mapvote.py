@@ -71,7 +71,7 @@ BROADCAST_NO_VOTES = "No votes, the map rotation wins :("
 
 # --------------------------------------------------
 # CRCON API (Bearer token)
-# -----------------------------------------------
+# --------------------------------------------------
 
 CRCON_PANEL_URL = "https://7dr.hlladmin.com/api/"
 CRCON_API_KEY = os.getenv("CRCON_API_KEY")
@@ -145,7 +145,6 @@ def save_persistent_state(data: dict):
             json.dump(data, f, indent=4)
     except Exception as e:
         print("[MapVote] Failed to save state file:", e)
-
 
 async def fetch_gamestate():
     data = rcon_get("get_gamestate")
@@ -384,7 +383,7 @@ class MapVote(commands.Cog):
             return
 
         for p in players:
-            uid = p.get("steam_id_64") or p.get("steam_id")
+            uid = p.get("player_id")
             if not uid:
                 continue
 
