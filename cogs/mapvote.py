@@ -417,7 +417,7 @@ class MapVote(commands.Cog):
         if not self.tick_task.is_running():
             self.tick_task.start()
             print("[MapVote] tick_task started")
-        
+            
     # --------------------------------------------------
     # Per-player broadcast using message_player
     # --------------------------------------------------
@@ -673,15 +673,16 @@ class MapVote(commands.Cog):
             self.saved_channel_id = channel.id
             self._save_state_file()
         else:
-            # Replace existing message with a new one on restart or refresh
+            # Update existing message
             try:
-                await msg.delete()
+                await msg.edit(embed=embed, view=view)
             except Exception as e:
-                print("[MapVote] Failed to delete existing mapvote message:", e)
-            msg = await channel.send(embed=embed, view=view)
-            self.saved_message_id = msg.id
-            self.saved_channel_id = channel.id
-            self._save_state_file()
+                print("[MapVote] Failed to edit mapvote message:", e)
+
+        # Attach to state for convenience
+        self.state.vote_channel = channel
+        self.state.vote_message_id = msg.id
+
         return msg
 
     async def ensure_initial_embed(self):
