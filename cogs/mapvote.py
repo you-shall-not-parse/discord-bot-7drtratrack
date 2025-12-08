@@ -71,7 +71,7 @@ BROADCAST_NO_VOTES = "No votes, the map rotation wins :("
 
 # --------------------------------------------------
 # CRCON API (Bearer token)
-# --------------------------------------------------
+# -----------------------------------------------
 
 CRCON_PANEL_URL = "https://7dr.hlladmin.com/api/"
 CRCON_API_KEY = os.getenv("CRCON_API_KEY")
