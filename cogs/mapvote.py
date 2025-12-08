@@ -52,7 +52,6 @@ MAPS = {
     "Remagen": "remagen_warfare",
     "Omaha Beach": "omahabeach_warfare",
     "Kharkov": "kharkov_warfare",
-    "Mortain": "mortain_warfare_day",
     "Purple Heart Lane": "PHL_L_1944_Warfare",
     "Tobruk": "tobruk_warfare_morning",
     "Stalingrad": "STA_L_1942_Warfare",
@@ -400,7 +399,7 @@ class MapVote(commands.Cog):
             return
 
         for p in players:
-            uid = p.get("steam_id_64") or p.get("steam_id")
+            uid = p.get("player_id")
             if not uid:
                 continue
 
