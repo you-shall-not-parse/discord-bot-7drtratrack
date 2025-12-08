@@ -579,7 +579,6 @@ class MapVote(commands.Cog):
 
 
     async def ensure_embed(self, status: str, gs: dict | None) -> discord.Message | None:
-        """Ensure there is one live mapvote message, update it and attach view if needed."""
         channel_id = self.saved_channel_id or MAPVOTE_CHANNEL_ID
         channel = self.bot.get_channel(channel_id)
         if not channel or not isinstance(channel, discord.TextChannel):
@@ -594,17 +593,11 @@ class MapVote(commands.Cog):
                 self.vote_view = MapVoteView(self.state, self)
             view = self.vote_view
 
-        # Prepare a compact signature of the content we care about to skip redundant edits
-        # Include timestamp so per-second updates count as a change
-        new_sig = (status, embed.description, embed.image.url if embed.image else None, embed.timestamp)
-
-        # Try to edit using partial message (doesn't require fetch)
         if self.saved_message_id:
             try:
                 partial_msg = channel.get_partial_message(self.saved_message_id)
-                if getattr(self, "_last_embed_sig", None) != new_sig:
-                    await partial_msg.edit(embed=embed, view=view)
-                    self._last_embed_sig = new_sig
+                # Always edit so per-second updates are visible
+                await partial_msg.edit(embed=embed, view=view)
                 self.state.vote_channel = channel
                 self.state.vote_message_id = self.saved_message_id
                 return partial_msg
@@ -612,22 +605,18 @@ class MapVote(commands.Cog):
                 print("[MapVote] Saved message not found, will create new one")
                 self.saved_message_id = None
             except discord.Forbidden:
-                # Fall back to creating a new message so updates don't stall
                 print("[MapVote] No permission to edit message, creating new one")
                 self.saved_message_id = None
             except Exception as e:
                 print(f"[MapVote] Failed to edit via partial message: {e}, creating new")
                 self.saved_message_id = None
 
-        # Create new message if needed
         try:
             msg = await channel.send(embed=embed, view=view)
             self.saved_message_id = msg.id
             self.saved_channel_id = channel.id
-            self._last_embed_sig = new_sig
             self._save_state_file()
             print(f"[MapVote] Created new embed message: {msg.id}")
-            
             self.state.vote_channel = channel
             self.state.vote_message_id = msg.id
             return msg
