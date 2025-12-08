@@ -23,42 +23,61 @@ MAPVOTE_ADMIN_ROLE_ID = 1279832920479109160  # role allowed to control mapvote
 
 VOTE_END_OFFSET_SECONDS = 120          # vote closes this many seconds before match end
 EMBED_UPDATE_INTERVAL = 1              # how often to refresh the status embed
-OPTIONS_PER_VOTE = 10                  # how many map options to show
+OPTIONS_PER_VOTE = 22                  # how many map options to show
 MAPVOTE_STATE_FILE = "mapvote_state.json"
 BROADCAST_DELAY = 0.1                  # delay between player broadcasts (seconds)
 
 # Pretty name → CRCON ID
 MAPS = {
-    "Elsenborn Ridge Warfare": "elsenbornridge_warfare_day",
+    "Elsenborn Ridge Warfare": "elsenbornridge_warfare_morning",
     "Carentan Warfare": "carentan_warfare",
     "Foy Warfare": "foy_warfare",
     "Hill 400 Warfare": "hill400_warfare",
+    "St. Marie Du Mont": "stmariedumont_warfare",
+    "Utah Beach": "utahbeach_warfare",
+    "St. Mere Eglise": "stmereeglise_warfare",
+    "El Alamein": "elalamein_warfare",
+    "Mortain": "mortain_warfare_dusk",
+    "Smolensk": "smolensk_warfare_dusk",
+    "Driel": "driel_warfare",
+    "Kursk": "kursk_warfare",
+    "Carentan Warfare Night": "carentan_warfare_night",
+    "Hurtgen Forest": "hurtgenforest_warfare_V2",
+    "Remagen": "remagen_warfare",
+    "Omaha Beach": "omahabeach_warfare",
+    "Kharkov": "kharkov_warfare",
+    "Mortain": "mortain_warfare_day",
+    "Purple Heart Lane": "PHL_L_1944_Warfare",
+    "Tobruk": "tobruk_warfare_morning",
+    "Stalingrad": "STA_L_1942_Warfare",
 }
 
 # Default rotation when mapvote is disabled
 DEFAULT_ROTATION = [
-    "foy_warfare",
-    "carentan_warfare",
-    "elsenbornridge_warfare_day",
-    "hill400_warfare",
+    "stmariedumont_warfare",
+    "elalamein_warfare_night",
+    "elsenbornridge_warfare_morning",
+    "stmereeglise_warfare",
+    "elalamein_warfare",
+    "smolensk_warfare_dusk",
 ]
 
 # Map images (put your real CDN URLs back in here)
 MAP_CDN_IMAGES = {
-    "Elsenborn Ridge Warfare": "https://example.com/elsenborn.png",
-    "Carentan Warfare": "https://example.com/carentan.png",
-    "Foy Warfare": "https://example.com/foy.png",
-    "Hill 400 Warfare": "https://example.com/hill400.png",
+    "Elsenborn Ridge Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444494673149300796/ChatGPT_Image_Nov_30_2025_01_05_17_AM.png?ex=69381ebf&is=6936cd3f&hm=cdb114a6a2550d2d83318d3b3c1d6717022fa0c8665c645818fb8c78b8f71fa3",
+    "Carentan Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444515451727253544/file_00000000e5f871f488f94dd458b30c09.png?ex=69383219&is=6936e099&hm=40998a104cbffc2fe0b37c515f6158c9722606b7c1ec5d33bdc03e5eb4341e2a",
+    "Foy Warfare": "https://media.discordapp.net/attachments/1098976074852999261/1444492145913499800/ChatGPT_Image_Nov_30_2025_12_55_43_AM.png?ex=69381c64&is=6936cae4&hm=dc9f2577c73c1b1bb2f5403c10b7f9a6ae5f926799ef6c5909025434de018429&=&format=webp&quality=lossless&width=1240&height=826",
+    "Hill 400 Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444497579210707004/ChatGPT_Image_Nov_30_2025_01_15_52_AM.png?ex=69382174&is=6936cff4&hm=f9e16ba8d2b9f20dd799bd5970c11f38c1f427689585e2d139cfd1294888a612",
 }
 
-STANDBY_CDN_IMAGE = "https://example.com/standby.png"
-OFFLINE_CDN_IMAGE = "https://example.com/offline.png"
-DISABLED_CDN_IMAGE = "https://example.com/disabled.png"
+STANDBY_CDN_IMAGE = "https://cdn.discordapp.com/attachments/1098976074852999261/1442258185137295380/file_000000009ba871f4b7700cb80af3a3f3.png?ex=6937e4db&is=6936935b&hm=ffcf7d5e580476b6af6f2c5a1a1055ed656aa86034c14094d9434b0d2019f8cc&g"
+OFFLINE_CDN_IMAGE = "https://cdn.discordapp.com/attachments/1098976074852999261/1444486531531280505/ChatGPT_Image_Nov_30_2025_12_33_09_AM.png?ex=6938172a&is=6936c5aa&hm=b08120d9cf51a7bf212e0926cb12036c429d6287a7b542fc8f4bc3b1aac36017"
+DISABLED_CDN_IMAGE = "https://cdn.discordapp.com/attachments/1098976074852999261/1444486531531280505/ChatGPT_Image_Nov_30_2025_12_33_09_AM.png?ex=6938172a&is=6936c5aa&hm=b08120d9cf51a7bf212e0926cb12036c429d6287a7b542fc8f4bc3b1aac36017"
 
 # Broadcasts into game to all players
-BROADCAST_START = "Next-map voting is OPEN on Discord!"
-BROADCAST_ENDING_SOON = "Map vote closes in 2 minutes!"
-BROADCAST_NO_VOTES = "No votes, the map rotation wins :("
+BROADCAST_START = "Vote for the next map on discord.gg/7drc!\nYou can select one of up to 25 maps!\n Join us now as a clan member or join as a Blueberry to keep up to date with the latest news, map vote and see our melee kills feed!"
+BROADCAST_ENDING_SOON = "Map vote closes in 2 minutes!\nHead over to discord.gg/7drc to cast your vote!"
+BROADCAST_NO_VOTES = "No votes, the map rotation wins.\nHead over to discord.gg/7drc to cast your vote!"
 
 # CRCON
 CRCON_PANEL_URL = "https://7dr.hlladmin.com/api/"
@@ -697,7 +716,7 @@ class MapVote(commands.Cog):
             await self.broadcast_to_all(f"🏆 {pretty} has won the vote!")
             
             # Send result notification to vote channel
-            await channel.send(f"🏆 **Winner: {pretty}**\nThe next rotation has been set to this map only.")
+            await channel.send(f"🏆 **Winner: {pretty}**\n\nHead over to discord.gg/7drc to cast your vote on the next map!")
             
             # Send CRCON response to results channel
             if results_channel:
