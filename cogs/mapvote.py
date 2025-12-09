@@ -598,7 +598,7 @@ class MapVote(commands.Cog):
             votetext = self._format_vote_results()
 
             desc = (
-                f"✅ **Server active** — map voting system enabled.\n\n"
+                f"✅ **Server active** — map voting avilable!.\n\n"
                 f"**Current map:** {current}\n"
                 f"**Match remaining:** `{raw_time}`\n"
                 f"**Score:** Allied `{allied_score}` — Axis `{axis_score}`\n"
