@@ -147,7 +147,7 @@ def rcon_set_rotation(map_ids: list[str]):
     return rcon_post("set_map_rotation", {"map_names": map_ids})
 
 
-def rcon_get_recent_logs(filter_actions: list[str], limit: int = 10):
+def rcon_get_recent_logs(filter_actions: list[str], limit: int = 100):
     """Get recent logs filtered by action types."""
     params = "&".join([f"filter_action={action}" for action in filter_actions])
     endpoint = f"get_recent_logs?{params}&limit={limit}"
@@ -370,6 +370,9 @@ class MapVote(commands.Cog):
         self.saved_channel_id: int | None = persisted.get("channel_id")
         self.mapvote_enabled: bool = persisted.get("mapvote_enabled", True)
         self.last_processed_log_id: int | None = persisted.get("last_processed_log_id")
+        # If previously stored small incremental IDs, reset to None so we don't skip timestamp_ms logs
+        if self.last_processed_log_id and self.last_processed_log_id < 10_000_000_000:
+            self.last_processed_log_id = None
         self.last_warning_msg_id: int | None = None
         self.last_winner_msg_id: int | None = None
 
@@ -834,37 +837,38 @@ class MapVote(commands.Cog):
 
     async def check_match_events(self, gs: dict):
         """Check audit logs for match start/end events."""
-        logs_data = rcon_get_recent_logs(["Match Start", "Match Ended"], limit=20)
-        
+        logs_data = rcon_get_recent_logs(["Match Start", "Match Ended", "Match"], limit=100)
         if not logs_data or logs_data.get("error") or logs_data.get("failed"):
             return
-        
+
         logs = logs_data.get("result", {}).get("logs", [])
         if not logs:
             return
-        
-        # Process logs in chronological order (oldest first)
-        logs.sort(key=lambda x: x.get("id", 0))
-        
+
+        # Use timestamp_ms as stable ordering/identifier
+        logs.sort(key=lambda x: x.get("timestamp_ms", 0))
+
         for log in logs:
-            log_id = log.get("id")
-            action = log.get("action")
-            
+            # Fallback to timestamp_ms when 'id' is not present
+            log_id = log.get("timestamp_ms") or log.get("id") or 0
+            action = (log.get("action") or "").strip().upper()
+
             # Skip already processed logs
             if self.last_processed_log_id and log_id <= self.last_processed_log_id:
                 continue
-            
-            # Update last processed ID
+
+            # Update last processed ID first to avoid double-processing
             self.last_processed_log_id = log_id
             self._save_state_file()
-            
-            if action == "Match Start":
-                print(f"[MapVote] Match Start detected (log #{log_id})")
-                await self.start_vote(gs)
-                
-            elif action == "Match Ended":
-                print(f"[MapVote] Match Ended detected (log #{log_id})")
 
+            # Normalize actions: API returns "MATCH START"/"MATCH ENDED" (sometimes "MATCH")
+            if action in ("MATCH START", "MATCH"):
+                if not self.state.active and self.mapvote_enabled and gs:
+                    print(f"[MapVote] MATCH START detected (#{log_id})")
+                    await self.start_vote(gs)
+            elif action == "MATCH ENDED":
+                print(f"[MapVote] MATCH ENDED detected (#{log_id})")
+                # end handled by timer
 
     @tick_task.before_loop
     async def before_tick(self):
