@@ -26,7 +26,7 @@ MAPVOTE_ADMIN_ROLE_ID = 1279832920479109160  # set this to your role ID
 VOTE_END_OFFSET_SECONDS = 120
 
 # Embed update speed
-EMBED_UPDATE_INTERVAL = 1
+EMBED_UPDATE_INTERVAL = 2
 
 # How many map options to show
 OPTIONS_PER_VOTE = 20
@@ -85,7 +85,7 @@ MAP_CDN_IMAGES = {
     "Carentan Warfare (Night)": "",
     "Hurtgen Forest Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444676650653450411/file_000000005384720e8f124201b4e379a9.png?ex=69381f7a&is=6936cdfa&hm=e2d5ea8302bfd2744a5be5a199388945c8eb60218216aae29a5b2ea71aa1e302",
     "Remagen Warfare": "",
-    "Omaha Beach Warfare": "",
+    "Omaha Beach Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1448106330052362301/ChatGPT_Image_Dec_10_2025_12_16_56_AM.png?ex=693a0d9d&is=6938bc1d&hm=6614c98b63a7c58eaea7638a718ef854e5c074796001808cb6faf0557b46ea2a",
     "Kharkov Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444687960845979780/file_0000000068b47208b053f27323047cda.png?ex=69382a02&is=6936d882&hm=5c7745f15e886825b5b26d3ed4b18a33808332cd2dbedc71e5dba0f8bd9bda8c&",
     "Purple Heart Lane Warfare (Rain)": "",
     "Tobruk Warfare (Dawn)": "",
@@ -98,8 +98,8 @@ DISABLED_CDN_IMAGE = "https://cdn.discordapp.com/attachments/1098976074852999261
 
 # Broadcasts into game to all players
 BROADCAST_START = "Vote for the next map on discord.gg/7drc!\nYou can select one of up to 25 maps!\n\nJoin us now as a clan member or join as a Blueberry to keep up to date with the latest news, map vote and see our melee kills feed!"
-BROADCAST_ENDING_SOON = "Map vote closes in 2 minutes!\n\nHead over to discord.gg/7drc to cast your vote!"
-BROADCAST_NO_VOTES = "No votes, the map rotation wins.\n\nHead over to discord.gg/7drc to cast your vote!"
+BROADCAST_ENDING_SOON = "Map vote closes in 2 minutes!\n\nHead over to discord.gg/7drc to cast your vote!\n\nJoin us now as a clan member or join as a Blueberry to keep up to date with the latest news, map vote and see our melee kills feed!"
+BROADCAST_NO_VOTES = "No votes, the map rotation wins.\n\nHead over to discord.gg/7drc to cast your vote!\n\nJoin us now as a clan member or join as a Blueberry to keep up to date with the latest news, map vote and see our melee kills feed!"
 
 # --------------------------------------------------
 # CRCON API (Bearer token)
@@ -428,6 +428,16 @@ class MapVote(commands.Cog):
         # Ensure initial embed exists in some state (fresh)
         await self.ensure_initial_embed()
 
+        # Force-start vote if match is active and no vote running after a restart
+        try:
+            gs = await fetch_gamestate()
+            if gs and self.mapvote_enabled:
+                status = classify_status(gs, self.mapvote_enabled)
+                if status == "ACTIVE" and not self.state.active and gs.get("time_remaining", 0) > 0:
+                    await self.start_vote(gs)
+        except Exception as e:
+            print(f"[MapVote] on_ready auto-start error: {e}")
+
         # Start background task once
         if not self.tick_task.is_running():
             self.tick_task.start()
@@ -474,32 +484,32 @@ class MapVote(commands.Cog):
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @mapvote_staff_check()
     async def mapvote_enable_cmd(self, interaction: discord.Interaction):
-        if self.mapvote_enabled:
-            return await interaction.response.send_message(
-                "⚠️ Map voting is already enabled.",
-                ephemeral=True
-            )
-        
+        # If already enabled, still force-start vote if a match is active and no vote running
         await interaction.response.send_message("Enabling map voting…", ephemeral=True)
-        
+
         self.mapvote_enabled = True
         self._save_state_file()
-        
-        # Check if server is active and start vote immediately
+
         gs = await fetch_gamestate()
         if gs:
             status = classify_status(gs, self.mapvote_enabled)
-            if status == "ACTIVE":
-                await self.start_vote(gs)
-                await interaction.followup.send(
-                    "✅ Map voting **enabled** and vote started for the current match!",
-                    ephemeral=True
-                )
-                return
-        
-        # Otherwise just enable it
+            if status == "ACTIVE" and gs.get("time_remaining", 0) > 0:
+                if not self.state.active:
+                    await self.start_vote(gs)
+                    await interaction.followup.send(
+                        "✅ Map voting enabled and vote started for the current match.",
+                        ephemeral=True
+                    )
+                    return
+                else:
+                    await interaction.followup.send(
+                        "✅ Map voting enabled. A vote is already active.",
+                        ephemeral=True
+                    )
+                    return
+
         await interaction.followup.send(
-            "✅ Map voting **enabled**. It will start automatically when the next match begins.",
+            "✅ Map voting enabled. It will start automatically when the next match begins.",
             ephemeral=True
         )
         await self.refresh_status_embed()
@@ -577,11 +587,11 @@ class MapVote(commands.Cog):
         elif status == "STANDBY":
             embed.description = (
                 "🕓 **Server is in standby.**\n\n"
-                "No players are connected and the round timer is not running.\n"
+                "No players are in the game and the match timer is not running.\n"
                 "Map voting will **start automatically** when a player joins "
-                "and the round timer begins.\n\n"
-                f"**Current map:** {current}\n"
-                f"**Match remaining:** `{raw_time}`\n"
+                "and when the match timer begins.\n\n"
+                f"**Incoming map:** {current}\n"
+                f"**Time remaining:** `{raw_time}`\n"
                 f"**Score:** Allied `{allied_score}` — Axis `{axis_score}`\n"
                 f"**Players:** Allied `{allied}` — Axis `{axis}`"
             )
@@ -600,7 +610,7 @@ class MapVote(commands.Cog):
             desc = (
                 f"✅ **Server active** — map voting avilable!.\n\n"
                 f"**Current map:** {current}\n"
-                f"**Match remaining:** `{raw_time}`\n"
+                f"**Time remaining:** `{raw_time}`\n"
                 f"**Score:** Allied `{allied_score}` — Axis `{axis_score}`\n"
                 f"**Players:** Allied `{allied}` — Axis `{axis}`\n"
             )
@@ -627,7 +637,7 @@ class MapVote(commands.Cog):
     def _format_vote_results(self) -> str:
         """Format current vote results into a readable string."""
         if not self.state.active:
-            return "*No active vote for this round (either finished or not started yet).*"
+            return "*No active vote for this match (either finished or not started yet).*"
         
         if not self.state.vote_counts:
             return "*No votes yet.*"
