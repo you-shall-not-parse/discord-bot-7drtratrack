@@ -308,6 +308,13 @@ class VoteState:
             return None
         return max(self.vote_counts.items(), key=lambda kv: kv[1])[0]
 
+    def winners_tied(self) -> list[str]:
+        """Return all map_ids tied for the highest vote count."""
+        if not self.vote_counts:
+            return []
+        top = max(self.vote_counts.values())
+        return [mid for mid, cnt in self.vote_counts.items() if cnt == top]
+
 
 # --------------------------------------------------
 # UI
@@ -608,7 +615,7 @@ class MapVote(commands.Cog):
             votetext = self._format_vote_results()
 
             desc = (
-                f"✅ **Server active** — map voting avilable!.\n\n"
+                f"✅ **Server active** — map voting available!\n\n"
                 f"**Current map:** {current}\n"
                 f"**Time remaining:** `{raw_time}`\n"
                 f"**Score:** Allied `{allied_score}` — Axis `{axis_score}`\n"
@@ -771,9 +778,9 @@ class MapVote(commands.Cog):
         if not isinstance(log_channel, discord.TextChannel):
             log_channel = channel  # Fallback to vote channel
 
-        winner_id = self.state.winner()
-
-        if not winner_id:
+        winner_id = None
+        tied = self.state.winners_tied()
+        if not tied:
             # No votes: use default rotation
             res = rcon_set_rotation(DEFAULT_ROTATION)
 
@@ -781,19 +788,39 @@ class MapVote(commands.Cog):
             await log_channel.send(f"CRCON Response (restored default rotation - no votes):\n```{res}```")
             print("[MapVote] Vote ended with no votes — restored default rotation.")
         else:
-            pretty = next((p for p, mid in MAPS.items() if mid == winner_id), winner_id)
-            res = rcon_set_rotation([winner_id])
+            if len(tied) == 1:
+                winner_id = tied[0]
+                pretty = next((p for p, mid in MAPS.items() if mid == winner_id), winner_id)
+                res = rcon_set_rotation([winner_id])
 
-            await self.broadcast_to_all(f"{pretty} has won the vote!\nHead over to discord.gg/7drc to cast your vote on the next map!")
-            # Announce winner and remember message ID for cleanup next match
-            winner_msg = await channel.send(
-                f"🏆 **Winner: {pretty}**\n"
-                f"The next rotation has been set to this map only."
-            )
-            self.last_winner_msg_id = winner_msg.id
+                await self.broadcast_to_all(f"{pretty} has won the vote!\nHead over to discord.gg/7drc to cast your vote on the next map!")
+                winner_msg = await channel.send(
+                    f"🏆 **Winner: {pretty}**\n"
+                    f"The next rotation has been set to this map only."
+                )
+                self.last_winner_msg_id = winner_msg.id
 
-            await log_channel.send(f"CRCON Response (set rotation to winner):\n```{res}```")
-            print(f"[MapVote] Vote ended, winner {pretty}")
+                await log_channel.send(f"CRCON Response (set rotation to winner):\n```{res}```")
+                print(f"[MapVote] Vote ended, winner {pretty}")
+            else:
+                # Tie: choose a random winner from tied maps and announce tie
+                winner_id = random.choice(tied)
+                pretty_winner = next((p for p, mid in MAPS.items() if mid == winner_id), winner_id)
+                pretty_tied = [next((p for p, mid in MAPS.items() if mid == mid_t), mid_t) for mid_t in tied]
+
+                res = rcon_set_rotation([winner_id])
+
+                await self.broadcast_to_all(f"Tie detected! {pretty_winner} was randomly selected as the next map.")
+                winner_msg = await channel.send(
+                    "🤝 **Tie detected!**\n"
+                    f"Tied maps: {', '.join(pretty_tied)}\n"
+                    f"🎲 Randomly selected winner: **{pretty_winner}**\n"
+                    f"The next rotation has been set to this map only."
+                )
+                self.last_winner_msg_id = winner_msg.id
+
+                await log_channel.send(f"CRCON Response (tie - set rotation to random winner):\n```{res}```")
+                print(f"[MapVote] Tie among {pretty_tied}. Random winner: {pretty_winner}")
 
         # Refresh embed to reflect that the vote is no longer active
         await self.refresh_status_embed()
