@@ -385,6 +385,12 @@ class MapVote(commands.Cog):
 
         # UI view
         self.vote_view: MapVoteView | None = None
+        # Serialize embed updates so only one task edits/recreates the message at a time.
+        # This prevents overlapping ensure_embed calls from racing (e.g., tick_task + refresh_*),
+        # which can trigger transient API errors and unintended reposts.
+        self._embed_lock = asyncio.Lock()
+        # Track last creation time to avoid rapid double-creates if Discord returns stale fetch results.
+        self._last_create_ts: float | None = None
 
     # ---------------- Persistence helpers ----------------
 
@@ -663,48 +669,69 @@ class MapVote(commands.Cog):
 
     async def ensure_embed(self, status: str, gs: dict | None) -> discord.Message | None:
         """Ensure the mapvote embed exists and is updated in place."""
-        channel_id = self.saved_channel_id or MAPVOTE_CHANNEL_ID
-        channel = self.bot.get_channel(channel_id)
-        if not channel or not isinstance(channel, discord.TextChannel):
-            print("[MapVote] Vote channel invalid")
-            return None
+        async with self._embed_lock:
+            channel_id = self.saved_channel_id or MAPVOTE_CHANNEL_ID
+            channel = self.bot.get_channel(channel_id)
+            if not channel or not isinstance(channel, discord.TextChannel):
+                print("[MapVote] Vote channel invalid")
+                return None
 
-        msg = None
-        if self.saved_message_id:
-            try:
-                msg = await channel.fetch_message(self.saved_message_id)
-            except discord.NotFound:
-                pass
-            except Exception as e:
-                print("[MapVote] Failed to fetch existing mapvote message:", e)
+            msg = None
+            if self.saved_message_id:
+                try:
+                    msg = await channel.fetch_message(self.saved_message_id)
+                except discord.NotFound:
+                    # Only recreate on confirmed NotFound; do not recreate on transient errors.
+                    msg = None
+                except discord.HTTPException as e:
+                    # Transient error: skip this tick to avoid reposting.
+                    return None
+                except Exception as e:
+                    # Unknown transient error — do not recreate
+                    print("[MapVote] Failed to fetch existing mapvote message:", e)
+                    return None
 
-        embed = self.build_embed(status, gs)
+            embed = self.build_embed(status, gs)
 
-        # Attach view only when voting is active
-        view = None
-        if status == "ACTIVE" and self.state.active and self.state.options:
-            if self.vote_view is None:
-                self.vote_view = MapVoteView(self.state, self)
-            view = self.vote_view
+            # Attach view only when voting is active
+            view = None
+            if status == "ACTIVE" and self.state.active and self.state.options:
+                if self.vote_view is None:
+                    self.vote_view = MapVoteView(self.state, self)
+                view = self.vote_view
 
-        if msg is None:
-            # Create new message
-            msg = await channel.send(embed=embed, view=view)
-            self.saved_message_id = msg.id
-            self.saved_channel_id = channel.id
-            self._save_state_file()
-        else:
-            # Update existing message
-            try:
-                await msg.edit(embed=embed, view=view)
-            except Exception as e:
-                print("[MapVote] Failed to edit mapvote message:", e)
+            if msg is None:
+                # Creation cooldown: guards against duplicate embeds when multiple callers race.
+                now_ts = asyncio.get_event_loop().time()
+                if self._last_create_ts and (now_ts - self._last_create_ts) < 5:
+                    return None
 
-        # Update state references
-        self.state.vote_channel = channel
-        self.state.vote_message_id = msg.id
+                try:
+                    msg = await channel.send(embed=embed, view=view)
+                except Exception as e:
+                    print("[MapVote] Failed to send mapvote message:", e)
+                    return None
 
-        return msg
+                self.saved_message_id = msg.id
+                self.saved_channel_id = channel.id
+                self._last_create_ts = now_ts
+                self._save_state_file()
+            else:
+                try:
+                    await msg.edit(embed=embed, view=view)
+                except discord.HTTPException as e:
+                    # Skip on transient edit errors (do not repost)
+                    print("[MapVote] Failed to edit mapvote message (HTTP):", e)
+                    return None
+                except Exception as e:
+                    print("[MapVote] Failed to edit mapvote message:", e)
+                    return None
+
+            # Update state references
+            self.state.vote_channel = channel
+            self.state.vote_message_id = msg.id
+
+            return msg
 
     async def ensure_initial_embed(self):
         gs = await fetch_gamestate()
