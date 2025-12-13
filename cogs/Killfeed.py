@@ -8,7 +8,7 @@ from discord.ext import commands, tasks
 import aiohttp
 
 # === Configure these ===
-CHANNEL_ID = 123456789012345678  # <- set your target channel ID
+CHANNEL_ID = 1446627459863937064  # <- set your target channel ID
 API_TOKEN = "04f72dfc-0e94-419f-aa28-e06cd7117fbe"  # <- your Bearer token
 GIF_URLS = [
     # Add/replace with any GIF URLs you like
