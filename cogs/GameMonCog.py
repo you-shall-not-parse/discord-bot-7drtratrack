@@ -265,7 +265,8 @@ class GameMonCog(commands.Cog):
         # Remove extra whitespace and trim
         normalized = " ".join(normalized.split())
         
-        logger.info(f"Normalized game name: '{game_name}' -> '{normalized}'")
+        # Change noisy normalization logs to debug
+        logger.debug(f"Normalized game name: '{game_name}' -> '{normalized}'")
         return normalized
 
     # ---------- Game Activity Detection ----------
@@ -780,7 +781,8 @@ class GameMonCog(commands.Cog):
                 break
 
         # Debug logging
-        logger.info(f"Presence update for {after.name} ({after.id}): {before_game} -> {after_game}")
+        # Downgrade generic presence transition logs to debug
+        logger.debug(f"Presence update for {after.name} ({after.id}): {before_game} -> {after_game}")
 
         # If unchanged, do nothing
         if before_game == after_game:
@@ -793,6 +795,7 @@ class GameMonCog(commands.Cog):
         
         # Started playing or changed games
         if after_game:
+            # Promote meaningful changes to info
             logger.info(f"User {after.name} ({after.id}) playing {after_game}")
             
             # Remove user from any other games they might be in
@@ -815,6 +818,7 @@ class GameMonCog(commands.Cog):
 
         # Stopped playing
         elif before_game and not after_game:
+            # Promote meaningful changes to info
             logger.info(f"User {after.name} ({after.id}) stopped playing {before_game}")
             
             # Remove user from the game they were playing
