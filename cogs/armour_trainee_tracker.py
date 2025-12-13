@@ -16,6 +16,7 @@ class ArmourTraineeTracker(commands.Cog):
         self.TRACKING_CHANNEL_ID = 1391119412047777974
         self.trainee_data = {}
         self.trainee_messages = {}
+        self.summary_message_id = None
 
 # rate limiter
     
@@ -71,17 +72,44 @@ class ArmourTraineeTracker(commands.Cog):
                 if not message.author.bot and message.author.display_name in self.trainee_data:
                     self.trainee_data[message.author.display_name]["recruitform_posted"] = True
 
-        await track_channel.purge(limit=100, check=lambda m: m.author == self.bot.user)
+        # Scan channel history to rebuild trainee_messages and summary
+        self.trainee_messages.clear()
+        self.summary_message_id = None
+        async for m in track_channel.history(limit=200):
+            if m.author != self.bot.user or not m.embeds:
+                continue
+            title = m.embeds[0].title or ""
+            if "Trainee Tracker: Legend & Summary" in title:
+                self.summary_message_id = m.id
+            else:
+                nickname = title.replace("**", "")
+                if nickname in self.trainee_data:
+                    self.trainee_messages[nickname] = m.id
 
         sorted_trainees = sorted(self.trainee_data.items(), key=lambda x: x[1]['join_date'])
-        for nickname, data in sorted_trainees:
-            embed = self.generate_report_embed(nickname)
-            msg = await self.send_rate_limited(track_channel, embed=embed)
-            if msg:
-                self.trainee_messages[nickname] = msg.id
+        for nickname, _ in sorted_trainees:
+            if nickname not in self.trainee_messages:
+                embed = self.generate_report_embed(nickname)
+                msg = await self.send_rate_limited(track_channel, embed=embed)
+                if msg:
+                    self.trainee_messages[nickname] = msg.id
 
         summary = self.generate_summary_and_legend_embed(sorted_trainees)
-        await self.send_rate_limited(track_channel, embed=summary)
+        if self.summary_message_id:
+            try:
+                smsg = await track_channel.fetch_message(self.summary_message_id)
+                await self.edit_rate_limited(smsg, embed=summary)
+            except discord.NotFound:
+                smsg = await self.send_rate_limited(track_channel, embed=summary)
+                if smsg:
+                    self.summary_message_id = smsg.id
+        else:
+            smsg = await self.send_rate_limited(track_channel, embed=summary)
+            if smsg:
+                self.summary_message_id = smsg.id
+
+        # Ensure summary is last
+        await self.ensure_summary_bottom(track_channel, summary)
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -234,12 +262,41 @@ class ArmourTraineeTracker(commands.Cog):
         return embed
 
     async def update_existing_summary_message(self, track_channel):
+        # ...existing code up to computing 'summary'...
         sorted_trainees = sorted(self.trainee_data.items(), key=lambda x: x[1]['join_date'])
         summary = self.generate_summary_and_legend_embed(sorted_trainees)
-        async for message in track_channel.history(limit=50):
-            if message.author == self.bot.user and message.embeds and "Trainee Tracker: Legend & Summary" in message.embeds[0].title:
+        if self.summary_message_id:
+            try:
+                message = await track_channel.fetch_message(self.summary_message_id)
                 await self.edit_rate_limited(message, embed=summary)
+                await self.ensure_summary_bottom(track_channel, summary)
                 return
+            except discord.NotFound:
+                pass
+        # ...existing fallback find-or-create...
+        msg = await self.send_rate_limited(track_channel, embed=summary)
+        if msg:
+            self.summary_message_id = msg.id
+            await self.ensure_summary_bottom(track_channel, summary)
+
+    async def ensure_summary_bottom(self, track_channel, summary_embed):
+        try:
+            last_msg = None
+            async for m in track_channel.history(limit=1):
+                last_msg = m
+            if last_msg and last_msg.id != self.summary_message_id:
+                new_msg = await self.send_rate_limited(track_channel, embed=summary_embed)
+                if new_msg:
+                    old_id = self.summary_message_id
+                    self.summary_message_id = new_msg.id
+                    if old_id:
+                        try:
+                            old = await track_channel.fetch_message(old_id)
+                            await old.delete()
+                        except discord.NotFound:
+                            pass
+        except discord.HTTPException:
+            pass
 
 async def setup(bot):
     await bot.add_cog(ArmourTraineeTracker(bot))
