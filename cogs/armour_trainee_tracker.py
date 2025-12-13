@@ -38,6 +38,30 @@ class ArmourTraineeTracker(commands.Cog):
             except discord.HTTPException as e:
                 print(f"[Edit Failed] {e}")
 
+    # New: safe history fetch with basic backoff to avoid 429
+    async def fetch_history_with_backoff(self, channel, *, limit=200, before=None):
+        fetched = []
+        remaining = limit
+        last_message_id = before.id if isinstance(before, discord.Message) else before
+        while remaining > 0:
+            batch_size = min(remaining, 100)
+            try:
+                async for msg in channel.history(limit=batch_size, before=last_message_id):
+                    fetched.append(msg)
+                    last_message_id = msg.id
+                remaining -= batch_size
+                await asyncio.sleep(0.3)
+            except discord.HTTPException as e:
+                if getattr(e, "status", None) == 429:
+                    print("[History] Rate limited (armour), backing off...")
+                    await asyncio.sleep(2)
+                    remaining = max(0, remaining - max(10, batch_size // 2))
+                    continue
+                else:
+                    print(f"[History] Fetch failed (armour): {e}")
+                    break
+        return fetched
+
     @commands.Cog.listener()
     async def on_ready(self):
         print(f"Logged in as {self.bot.user}")
@@ -68,7 +92,9 @@ class ArmourTraineeTracker(commands.Cog):
 
         recruitform_channel = self.bot.get_channel(self.RECRUITFORM_CHANNEL_ID)
         if recruitform_channel:
-            async for message in recruitform_channel.history(limit=1000):
+            # Use safer, lower limit with backoff
+            messages = await self.fetch_history_with_backoff(recruitform_channel, limit=200)
+            for message in messages:
                 if not message.author.bot and message.author.display_name in self.trainee_data:
                     self.trainee_data[message.author.display_name]["recruitform_posted"] = True
 
