@@ -1,1 +1,3 @@
-# discord-bot-7drtratrack
+# 7DR Hell Let Loose Clan Bot
+What a mess...
+Essentially this bot runs main.py and calls out cogs to do various functions around the discord.
