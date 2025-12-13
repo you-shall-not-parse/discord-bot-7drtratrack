@@ -17,8 +17,9 @@ logger = logging.getLogger('GameMonCog')
 # For even more control, silence specific loggers that are too chatty
 if not VERBOSE_LOGGING:
     # Silence these specific loggers that are too chatty
-    logging.getLogger('discord.gateway').setLevel(logging.WARNING)
-    logging.getLogger('discord.client').setLevel(logging.WARNING)
+    logging.getLogger('discord.gateway').setLevel(logging.ERROR)
+    logging.getLogger('discord.client').setLevel(logging.ERROR)
+    logging.getLogger('discord.http').setLevel(logging.ERROR)
 
 # ---------------- CONFIG ----------------
 GUILD_ID = 1097913605082579024   # Replace with your guild/server ID
@@ -31,6 +32,8 @@ MAX_INACTIVE_HOURS = 12  # maximum time a user can be inactive before removal
 DEFAULT_PREFERENCE = "opt_in"  # Default preference for users (opt_in or opt_out)
 ADMIN_USER_IDS = [1109147750932676649]  # Replace with your admin user IDs who can use special commands
 TEMP_DISABLE_DEFAULT_MONITORING = False  # Set to True to temporarily disable all monitoring for users without explicit preferences
+# Throttle: minimum seconds between embed updates
+EMBED_UPDATE_MIN_INTERVAL = 5  # increase if still rate-limited
 # ----------------------------------------
 
 class PreferenceView(discord.ui.View):
@@ -70,7 +73,7 @@ class PreferenceView(discord.ui.View):
                                 
                             self.cog.state["last_seen"][user_id] = datetime.datetime.utcnow().isoformat()
                             await self.cog.save_json(STATE_FILE, self.cog.state)
-                            await self.cog.update_embed()
+                            await self.cog.schedule_update()
                             await interaction.response.send_message(
                                 f"You've opted in! Your current game '{game}' has been added to the list.",
                                 ephemeral=True
@@ -95,7 +98,7 @@ class PreferenceView(discord.ui.View):
                 
                 if removed:
                     await self.cog.save_json(STATE_FILE, self.cog.state)
-                    await self.cog.update_embed()
+                    await self.cog.schedule_update()
                 
                 await interaction.response.send_message(
                     f"You've opted out. Your games will no longer appear in the Now Playing list.",
@@ -134,6 +137,12 @@ class GameMonCog(commands.Cog):
         # Preference view for the embed
         self.preference_view = PreferenceView(self)
         
+        # Debounce/Rate-limit state for embed updates
+        self._last_embed_update = 0.0
+        self._embed_update_lock = asyncio.Lock()
+        self._embed_update_task = None
+        self._embed_force_new_pending = False
+
         # Start background tasks
         self.cleanup_inactive_users.start()
         self.ensure_message_exists.start()
@@ -352,8 +361,23 @@ class GameMonCog(commands.Cog):
                     logger.info(f"Registering commands for guild: {guild.name}")
                     # Register the commands with the specific guild
                     self.bot.tree.copy_global_to(guild=discord.Object(id=GUILD_ID))
-                    await self.bot.tree.sync(guild=discord.Object(id=GUILD_ID))
-                    logger.info(f"Successfully registered commands for guild ID: {GUILD_ID}")
+                    try:
+                        await self.bot.tree.sync(guild=discord.Object(id=GUILD_ID))
+                        logger.info(f"Successfully registered commands for guild ID: {GUILD_ID}")
+                    except discord.HTTPException as e:
+                        # Backoff and retry once on rate limit
+                        status = getattr(e, 'status', None)
+                        retry_after = getattr(e, 'retry_after', 30)
+                        if status == 429:
+                            logger.warning(f"Rate limited while syncing commands. Retrying in {retry_after} seconds.")
+                            await asyncio.sleep(retry_after)
+                            try:
+                                await self.bot.tree.sync(guild=discord.Object(id=GUILD_ID))
+                                logger.info("Retry successful for command sync.")
+                            except Exception as e2:
+                                logger.error(f"Retry failed for command sync: {e2}")
+                        else:
+                            logger.error(f"Failed to register guild commands: {e}")
                 else:
                     logger.warning(f"Could not find guild with ID {GUILD_ID}")
             except Exception as e:
@@ -453,9 +477,8 @@ class GameMonCog(commands.Cog):
             if added_count > 0:
                 await self.save_json(STATE_FILE, self.state)
                 logger.info("Saved state after startup scan")
-        
         # Force an immediate update to create a new message
-        await self.update_embed(force_new=True)
+        await self.schedule_update(force_new=True)
 
     # ---------- Message Event Handler ----------
     @commands.Cog.listener()
@@ -516,7 +539,7 @@ class GameMonCog(commands.Cog):
                                 
                             self.state["last_seen"][user_id] = datetime.datetime.utcnow().isoformat()
                             await self.save_json(STATE_FILE, self.state)
-                            await self.update_embed()
+                            await self.schedule_update()
                             await interaction.response.send_message(
                                 f"You've opted in! Your current game '{game}' has been added to the list.",
                                 ephemeral=True
@@ -540,7 +563,7 @@ class GameMonCog(commands.Cog):
                 
                 if removed:
                     await self.save_json(STATE_FILE, self.state)
-                    await self.update_embed()
+                    await self.schedule_update()
                 
                 await interaction.response.send_message(
                     f"You've opted out. Your games will no longer appear in the Now Playing list.", 
@@ -566,7 +589,7 @@ class GameMonCog(commands.Cog):
         cleaned = await self.cleanup_stale_players()
         
         # Force a new message regardless of existing one
-        success = await self.update_embed(force_new=True)
+        success = await self.schedule_update(force_new=True)
         
         if success:
             await interaction.response.send_message(
@@ -612,7 +635,7 @@ class GameMonCog(commands.Cog):
             logger.info(f"Force added game for {interaction.user.name}: {current_game}")
             
             # Update the embed
-            success = await self.update_embed()
+            success = await self.schedule_update()
             
             if success:
                 await interaction.response.send_message(
@@ -735,7 +758,7 @@ class GameMonCog(commands.Cog):
             
             if removed:
                 await self.save_json(STATE_FILE, self.state)
-                await self.update_embed()
+                await self.schedule_update()
             return
 
         # Use our improved game detection method
@@ -788,7 +811,7 @@ class GameMonCog(commands.Cog):
                 
             await self.save_json(STATE_FILE, self.state)
             logger.info(f"Updated game for {after.name}: {after_game}")
-            await self.update_embed()
+            await self.schedule_update()
 
         # Stopped playing
         elif before_game and not after_game:
@@ -804,7 +827,7 @@ class GameMonCog(commands.Cog):
                     
                     await self.save_json(STATE_FILE, self.state)
                     logger.info(f"Removed game for {after.name}")
-                    await self.update_embed()
+                    await self.schedule_update()
 
     # ---------- Embed Update ----------
     async def update_embed(self, force_new=False):
@@ -897,42 +920,74 @@ class GameMonCog(commands.Cog):
             logger.error(f"Permission error posting message: {e}")
             return False
         except discord.HTTPException as e:
+            # Basic backoff on HTTP 429
+            status = getattr(e, 'status', None)
+            retry_after = getattr(e, 'retry_after', 10)
+            if status == 429:
+                logger.warning(f"Rate limited while updating embed. Retrying in {retry_after} seconds.")
+                await asyncio.sleep(retry_after)
+                # Retry once
+                try:
+                    return await self.update_embed(force_new=force_new)
+                except Exception as e2:
+                    logger.error(f"Retry failed updating embed: {e2}")
+                    return False
             logger.error(f"HTTP error posting message: {e}")
             return False
         except Exception as e:
             logger.error(f"Unexpected error updating embed: {e}")
             return False
 
+    async def schedule_update(self, force_new=False):
+        """Debounce/throttle embed updates to avoid rate limits."""
+        async with self._embed_update_lock:
+            now = asyncio.get_event_loop().time()
+            # Merge force_new requests
+            self._embed_force_new_pending = self._embed_force_new_pending or force_new
+
+            def _schedule(delay: float):
+                if self._embed_update_task and not self._embed_update_task.done():
+                    return
+                async def runner():
+                    try:
+                        await asyncio.sleep(delay)
+                        await self.update_embed(force_new=self._embed_force_new_pending)
+                    finally:
+                        self._last_embed_update = asyncio.get_event_loop().time()
+                        self._embed_force_new_pending = False
+                        self._embed_update_task = None
+                self._embed_update_task = asyncio.create_task(runner())
+
+            elapsed = now - self._last_embed_update
+            if elapsed >= EMBED_UPDATE_MIN_INTERVAL:
+                # Run immediately
+                _schedule(0)
+            else:
+                # Delay until the interval passes
+                _schedule(EMBED_UPDATE_MIN_INTERVAL - elapsed)
+
+            # Return True to keep existing calling semantics
+            return True
+
     # ---------- Background Tasks ----------
-    
-    # Task to ensure a message exists
     @tasks.loop(minutes=5)
     async def ensure_message_exists(self):
         """Check periodically that a message exists, create one if it doesn't"""
         if not self.initial_post_done:
             logger.info("Periodic check: No initial post detected, creating one")
-            await self.update_embed(force_new=True)
+            await self.schedule_update(force_new=True)
         else:
             # Verify the message still exists
             thread = self.bot.get_channel(THREAD_ID)
             if not thread:
                 logger.error(f"Thread {THREAD_ID} not found in periodic check")
                 return
-                
             if self.state.get("message_id"):
                 try:
                     await thread.fetch_message(self.state["message_id"])
-                    # Message exists, no action needed
                 except (discord.NotFound, discord.HTTPException):
                     logger.warning("Message not found in periodic check, creating new one")
-                    await self.update_embed(force_new=True)
-    
-    @ensure_message_exists.before_loop
-    async def before_ensure_message(self):
-        """Wait until the bot is ready before starting the task"""
-        await self.bot.wait_until_ready()
-        # Wait an additional 10 seconds to make sure on_ready has completed
-        await asyncio.sleep(10)
+                    await self.schedule_update(force_new=True)
 
     # Task to handle player cleanup
     @tasks.loop(minutes=INACTIVE_CHECK_MINUTES)
@@ -984,7 +1039,7 @@ class GameMonCog(commands.Cog):
         # If any users were removed, update the state and embed
         if update_needed:
             await self.save_json(STATE_FILE, self.state)
-            await self.update_embed()
+            await self.schedule_update()
             
         return removed_count
 
@@ -1054,6 +1109,16 @@ class GameMonCog(commands.Cog):
         # Update logging levels
         logging_level = logging.INFO if VERBOSE_LOGGING else logging.WARNING
         logger.setLevel(logging_level)
+        
+        # Update global noisy loggers accordingly
+        if VERBOSE_LOGGING:
+            logging.getLogger('discord.gateway').setLevel(logging.INFO)
+            logging.getLogger('discord.client').setLevel(logging.INFO)
+            logging.getLogger('discord.http').setLevel(logging.WARNING)
+        else:
+            logging.getLogger('discord.gateway').setLevel(logging.ERROR)
+            logging.getLogger('discord.client').setLevel(logging.ERROR)
+            logging.getLogger('discord.http').setLevel(logging.ERROR)
         
         status = "enabled" if VERBOSE_LOGGING else "disabled"
         await interaction.response.send_message(
