@@ -385,11 +385,9 @@ class MapVote(commands.Cog):
 
         # UI view
         self.vote_view: MapVoteView | None = None
-        # Serialize embed updates so only one task edits/recreates the message at a time.
-        # This prevents overlapping ensure_embed calls from racing (e.g., tick_task + refresh_*),
-        # which can trigger transient API errors and unintended reposts.
+        # Serialize edits to prevent races that can trigger reposts
         self._embed_lock = asyncio.Lock()
-        # Track last creation time to avoid rapid double-creates if Discord returns stale fetch results.
+        # Cooldown to avoid immediate re-posts if Discord returns stale fetch
         self._last_create_ts: float | None = None
 
     # ---------------- Persistence helpers ----------------
@@ -681,10 +679,11 @@ class MapVote(commands.Cog):
                 try:
                     msg = await channel.fetch_message(self.saved_message_id)
                 except discord.NotFound:
-                    # Only recreate on confirmed NotFound; do not recreate on transient errors.
+                    # Truly gone, allow re-creation below
                     msg = None
                 except discord.HTTPException as e:
-                    # Transient error: skip this tick to avoid reposting.
+                    # Transient API error — skip this tick to avoid reposting
+                    print("[MapVote] Fetch message HTTP error; will retry next tick:", e)
                     return None
                 except Exception as e:
                     # Unknown transient error — do not recreate
@@ -701,9 +700,10 @@ class MapVote(commands.Cog):
                 view = self.vote_view
 
             if msg is None:
-                # Creation cooldown: guards against duplicate embeds when multiple callers race.
+                # Creation cooldown: avoid rapid double-creates (e.g., overlapping ticks)
                 now_ts = asyncio.get_event_loop().time()
                 if self._last_create_ts and (now_ts - self._last_create_ts) < 5:
+                    # Recently created; skip re-creating
                     return None
 
                 try:
