@@ -6,20 +6,17 @@ import datetime
 import asyncio
 import logging
 
-# Set up logging with configurable verbosity
-VERBOSE_LOGGING = False  # Set to False to reduce terminal output
-
-# Configure logging level based on verbosity
-logging_level = logging.INFO if VERBOSE_LOGGING else logging.WARNING
+# Set up logging (always minimal)
+# Removed VERBOSE_LOGGING, enforce ERROR level
+logging_level = logging.ERROR
 logging.basicConfig(level=logging_level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('GameMonCog')
+logger.setLevel(logging_level)
 
-# For even more control, silence specific loggers that are too chatty
-if not VERBOSE_LOGGING:
-    # Silence these specific loggers that are too chatty
-    logging.getLogger('discord.gateway').setLevel(logging.ERROR)
-    logging.getLogger('discord.client').setLevel(logging.ERROR)
-    logging.getLogger('discord.http').setLevel(logging.ERROR)
+# Silence chatty discord loggers unconditionally
+logging.getLogger('discord.gateway').setLevel(logging.ERROR)
+logging.getLogger('discord.client').setLevel(logging.ERROR)
+logging.getLogger('discord.http').setLevel(logging.ERROR)
 
 # ---------------- CONFIG ----------------
 GUILD_ID = 1097913605082579024   # Replace with your guild/server ID
@@ -468,270 +465,12 @@ class GameMonCog(commands.Cog):
             try:
                 # Delete the message
                 await message.delete()
-                logger.info(f"Deleted human message from {message.author.name} in thread")
             except discord.Forbidden:
                 logger.error("Bot lacks permission to delete messages")
             except discord.NotFound:
                 logger.warning("Message was already deleted")
             except discord.HTTPException as e:
                 logger.error(f"HTTP error deleting message: {e}")
-
-    # ---------- Manual Refresh Command ----------
-    @discord.app_commands.command(name="gamemon-refreshgames", description="Refresh the Now Playing list")
-    async def refreshgames(self, interaction: discord.Interaction):
-        # Check if user is in the admin list
-        if not self.is_admin_user(interaction.user.id):
-            await interaction.response.send_message(
-                "You don't have permission to use this command.",
-                ephemeral=True
-            )
-            return
-            
-        cleaned = await self.cleanup_stale_players()
-        
-        # Force a new message regardless of existing one
-        success = await self.schedule_update(force_new=True)
-        
-        if success:
-            await interaction.response.send_message(
-                f"Refreshed game list. Removed {cleaned} inactive players and created a new message.",
-                ephemeral=True
-            )
-        else:
-            await interaction.response.send_message(
-                f"Removed {cleaned} inactive players but failed to update the message. Check logs.",
-                ephemeral=True
-            )
-
-    # ---------- Fix Preference Command ----------
-    @discord.app_commands.command(name="gamemon-fixgame", description="Fix your game display (opt-in and force add current game)")
-    async def fixgame(self, interaction: discord.Interaction):
-        user_id = str(interaction.user.id)
-        
-        # Set preference to opt_in
-        old_pref = self.prefs.get(user_id, DEFAULT_PREFERENCE)
-        self.prefs[user_id] = "opt_in"
-        await self.save_json(PREFS_FILE, self.prefs)
-        
-        # Check for current games and force add to state
-        member = interaction.guild.get_member(interaction.user.id)
-        
-        current_game = None
-        if member and member.activities:
-            for activity in member.activities:
-                game = self.get_game_from_activity(activity)
-                if game and game not in IGNORED_GAMES:
-                    current_game = game
-                    break
-        
-        if current_game:
-            # Force add to state
-            if current_game not in self.state["games"]:
-                self.state["games"][current_game] = []
-            if user_id not in self.state["games"][current_game]:
-                self.state["games"][current_game].append(user_id)
-            
-            self.state["last_seen"][user_id] = datetime.datetime.utcnow().isoformat()
-            await self.save_json(STATE_FILE, self.state)
-            logger.info(f"Force added game for {interaction.user.name}: {current_game}")
-            
-            # Update the embed
-            success = await self.schedule_update()
-            
-            if success:
-                await interaction.response.send_message(
-                    f"Changed preference from `{old_pref}` to `opt_in` and added your current game: {current_game}",
-                    ephemeral=True
-                )
-            else:
-                await interaction.response.send_message(
-                    "Fixed preferences but failed to update the message. Try /refreshgames.",
-                    ephemeral=True
-                )
-        else:
-            await interaction.response.send_message(
-                f"Changed preference from `{old_pref}` to `opt_in`, but no game currently detected.",
-                ephemeral=True
-            )
-
-    # ---------- Get Current Games Command ----------
-    @discord.app_commands.command(name="gamemon-currentgames", description="Show currently detected games for users")
-    async def currentgames(self, interaction: discord.Interaction):
-        # Check if user is in the admin list
-        if not self.is_admin_user(interaction.user.id):
-            await interaction.response.send_message(
-                "You don't have permission to use this command.",
-                ephemeral=True
-            )
-            return
-            
-        # Build a report of current games being played
-        result = []
-        result.append("**Current Games by User:**")
-        
-        guild = self.bot.get_guild(GUILD_ID)
-        if not guild:
-            await interaction.response.send_message("Error: Could not find the guild.", ephemeral=True)
-            return
-            
-        # Get all members in the guild
-        members = guild.members
-        
-        # Get all games being played
-        games_by_user = {}
-        
-        for member in members:
-            if member.bot:
-                continue
-                
-            username = member.display_name
-            user_id = str(member.id)
-            
-            if member.activities:
-                detected_games = []
-                for activity in member.activities:
-                    game = self.get_game_from_activity(activity)
-                    if game and game not in IGNORED_GAMES:
-                        detected_games.append(game)
-                        
-                if detected_games:
-                    games_by_user[username] = detected_games
-        
-        # Add detected games to the result
-        if games_by_user:
-            for username, games in games_by_user.items():
-                result.append(f"\n**{username}**:")
-                for game in games:
-                    result.append(f"- {game}")
-        else:
-            result.append("\nNo games currently detected for any users.")
-                
-        # Also show what's in the current state
-        result.append("\n**Currently Tracked Games:**")
-        for game, users in self.state["games"].items():
-            user_names = []
-            for user_id in users:
-                member = guild.get_member(int(user_id))
-                if member:
-                    user_names.append(member.display_name)
-                else:
-                    user_names.append(f"Unknown User ({user_id})")
-            
-            result.append(f"- **{game}**: {', '.join(user_names)}")
-        
-        # Show user preferences
-        result.append("\n**User Preferences:**")
-        for user_id, pref in self.prefs.items():
-            member = guild.get_member(int(user_id))
-            if member:
-                result.append(f"- {member.display_name}: {pref}")
-            
-        await interaction.response.send_message("\n".join(result), ephemeral=True)
-
-    # ---------- Event: Member updates ----------
-    @commands.Cog.listener()
-    async def on_presence_update(self, before, after):
-        # Skip bot users
-        if after.bot:
-            return
-
-        user_id = str(after.id)
-        
-        # Check preference - only track users who have explicitly opted in
-        pref = self.prefs.get(user_id, DEFAULT_PREFERENCE)
-        
-        # If default is opt_out and the TEMP_DISABLE flag is on, ignore users without explicit preference
-        if DEFAULT_PREFERENCE == "opt_out" and TEMP_DISABLE_DEFAULT_MONITORING and user_id not in self.prefs:
-            return  # Skip processing completely for users without explicit preference
-            
-        if pref != "opt_in":
-            logger.debug(f"User {after.name} has not opted in. Preference: {pref}")
-            # Also remove user from any existing games to be extra safe
-            removed = False
-            for game, users in list(self.state["games"].items()):
-                if user_id in users:
-                    users.remove(user_id)
-                    removed = True
-                    logger.info(f"Removing non-opted-in user {after.name} from {game}")
-                    # If no users left for this game, remove the game
-                    if not users:
-                        self.state["games"].pop(game)
-            
-            if removed:
-                await self.save_json(STATE_FILE, self.state)
-                await self.schedule_update()
-            return
-
-        # Use our improved game detection method
-        before_game = None
-        after_game = None
-        
-        # Check for gaming activities in before state
-        for activity in before.activities:
-            game = self.get_game_from_activity(activity)
-            if game and game not in IGNORED_GAMES:
-                before_game = game
-                break
-        
-        # Check for gaming activities in after state  
-        for activity in after.activities:
-            game = self.get_game_from_activity(activity)
-            if game and game not in IGNORED_GAMES:
-                after_game = game
-                break
-
-        # Debug logging
-        # Downgrade generic presence transition logs to debug
-        logger.debug(f"Presence update for {after.name} ({after.id}): {before_game} -> {after_game}")
-
-        # If unchanged, do nothing
-        if before_game == after_game:
-            logger.debug(f"Game unchanged for {after.name}: {after_game}")
-            return
-        
-        # Update last seen timestamp
-        self.state["last_seen"][user_id] = datetime.datetime.utcnow().isoformat()
-        await self.save_json(STATE_FILE, self.state)
-        
-        # Started playing or changed games
-        if after_game:
-            # Promote meaningful changes to info
-            logger.info(f"User {after.name} ({after.id}) playing {after_game}")
-            
-            # Remove user from any other games they might be in
-            for game, users in list(self.state["games"].items()):
-                if user_id in users and game != after_game:
-                    users.remove(user_id)
-                    # If no users left for this game, remove the game
-                    if not users:
-                        self.state["games"].pop(game)
-            
-            # Add user to the new game
-            if after_game not in self.state["games"]:
-                self.state["games"][after_game] = []
-            if user_id not in self.state["games"][after_game]:
-                self.state["games"][after_game].append(user_id)
-                
-            await self.save_json(STATE_FILE, self.state)
-            logger.info(f"Updated game for {after.name}: {after_game}")
-            await self.schedule_update()
-
-        # Stopped playing
-        elif before_game and not after_game:
-            # Promote meaningful changes to info
-            logger.info(f"User {after.name} ({after.id}) stopped playing {before_game}")
-            
-            # Remove user from the game they were playing
-            if before_game in self.state["games"]:
-                if user_id in self.state["games"][before_game]:
-                    self.state["games"][before_game].remove(user_id)
-                    # If no users left for this game, remove the game
-                    if not self.state["games"][before_game]:
-                        self.state["games"].pop(before_game)
-                    
-                    await self.save_json(STATE_FILE, self.state)
-                    logger.info(f"Removed game for {after.name}")
-                    await self.schedule_update()
 
     # ---------- Embed Update ----------
     async def update_embed(self, force_new=False):
@@ -749,7 +488,7 @@ class GameMonCog(commands.Cog):
         if self.state.get("message_id") and not force_new:
             try:
                 message = await thread.fetch_message(self.state["message_id"])
-                logger.info(f"Found existing message {self.state['message_id']}")
+                logger.debug(f"Found existing message {self.state['message_id']}")
             except discord.NotFound:
                 logger.warning(f"Message {self.state['message_id']} not found, will create new")
                 message = None
@@ -760,7 +499,7 @@ class GameMonCog(commands.Cog):
                 logger.error(f"HTTP error fetching message: {e}")
                 message = None
 
-        logger.info(f"Creating embed with games: {self.state['games']}")
+        logger.debug(f"Creating embed with games: {self.state['games']}")
         embed = discord.Embed(title="🎮 Now Playing", color=discord.Color.green())
         embed.timestamp = discord.utils.utcnow()
         
@@ -803,19 +542,19 @@ class GameMonCog(commands.Cog):
 
         try:
             if message and not force_new:
-                logger.info(f"Updating existing message {message.id}")
+                logger.debug(f"Updating existing message {message.id}")
                 await message.edit(embed=embed, view=self.preference_view)
                 self.initial_post_done = True
                 return True
             else:
                 # Create a new message
                 try:
-                    logger.info("Creating new message in thread")
+                    logger.debug("Creating new message in thread")
                     msg = await thread.send(embed=embed, view=self.preference_view)
                     self.state["message_id"] = msg.id
                     await self.save_json(STATE_FILE, self.state)
                     self.initial_post_done = True
-                    logger.info(f"Created new message with ID {msg.id}")
+                    logger.debug(f"Created new message with ID {msg.id}")
                     return True
                 except Exception as e:
                     logger.error(f"Failed to create new message: {e}")
@@ -897,7 +636,7 @@ class GameMonCog(commands.Cog):
     @tasks.loop(minutes=INACTIVE_CHECK_MINUTES)
     async def cleanup_inactive_users(self):
         """Background task to check and remove inactive users"""
-        logger.info("Running cleanup of inactive users")
+        logger.debug("Running cleanup of inactive users")
         await self.cleanup_stale_players()
     
     @cleanup_inactive_users.before_loop
@@ -921,7 +660,7 @@ class GameMonCog(commands.Cog):
                 time_diff = now - last_seen
                 
                 if time_diff > max_inactive:
-                    logger.info(f"User {user_id} inactive for {time_diff}, marking for removal")
+                    logger.debug(f"User {user_id} inactive for {time_diff}, marking for removal")
                     users_to_remove.append(user_id)
                     removed_count += 1
             except (ValueError, TypeError) as e:
@@ -946,89 +685,6 @@ class GameMonCog(commands.Cog):
             await self.schedule_update()
             
         return removed_count
-
-    # ---------- Reset State Command ----------
-    @discord.app_commands.command(name="gamemon-resetstate", description="Reset the game state (admin only)")
-    async def resetstate(self, interaction: discord.Interaction):
-        # Check if user has admin permission
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message(
-                "You need administrator permissions to use this command.",
-                ephemeral=True
-            )
-            return
-            
-        # Reset the state to defaults
-        self.state = {
-            "games": {},
-            "message_id": None,
-            "last_seen": {}
-        }
-        
-        # Save the empty state
-        await self.save_json(STATE_FILE, self.state)
-        
-        # Create a new embed
-        await self.update_embed(force_new=True)
-        
-        await interaction.response.send_message(
-            "Game state has been reset. All tracked games have been cleared.",
-            ephemeral=True
-        )
-        
-    # ---------- Toggle Monitoring Command ----------
-    @discord.app_commands.command(name="gamemon-togglemonitoring", description="Toggle monitoring for users without preferences (admin only)")
-    async def toggle_monitoring(self, interaction: discord.Interaction):
-        # Check if user is in the admin list
-        if not self.is_admin_user(interaction.user.id):
-            await interaction.response.send_message(
-                "You don't have permission to use this command.",
-                ephemeral=True
-            )
-            return
-        
-        global TEMP_DISABLE_DEFAULT_MONITORING
-        TEMP_DISABLE_DEFAULT_MONITORING = not TEMP_DISABLE_DEFAULT_MONITORING
-        status = "disabled" if TEMP_DISABLE_DEFAULT_MONITORING else "enabled"
-        
-        await interaction.response.send_message(
-            f"Monitoring for users without explicit preferences is now {status}.",
-            ephemeral=True
-        )
-        
-    # ---------- Toggle Verbose Logging Command ----------
-    @discord.app_commands.command(name="gamemon-toggleverbose", description="Toggle verbose logging (admin only)")
-    async def toggle_verbose(self, interaction: discord.Interaction):
-        # Check if user is in the admin list
-        if not self.is_admin_user(interaction.user.id):
-            await interaction.response.send_message(
-                "You don't have permission to use this command.",
-                ephemeral=True
-            )
-            return
-        
-        global VERBOSE_LOGGING
-        VERBOSE_LOGGING = not VERBOSE_LOGGING
-        
-        # Update logging levels
-        logging_level = logging.INFO if VERBOSE_LOGGING else logging.WARNING
-        logger.setLevel(logging_level)
-        
-        # Update global noisy loggers accordingly
-        if VERBOSE_LOGGING:
-            logging.getLogger('discord.gateway').setLevel(logging.INFO)
-            logging.getLogger('discord.client').setLevel(logging.INFO)
-            logging.getLogger('discord.http').setLevel(logging.WARNING)
-        else:
-            logging.getLogger('discord.gateway').setLevel(logging.ERROR)
-            logging.getLogger('discord.client').setLevel(logging.ERROR)
-            logging.getLogger('discord.http').setLevel(logging.ERROR)
-        
-        status = "enabled" if VERBOSE_LOGGING else "disabled"
-        await interaction.response.send_message(
-            f"Verbose logging is now {status}.",
-            ephemeral=True
-        )
-
+    
 async def setup(bot):
     await bot.add_cog(GameMonCog(bot))
