@@ -1,1 +1,1 @@
-# discord-bot-7drtratrack
+# 7DR Hell Let Loose Clan Bot
