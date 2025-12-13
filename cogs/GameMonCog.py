@@ -353,37 +353,6 @@ class GameMonCog(commands.Cog):
         # Wait a moment to ensure bot is fully connected before attempting message operations
         await asyncio.sleep(5)
         
-        # Register guild commands now that the bot is fully connected
-        if GUILD_ID != 0:
-            try:
-                # Make sure we're registered with the right guild
-                guild = self.bot.get_guild(GUILD_ID)
-                if guild:
-                    logger.info(f"Registering commands for guild: {guild.name}")
-                    # Register the commands with the specific guild
-                    self.bot.tree.copy_global_to(guild=discord.Object(id=GUILD_ID))
-                    try:
-                        await self.bot.tree.sync(guild=discord.Object(id=GUILD_ID))
-                        logger.info(f"Successfully registered commands for guild ID: {GUILD_ID}")
-                    except discord.HTTPException as e:
-                        # Backoff and retry once on rate limit
-                        status = getattr(e, 'status', None)
-                        retry_after = getattr(e, 'retry_after', 30)
-                        if status == 429:
-                            logger.warning(f"Rate limited while syncing commands. Retrying in {retry_after} seconds.")
-                            await asyncio.sleep(retry_after)
-                            try:
-                                await self.bot.tree.sync(guild=discord.Object(id=GUILD_ID))
-                                logger.info("Retry successful for command sync.")
-                            except Exception as e2:
-                                logger.error(f"Retry failed for command sync: {e2}")
-                        else:
-                            logger.error(f"Failed to register guild commands: {e}")
-                else:
-                    logger.warning(f"Could not find guild with ID {GUILD_ID}")
-            except Exception as e:
-                logger.error(f"Failed to register guild commands: {e}")
-        
         # Validate thread exists
         thread = self.bot.get_channel(THREAD_ID)
         if not thread:
@@ -506,75 +475,6 @@ class GameMonCog(commands.Cog):
                 logger.warning("Message was already deleted")
             except discord.HTTPException as e:
                 logger.error(f"HTTP error deleting message: {e}")
-
-    # ---------- Preference Command ----------
-    @discord.app_commands.command(name="gamemon-gamepref", description="Set your game listing preference")
-    @discord.app_commands.describe(pref="opt_in / opt_out")
-    async def gamepref(self, interaction: discord.Interaction, pref: str):
-        if pref not in ["opt_in", "opt_out"]:
-            await interaction.response.send_message(
-                "Invalid preference. Use opt_in / opt_out.", 
-                ephemeral=True
-            )
-            return
-
-        current_pref = self.prefs.get(str(interaction.user.id), DEFAULT_PREFERENCE)
-        self.prefs[str(interaction.user.id)] = pref
-        success = await self.save_json(PREFS_FILE, self.prefs)
-        
-        if success:
-            # Handle same logic as the button version
-            user_id = str(interaction.user.id)
-            if pref == "opt_in":
-                # Check if user is playing a game now
-                member = interaction.guild.get_member(interaction.user.id)
-                if member and member.activities:
-                    for activity in member.activities:
-                        game = self.get_game_from_activity(activity)
-                        if game and game not in IGNORED_GAMES:
-                            # Update the game-based state structure
-                            if game not in self.state["games"]:
-                                self.state["games"][game] = []
-                            if user_id not in self.state["games"][game]:
-                                self.state["games"][game].append(user_id)
-                                
-                            self.state["last_seen"][user_id] = datetime.datetime.utcnow().isoformat()
-                            await self.save_json(STATE_FILE, self.state)
-                            await self.schedule_update()
-                            await interaction.response.send_message(
-                                f"You've opted in! Your current game '{game}' has been added to the list.",
-                                ephemeral=True
-                            )
-                            return
-            
-                await interaction.response.send_message(
-                    f"You've opted in! Your games will now appear in the Now Playing list.", 
-                    ephemeral=True
-                )
-            else:  # opt_out
-                # Remove any current games
-                removed = False
-                for game, users in list(self.state["games"].items()):
-                    if user_id in users:
-                        users.remove(user_id)
-                        removed = True
-                        # If no users left for this game, remove the game
-                        if not users:
-                            self.state["games"].pop(game)
-                
-                if removed:
-                    await self.save_json(STATE_FILE, self.state)
-                    await self.schedule_update()
-                
-                await interaction.response.send_message(
-                    f"You've opted out. Your games will no longer appear in the Now Playing list.", 
-                    ephemeral=True
-                )
-        else:
-            await interaction.response.send_message(
-                "Error saving preference. Please try again.", 
-                ephemeral=True
-            )
 
     # ---------- Manual Refresh Command ----------
     @discord.app_commands.command(name="gamemon-refreshgames", description="Refresh the Now Playing list")
