@@ -41,26 +41,23 @@ class TraineeTracker(commands.Cog):
     async def fetch_history_with_backoff(self, channel, *, limit=200, before=None):
         fetched = []
         remaining = limit
-        last_message_id = before.id if isinstance(before, discord.Message) else before
+        last_message = before if isinstance(before, discord.Message) else None
         while remaining > 0:
             batch_size = min(remaining, 100)
             try:
-                async for msg in channel.history(limit=batch_size, before=last_message_id):
+                count_added = 0
+                async for msg in channel.history(limit=batch_size, before=last_message):
                     fetched.append(msg)
-                    last_message_id = msg.id
-                remaining -= batch_size
-                # Small delay to be gentle on rate limits
+                    last_message = msg  # keep a Message object, not an int
+                    count_added += 1
+                if count_added == 0:
+                    break  # no more messages
+                remaining -= count_added
                 await asyncio.sleep(0.3)
-                # If fewer messages than requested came back, stop early
-                if len(fetched) < limit and batch_size > 0 and last_message_id is None:
-                    break
             except discord.HTTPException as e:
                 if getattr(e, 'status', None) == 429:
-                    # Backoff then try smaller batch next iteration
                     print("[History] Rate limited, backing off...")
                     await asyncio.sleep(2)
-                    # Reduce next batch size to be safer
-                    remaining = max(0, remaining - max(10, batch_size // 2))
                     continue
                 else:
                     print(f"[History] Fetch failed: {e}")
