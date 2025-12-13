@@ -4,6 +4,7 @@ from discord import app_commands
 import sqlite3
 from datetime import datetime, time
 import pytz
+import random
 
 # ---------------- Config ----------------
 BIRTHDAY_CHANNEL_ID = 1098333222540152944
@@ -11,6 +12,18 @@ SUMMARY_CHANNEL_ID = 1098333222540152944
 GUILD_ID = 1097913605082579024
 TIMEZONE = "Europe/London"
 DB_FILE = "birthdays.db"
+# Static GIFs for birthday greetings
+BIRTHDAY_GIF_URLS = [
+    "https://media.tenor.com/X185VU8GGAUAAAAC/everybody-dance-now-speaker.gif",
+    "https://media.tenor.com/zID0voNWZeMAAAAC/the-office-its-your-birthday-period-happy-birthday.gif",
+    "https://media.tenor.com/mW9Bne87qc0AAAAC/the-office.gif",
+    "https://media.tenor.com/BiqWZ9UdZ8kAAAAC/surprised-theoffice.gif",
+    "https://media.tenor.com/GzGo7jQeLB0AAAAd/happy-birthday-bon-anniversaire.gif",
+    "https://media.tenor.com/9pu-un8ImGUAAAAC/action-drama.gif",
+    "https://media.tenor.com/fHAJclG404oAAAAC/birthday-parks-and-rec.gif",
+    "https://media.tenor.com/z2xPe5mCygcAAAAC/birthday-self-worth.gif"
+    "https://media.tenor.com/CSMv9A3-HkoAAAAC/shocked-happy.gif",
+]
 # ----------------------------------------
 
 class BirthdayCog(commands.Cog):
@@ -69,6 +82,15 @@ class BirthdayCog(commands.Cog):
             for uid, date_str, display_age in rows
             if datetime.strptime(date_str, "%d/%m/%Y").month == month
         ]
+
+    def get_user_birthday(self, guild_id: int, user_id: int):
+        # Returns (date_str, display_age) or (None, None) if not found
+        self.c.execute(
+            "SELECT date, display_age FROM birthdays WHERE guild_id = ? AND user_id = ?",
+            (guild_id, user_id),
+        )
+        row = self.c.fetchone()
+        return (row[0], bool(row[1])) if row else (None, None)
 
     # ---------------- Slash Commands ----------------
     @app_commands.command(name="setbirthday", description="Set your birthday")
@@ -145,6 +167,51 @@ class BirthdayCog(commands.Cog):
         )
         await interaction.response.send_message(embed=embed)
 
+    @app_commands.command(name="testbirthday", description="Post a test birthday message in the birthday channel")
+    @app_commands.describe(
+        target="Member to celebrate (defaults to you)",
+        display_age="Show age using the stored birthday if available",
+        age_override="Override age shown (e.g., 21)"
+    )
+    async def testbirthday(
+        self,
+        interaction: discord.Interaction,
+        target: discord.Member | None = None,
+        display_age: bool = False,
+        age_override: int | None = None
+    ):
+        user = target or interaction.user
+        guild = interaction.guild
+        if guild is None:
+            return await interaction.response.send_message("Guild only.", ephemeral=True)
+
+        channel = guild.get_channel(BIRTHDAY_CHANNEL_ID)
+        if channel is None:
+            return await interaction.response.send_message("Birthday channel not found.", ephemeral=True)
+
+        msg = f"🎉 Happy Birthday to {user.mention}!"
+
+        age_part = ""
+        if age_override is not None and age_override > 0:
+            age_part = f" ({age_override} years old)"
+        elif display_age:
+            date_str, _ = self.get_user_birthday(guild.id, user.id)
+            if date_str:
+                tz = pytz.timezone(TIMEZONE)
+                today = datetime.now(tz).date()
+                bday = datetime.strptime(date_str, "%d/%m/%Y").date()
+                age = today.year - bday.year - ((today.month, today.day) < (bday.month, bday.day))
+                age_part = f" ({age} years old)"
+
+        if age_part:
+            msg += age_part
+
+        gif_url = random.choice(BIRTHDAY_GIF_URLS) if BIRTHDAY_GIF_URLS else None
+        content = f"{msg}\n{gif_url}" if gif_url else msg
+
+        await channel.send(content)
+        await interaction.response.send_message("Posted.", ephemeral=True)
+
     # ---------------- Tasks ----------------
     @tasks.loop(time=time(hour=9, minute=0))
     async def check_birthdays(self):
@@ -176,7 +243,9 @@ class BirthdayCog(commands.Cog):
                     age = today.year - bday.year - ((today.month, today.day) < (bday.month, bday.day))
                     msg += f" ({age} years old)"
 
-                await channel.send(msg)
+                gif_url = random.choice(BIRTHDAY_GIF_URLS) if BIRTHDAY_GIF_URLS else None
+                content = f"{msg}\n{gif_url}" if gif_url else msg
+                await channel.send(content)
 
     @tasks.loop(time=time(hour=9, minute=5))
     async def post_monthly_summary(self):
