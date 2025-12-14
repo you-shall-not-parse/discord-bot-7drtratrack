@@ -12,9 +12,7 @@ CHANNEL_ID = 1446627459863937064  # <- set your target channel ID
 API_TOKEN = "04f72dfc-0e94-419f-aa28-e06cd7117fbe"  # <- your Bearer token
 GIF_URLS = [
     # Add/replace with any GIF URLs you like
-    "https://i.giphy.com/media/3o6Zt6ML6BklcajjsA/giphy.gif",
-    "https://i.giphy.com/media/l3vR85PnGsBwu1PFK/giphy.gif",
-    "https://i.giphy.com/media/26ufdipQqU2lhNA4g/giphy.gif",
+    "https://media.tenor.com/iIQj7WAkiyQAAAAd/jon-hamm-jonhamm.gif",
 ]
 POLL_SECONDS = 4
 API_URL = "https://7dr.hlladmin.com/api/get_recent_logs?filter_action=KILL"
