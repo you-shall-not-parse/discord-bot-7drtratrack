@@ -301,7 +301,7 @@ def build_calendar_embed(events: list) -> discord.Embed:
         for j, chunk in enumerate(chunks):
             if j == 0:
                 # Only the first chunk gets a header
-                month_name = f"🗓️**{calendar.month_name[month]} {year}**"
+                month_name = f"🗓️ \u10b **{calendar.month_name[month]} {year}**"
                 
                 # Join events with double newlines and add the extra space at the top
                 body = "\n\n".join(chunk)
@@ -348,7 +348,7 @@ def build_calendar_embed(events: list) -> discord.Embed:
         for j, chunk in enumerate(chunks):
             if j == 0:
                 # Only the first chunk gets a header
-                header = f"🔧**Date TBC**"
+                header = f"\u10b 🔧 **Date TBC**"
                 
                 body = "\n\n".join(chunk)
                 body = "\u200b\n" + body
