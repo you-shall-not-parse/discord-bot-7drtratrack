@@ -851,10 +851,10 @@ class MapVote(commands.Cog):
                 print(f"[MapVote] Tie among {pretty_tied}. Random winner: {pretty_winner}")
 
         # If the match ended prematurely, send BROADCAST_50 after 20 seconds
-        if premature and winner_id:
-            pretty_winner = next((p for p, mid in MAPS.items() if mid == winner_id), winner_id)
-            await asyncio.sleep(20)  # Wait 20 seconds
-            await self.broadcast_to_all(BROADCAST_50.format(next_map=pretty_winner))
+        # if premature and winner_id:
+        #    pretty_winner = next((p for p, mid in MAPS.items() if mid == winner_id), winner_id)
+        #    await asyncio.sleep(20)  # Wait 20 seconds
+        #    await self.broadcast_to_all(BROADCAST_50.format(next_map=pretty_winner))
 
         # Refresh embed to reflect that the vote is no longer active
         await self.refresh_status_embed()
