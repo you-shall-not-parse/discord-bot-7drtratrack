@@ -130,14 +130,14 @@ def event_to_str(event: dict) -> str:
     
     # Handle date display - show TBC if no date
     if event.get("date") is None:
-        msg += "🗓️ TBC"
+        msg += "TBC"
     else:
         # Use display_date if available (for recurring events), otherwise use date
         date_field = event.get("display_date", event.get("date"))
         dt = datetime.fromisoformat(date_field)
         
         # Show date without time
-        msg += f"🗓️ {dt.day:02d}/{dt.month:02d}/{dt.year}"
+        msg += f"{dt.day:02d}/{dt.month:02d}/{dt.year}"
         
         # If the event has time, show it separately using the original values if available
         if event.get("has_time", False):
@@ -150,16 +150,16 @@ def event_to_str(event: dict) -> str:
             else:
                 msg += f", {dt.hour:02d}:{dt.minute:02d}"
     
-    msg += f"\n👤 Organiser: {organiser}"
+    msg += f"\nOrganiser: {organiser}"
     
     if event.get("squad_maker"):
-        msg += f"\n⚔️ Squad Maker: {squad_maker}"
+        msg += f"\nSquad Maker: {squad_maker}"
     
     if description:
-        msg += f"\n📝 Description: {description}"
+        msg += f"\nDescription: {description}"
     
     if thread != "None":
-        msg += f"\n🧵 Thread: {thread}"
+        msg += f"\nThread: {thread}"
     
     return msg
 
@@ -251,8 +251,8 @@ def build_calendar_embed(events: list) -> discord.Embed:
         month_groups[key].sort(key=lambda ev: datetime.fromisoformat(ev["display_date"]))
 
     embed = discord.Embed(
-        title="📅 7DR Event Calendar ",
-        description="Upcoming scheduled events",
+        title="📅 **7DR Event Calendar**",
+        description="Upcoming scheduled events within our clan!",
         colour=discord.Colour.blue(),
         timestamp=datetime.now(TIMEZONE),
     )
@@ -301,7 +301,7 @@ def build_calendar_embed(events: list) -> discord.Embed:
         for j, chunk in enumerate(chunks):
             if j == 0:
                 # Only the first chunk gets a header
-                month_name = f"    🗓️ **{calendar.month_name[month]} {year}** 🗓️"
+                month_name = f"🗓️**{calendar.month_name[month]} {year}**"
                 
                 # Join events with double newlines and add the extra space at the top
                 body = "\n\n".join(chunk)
@@ -348,7 +348,7 @@ def build_calendar_embed(events: list) -> discord.Embed:
         for j, chunk in enumerate(chunks):
             if j == 0:
                 # Only the first chunk gets a header
-                header = f"    🔧 **Date TBC** 🔧"
+                header = f"🔧**Date TBC**"
                 
                 body = "\n\n".join(chunk)
                 body = "\u200b\n" + body
