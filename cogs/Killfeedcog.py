@@ -9,27 +9,13 @@ import aiohttp
 
 # === Configure these ===
 CHANNEL_ID = 1446627459863937064  # <- set your target channel ID
-API_TOKEN = "04f72dfc-0e94-419f-aa28-e06cd7117fbe"  # <- your Bearer token
+CRCON_API_KEY = os.getenv("CRCON_API_KEY")
 GIF_URLS = [
     # Add/replace with any GIF URLs you like
-    "https://media.tenor.com/iIQj7WAkiyQAAAAd/jon-hamm-jonhamm.gif",
+    "https://media.tenor.com/iIQj7WAkiyQAAAAd/jon-hamm-jonhamm.gif"
 ]
 POLL_SECONDS = 4
 API_URL = "https://7dr.hlladmin.com/api/get_recent_logs?filter_action=KILL"
-
-# Optional Tenor integration
-TENOR_API_KEY = "AIzaSyAQyA7Ac_EKuMh_J_ctJn9zYpIrFn-lDcY"  # set to your Tenor API key (https://tenor.com/developer)
-TENOR_CLIENT_KEY = "my_test_app"  # optional client identifier for Tenor
-TENOR_SEARCH_TERMS = [
-    "kill",
-    "headshot",
-    "frag",
-    "boom",
-    "action",
-    "war",
-    "explosion",
-    "epic",
-]
 
 # Regex to remove GUIDs inside parentheses, e.g. "(Allies/xxxxxxxx...)" -> "(Allies)"
 _PARENS_GUID_STRIP_RE = re.compile(r"\(([^\)/]+)\/[0-9a-fA-F]{32}\)")
@@ -57,49 +43,6 @@ def _make_key(item: Dict[str, Any]) -> str:
         return raw
     return f"{item.get('timestamp_ms','')}|{item.get('message','')}"
 
-async def _fetch_random_gif(session: aiohttp.ClientSession) -> Optional[str]:
-    """
-    Fetch a random GIF URL from Tenor using the search endpoint.
-    Returns a direct GIF/MP4 URL suitable for Discord messages or None on failure.
-    """
-    if not TENOR_API_KEY:
-        return None
-    q = random.choice(TENOR_SEARCH_TERMS)
-    url = "https://tenor.googleapis.com/v2/search"
-    params = {
-        "q": q,
-        "key": TENOR_API_KEY,
-        "client_key": TENOR_CLIENT_KEY,
-        "limit": 1,
-        "media_filter": "minimal",
-        "contentfilter": "high",
-    }
-    try:
-        async with session.get(url, params=params, timeout=10) as resp:
-            if resp.status != 200:
-                return None
-            data = await resp.json()
-    except Exception:
-        return None
-
-    results = data.get("results") or []
-    if not results:
-        return None
-
-    media = results[0].get("media_formats") or {}
-    for key in ("gif", "tinygif", "mediumgif", "nanogif"):
-        if key in media and "url" in media[key]:
-            return media[key]["url"]
-    for key in ("mp4", "tinymp4", "nanomp4"):
-        if key in media and "url" in media[key]:
-            return media[key]["url"]
-
-    # Fallback to top-level 'url' field if media_formats is missing
-    if "url" in results[0]:
-        return results[0]["url"]
-
-    return None
-
 class KillfeedCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -123,7 +66,7 @@ class KillfeedCog(commands.Cog):
             self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15))
 
         headers = {
-            "Authorization": f"Bearer {API_TOKEN}",
+            "Authorization": f"Bearer {CRCON_API_KEY}",
             "Accept": "application/json",
         }
 
@@ -175,15 +118,14 @@ class KillfeedCog(commands.Cog):
             channel = self.bot.get_channel(CHANNEL_ID) or await self.bot.fetch_channel(CHANNEL_ID)
         except Exception:
             return
-        if not isinstance(channel, (discord.TextChannel, discord.Thread, discord.VoiceChannel, discord.StageChannel)):
+        # Accept any channel-like object that supports .send()
+        if not hasattr(channel, "send"):
             return
 
         for m in new_messages:
             try:
-                # Try Tenor first; fallback to static list
-                gif_url = await _fetch_random_gif(self.session)
-                if not gif_url:
-                    gif_url = random.choice(GIF_URLS) if GIF_URLS else ""
+                # Use only the static GIF_URLS list (no Tenor)
+                gif_url = random.choice(GIF_URLS) if GIF_URLS else ""
                 content = f"{m}\n{gif_url}" if gif_url else m
                 await channel.send(content)
             except discord.HTTPException:
