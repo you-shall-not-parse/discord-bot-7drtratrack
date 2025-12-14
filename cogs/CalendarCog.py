@@ -124,7 +124,7 @@ def event_to_str(event: dict) -> str:
     
     # Add recurring indicator if applicable
     if event.get("recurring", False):
-        msg += " (2 weeks diplayed, but recurs every week)"
+        msg += " (2 week recur)"
     
     msg += "\n"
     
@@ -137,7 +137,7 @@ def event_to_str(event: dict) -> str:
         dt = datetime.fromisoformat(date_field)
         
         # Show date without time
-        msg += f"{dt.day:02d}/{dt.month:02d}/{dt.year}"
+        msg += f"Date: {dt.day:02d}/{dt.month:02d}/{dt.year}"
         
         # If the event has time, show it separately using the original values if available
         if event.get("has_time", False):
@@ -301,7 +301,7 @@ def build_calendar_embed(events: list) -> discord.Embed:
         for j, chunk in enumerate(chunks):
             if j == 0:
                 # Only the first chunk gets a header
-                month_name = f"🗓️ \u10b **{calendar.month_name[month]} {year}**"
+                month_name = f"🗓️ **{calendar.month_name[month]} {year}**"
                 
                 # Join events with double newlines and add the extra space at the top
                 body = "\n\n".join(chunk)
@@ -348,7 +348,7 @@ def build_calendar_embed(events: list) -> discord.Embed:
         for j, chunk in enumerate(chunks):
             if j == 0:
                 # Only the first chunk gets a header
-                header = f"\u10b 🔧 **Date TBC**"
+                header = f"🔧 **Date TBC**"
                 
                 body = "\n\n".join(chunk)
                 body = "\u200b\n" + body
