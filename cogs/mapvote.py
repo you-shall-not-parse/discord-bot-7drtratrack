@@ -87,19 +87,20 @@ MAP_CDN_IMAGES = {
     "Remagen Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1449390736003960889/file_00000000aa3071f492f35b0111fed5e2.png?ex=69400b4f&is=693eb9cf&hm=d776d5f87f3d73a1b1fdcb782c3204a29a055677368edfbc1aac18e04f53bc94&",
     "Omaha Beach Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1448106330052362301/ChatGPT_Image_Dec_10_2025_12_16_56_AM.png?ex=693a0d9d&is=6938bc1d&hm=6614c98b63a7c58eaea7638a718ef854e5c074796001808cb6faf0557b46ea2a",
     "Kharkov Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444687960845979780/file_0000000068b47208b053f27323047cda.png?ex=69382a02&is=6936d882&hm=5c7745f15e886825b5b26d3ed4b18a33808332cd2dbedc71e5dba0f8bd9bda8c&",
-    "Purple Heart Lane Warfare (Rain)": "",
+    "Purple Heart Lane Warfare (Rain)": "https://cdn.discordapp.com/attachments/1098976074852999261/1442258185137295380/file_000000009ba871f4b7700cb80af3a3f3.png?ex=6937e4db&is=6936935b&hm=ffcf7d5e580476b6af6f2c5a1a1055ed656aa86034c14094d9434b0d2019f8cc&g",
     "Tobruk Warfare (Dawn)": "https://cdn.discordapp.com/attachments/1098976074852999261/1449390737593602259/file_00000000735871f4bb2cbbbced7ffbf7.png?ex=69400b50&is=693eb9d0&hm=5ec261995e8bb89a059a686f41ef8da731a5cbdd44dddb4bc356ddec9f368309&",
     "Stalingrad Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1449396751206191364/file_00000000d4c871f4ac3d6d200f6a92ca_1.png?ex=694010e9&is=693ebf69&hm=1a90a0b6c9af30b6d400cc70d89d36ad778d88fb759d125abffc669b8511acf2&",
 }
 
-STANDBY_CDN_IMAGE = "https://cdn.discordapp.com/attachments/1098976074852999261/1442258185137295380/file_000000009ba871f4b7700cb80af3a3f3.png?ex=6937e4db&is=6936935b&hm=ffcf7d5e580476b6af6f2c5a1a1055ed656aa86034c14094d9434b0d2019f8cc&g"
+STANDBY_CDN_IMAGE = "https://cdn.discordapp.com/attachments/1098976074852999261/1449844246348824757/file_00000000f2886246a918d715405f88e4-1.png?ex=6940602d&is=693f0ead&hm=2cb19b100543264f16f69a14ca476075443c2969811dda5c66ce506d5dccf3ef"
 OFFLINE_CDN_IMAGE = "https://cdn.discordapp.com/attachments/1098976074852999261/1444486531531280505/ChatGPT_Image_Nov_30_2025_12_33_09_AM.png?ex=6938172a&is=6936c5aa&hm=b08120d9cf51a7bf212e0926cb12036c429d6287a7b542fc8f4bc3b1aac36017"
 DISABLED_CDN_IMAGE = "https://cdn.discordapp.com/attachments/1098976074852999261/1444486531531280505/ChatGPT_Image_Nov_30_2025_12_33_09_AM.png?ex=6938172a&is=6936c5aa&hm=b08120d9cf51a7bf212e0926cb12036c429d6287a7b542fc8f4bc3b1aac36017"
 
 # Broadcasts into game to all players
-BROADCAST_START = "Vote for the next map on discord.gg/7drc!\nYou can select one of up to 25 maps!\n\nJoin us now as a clan member or join as a Blueberry to keep up to date with the latest news, map vote and see our kill feed!"
-BROADCAST_ENDING_SOON = "Map vote closes in 2 minutes!\n\nHead over to discord.gg/7drc to cast your vote!\n\nJoin us now as a clan member or join as a Blueberry to keep up to date with the latest news, map vote and see our kill feed!"
-BROADCAST_NO_VOTES = "No votes, the map rotation wins.\n\nHead over to discord.gg/7drc to cast your vote!\n\nJoin us now as a clan member or join as a Blueberry to keep up to date with the latest news, map vote and see our kill feed!"
+BROADCAST_START = "Vote for the next map on discord.gg/7drc!\nYou can select one of up to 25 maps!\n\nJoin us now as a recruit or just join as a Blueberry to keep up to date with the latest news, map vote and see our kill feed!"
+BROADCAST_ENDING_SOON = "Map vote closes in 2 minutes!\n\nHead over to discord.gg/7drc to cast your vote!\n\nJoin us now as a recruit or just join as a Blueberry to keep up to date with the latest news, map vote and see our kill feed!"
+BROADCAST_NO_VOTES = "No votes, the map rotation wins.\n\nHead over to discord.gg/7drc to cast your vote!\n\nJoin us now as a recruit or just join as a Blueberry to keep up to date with the latest news, map vote and see our kill feed!"
+BROADCAST_50 = "Vote ended prematurely due to 5-0. The next map is {next_map}."
 
 # --------------------------------------------------
 # CRCON API (Bearer token)
@@ -792,7 +793,7 @@ class MapVote(commands.Cog):
         self.last_warning_msg_id = None
         self.last_winner_msg_id = None
 
-    async def end_vote_and_queue(self, gs: dict):
+    async def end_vote_and_queue(self, gs: dict, premature: bool = False):
         """End the current vote and update map rotation."""
         self.state.active = False
         channel = self.state.vote_channel
@@ -848,6 +849,12 @@ class MapVote(commands.Cog):
 
                 await log_channel.send(f"CRCON Response (tie - set rotation to random winner):\n```{res}```")
                 print(f"[MapVote] Tie among {pretty_tied}. Random winner: {pretty_winner}")
+
+        # If the match ended prematurely, send BROADCAST_50 after 20 seconds
+        if premature and winner_id:
+            pretty_winner = next((p for p, mid in MAPS.items() if mid == winner_id), winner_id)
+            await asyncio.sleep(20)  # Wait 20 seconds
+            await self.broadcast_to_all(BROADCAST_50.format(next_map=pretty_winner))
 
         # Refresh embed to reflect that the vote is no longer active
         await self.refresh_status_embed()
@@ -932,7 +939,9 @@ class MapVote(commands.Cog):
                     await self.start_vote(gs)
             elif action == "MATCH ENDED":
                 print(f"[MapVote] MATCH ENDED detected (#{log_id})")
-                # end handled by timer
+                if self.state.active:
+                    # End the vote immediately when the match ends
+                    await self.end_vote_and_queue(gs, premature=True)
 
     @tick_task.before_loop
     async def before_tick(self):
