@@ -137,7 +137,7 @@ def event_to_str(event: dict) -> str:
         dt = datetime.fromisoformat(date_field)
         
         # Show date without time
-        msg += f"Date: {dt.day:02d}/{dt.month:02d}/{dt.year}"
+        msg += f"Date: **{dt.day:02d}/{dt.month:02d}/{dt.year}"
         
         # If the event has time, show it separately using the original values if available
         if event.get("has_time", False):
