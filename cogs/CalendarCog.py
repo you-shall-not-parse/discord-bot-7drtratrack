@@ -124,7 +124,7 @@ def event_to_str(event: dict) -> str:
     
     # Add recurring indicator if applicable
     if event.get("recurring", False):
-        msg += " (2 week recur)"
+        msg += " (2W & Recur)"
     
     msg += "\n"
     
