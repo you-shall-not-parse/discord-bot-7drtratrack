@@ -61,11 +61,12 @@ MAPS = {
 # Default rotation when mapvote is disabled
 DEFAULT_ROTATION = [
     "stmariedumont_warfare",
-    "elalamein_warfare_night",
+    "tobruk_warfare_morning",
     "elsenbornridge_warfare_morning",
     "stmereeglise_warfare",
     "elalamein_warfare",
     "smolensk_warfare_dusk",
+    "PHL_L_1944_Warfare",
 ]
 
 # Map images (put your real CDN URLs back in here)
