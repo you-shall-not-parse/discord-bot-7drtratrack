@@ -83,7 +83,7 @@ class EmbedManager(commands.Cog):
         )
         embed1.add_field(
             name="Links",
-            value="[Merch](https://7dr-hll-merch.myshopify.com/)",
+            value="[Linktr.ee](https://linktr.ee/7drc)",
             inline=False
         )
         blocks.append({
