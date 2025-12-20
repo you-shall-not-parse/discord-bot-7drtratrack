@@ -98,9 +98,9 @@ OFFLINE_CDN_IMAGE = "https://cdn.discordapp.com/attachments/1098976074852999261/
 DISABLED_CDN_IMAGE = "https://cdn.discordapp.com/attachments/1098976074852999261/1444486531531280505/ChatGPT_Image_Nov_30_2025_12_33_09_AM.png?ex=6938172a&is=6936c5aa&hm=b08120d9cf51a7bf212e0926cb12036c429d6287a7b542fc8f4bc3b1aac36017"
 
 # Broadcasts into game to all players
-BROADCAST_START = "Vote for the next map on discord.gg/7drc!\nYou can select one of up to 25 maps!\n\nJoin us now as a recruit or just join as a Blueberry to keep up to date with the latest news, map vote and see our kill feed!"
-BROADCAST_ENDING_SOON = "Map vote closes in 2 minutes!\n\nHead over to discord.gg/7drc to cast your vote!\n\nJoin us now as a recruit or just join as a Blueberry to keep up to date with the latest news, map vote and see our kill feed!"
-BROADCAST_NO_VOTES = "No votes, the map rotation wins.\n\nHead over to discord.gg/7drc to cast your vote!\n\nJoin us now as a recruit or just join as a Blueberry to keep up to date with the latest news, map vote and see our kill feed!"
+BROADCAST_START = "Vote for the next map on dsc.gg/7drc!\nYou can select one of up to 25 maps!\n\nJoin us now as a recruit or just join as a Blueberry to keep up to date with the latest news, map vote and see our kill feed!"
+BROADCAST_ENDING_SOON = "Map vote closes in 2 minutes!\n\nHead over to dsc.gg/7drc to cast your vote!\n\nJoin us now as a recruit or just join as a Blueberry to keep up to date with the latest news, map vote and see our kill feed!"
+BROADCAST_NO_VOTES = "No votes, the map rotation wins.\n\nHead over to dsc.gg/7drc to cast your vote!\n\nJoin us now as a recruit or just join as a Blueberry to keep up to date with the latest news, map vote and see our kill feed!"
 BROADCAST_50 = "Vote ended prematurely due to 5-0. The next map is {next_map}."
 
 # --------------------------------------------------
@@ -822,7 +822,7 @@ class MapVote(commands.Cog):
                 pretty = next((p for p, mid in MAPS.items() if mid == winner_id), winner_id)
                 res = rcon_set_rotation([winner_id])
 
-                await self.broadcast_to_all(f"{pretty} has won the vote!\nHead over to discord.gg/7drc to cast your vote on the next map!")
+                await self.broadcast_to_all(f"{pretty} has won the vote!\nHead over to dsc.gg/7drc to cast your vote on the next map!")
                 winner_msg = await channel.send(
                     f"🏆 **Winner: {pretty}**\n"
                     f"The next rotation has been set to this map only."
