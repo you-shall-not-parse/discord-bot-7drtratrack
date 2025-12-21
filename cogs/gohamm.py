@@ -25,7 +25,7 @@ def get_duration(path: str) -> float:
     """Return video duration in seconds using ffprobe"""
     result = subprocess.run(
         [
-            "ffprobe",
+            "/usr/bin/ffprobe",
             "-v", "error",
             "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1",
@@ -41,7 +41,7 @@ def get_dimensions(path: str) -> tuple[int, int]:
     """Return video dimensions (width, height) using ffprobe"""
     result = subprocess.run(
         [
-            "ffprobe",
+            "/usr/bin/ffprobe",
             "-v", "error",
             "-select_streams", "v:0",
             "-show_entries", "stream=width,height",
@@ -143,7 +143,7 @@ class GoHammThis(commands.Cog):
 
         # FFmpeg crossfade command
         cmd = [
-            "ffmpeg",
+            "/usr/bin/ffmpeg",
             "-i", input_path,
             "-i", OUTRO_VIDEO_PATH,
             "-filter_complex", filter_complex,
