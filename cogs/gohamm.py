@@ -154,7 +154,9 @@ class GoHammThis(commands.Cog):
             output_path
         ]
 
-        subprocess.run(cmd, check=True)
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise Exception(f"FFmpeg error:\n{result.stderr}")
 
         # Send result
         await interaction.followup.send(
