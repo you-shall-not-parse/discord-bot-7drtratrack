@@ -13,8 +13,8 @@ GUILD_ID = 1097913605082579024
 
 OUTPUT_EXT = "mp4"              # mp4 | mov | webm
 FADE_DURATION = 0.6             # seconds
-OUTRO_VIDEO_PATH = "assets/gohamm_outro.mp4"
-TEMP_DIR = "temp_videos"
+OUTRO_VIDEO_PATH = os.path.join(os.path.dirname(__file__), "gohammfiles", "hammvideo.mp4")
+TEMP_DIR = os.path.join(os.path.dirname(__file__), "gohammfiles", "temp_videos")
 
 MAX_CONCURRENT_JOBS = 1         # DO NOT raise unless you know your CPU
 # ============================================
@@ -35,6 +35,24 @@ def get_duration(path: str) -> float:
         text=True
     )
     return float(result.stdout.strip())
+
+
+def get_dimensions(path: str) -> tuple[int, int]:
+    """Return video dimensions (width, height) using ffprobe"""
+    result = subprocess.run(
+        [
+            "ffprobe",
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=width,height",
+            "-of", "csv=p=0",
+            path
+        ],
+        capture_output=True,
+        text=True
+    )
+    width, height = result.stdout.strip().split(',')
+    return int(width), int(height)
 
 
 # ---------- Job container ----------
@@ -98,19 +116,37 @@ class GoHammThis(commands.Cog):
         duration = get_duration(input_path)
         fade_start = max(duration - FADE_DURATION, 0)
 
-        # FFmpeg crossfade command
-        cmd = [
-            "ffmpeg",
-            "-i", input_path,
-            "-i", OUTRO_VIDEO_PATH,
-            "-filter_complex",
-            (
+        # Get dimensions
+        input_width, input_height = get_dimensions(input_path)
+        outro_width, outro_height = get_dimensions(OUTRO_VIDEO_PATH)
+
+        # Build filter_complex with scaling if dimensions differ
+        if (input_width, input_height) == (outro_width, outro_height):
+            # Same dimensions, no scaling needed
+            filter_complex = (
                 f"[0:v][1:v]"
                 f"xfade=transition=fade:"
                 f"duration={FADE_DURATION}:offset={fade_start}[v];"
                 f"[0:a][1:a]"
                 f"acrossfade=d={FADE_DURATION}[a]"
-            ),
+            )
+        else:
+            # Different dimensions, scale outro to match input
+            filter_complex = (
+                f"[1:v]scale={input_width}:{input_height}[scaled];"
+                f"[0:v][scaled]"
+                f"xfade=transition=fade:"
+                f"duration={FADE_DURATION}:offset={fade_start}[v];"
+                f"[0:a][1:a]"
+                f"acrossfade=d={FADE_DURATION}[a]"
+            )
+
+        # FFmpeg crossfade command
+        cmd = [
+            "ffmpeg",
+            "-i", input_path,
+            "-i", OUTRO_VIDEO_PATH,
+            "-filter_complex", filter_complex,
             "-map", "[v]",
             "-map", "[a]",
             "-movflags", "+faststart",
