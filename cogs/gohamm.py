@@ -124,7 +124,8 @@ class GoHammThis(commands.Cog):
         if (input_width, input_height) == (outro_width, outro_height):
             # Same dimensions, no scaling needed
             filter_complex = (
-                f"[0:v][1:v]"
+                f"[0:v]fps=30[v0];[1:v]fps=30[v1];"
+                f"[v0][v1]"
                 f"xfade=transition=fade:"
                 f"duration={FADE_DURATION}:offset={fade_start}[v];"
                 f"[0:a][1:a]"
@@ -133,8 +134,8 @@ class GoHammThis(commands.Cog):
         else:
             # Different dimensions, scale outro to match input
             filter_complex = (
-                f"[1:v]scale={input_width}:{input_height}[scaled];"
-                f"[0:v][scaled]"
+                f"[0:v]fps=30[v0];[1:v]scale={input_width}:{input_height},fps=30[v1];"
+                f"[v0][v1]"
                 f"xfade=transition=fade:"
                 f"duration={FADE_DURATION}:offset={fade_start}[v];"
                 f"[0:a][1:a]"
