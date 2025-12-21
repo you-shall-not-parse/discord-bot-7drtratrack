@@ -5,3 +5,9 @@ beautifulsoup4
 requests
 openai
 apscheduler
+aiofiles
+pytz
+aiosqlite
+aiohttp
+PyPDF2
+pdf2image
