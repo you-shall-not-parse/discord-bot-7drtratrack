@@ -119,29 +119,36 @@ class GoHammThis(commands.Cog):
         input_width, input_height = get_dimensions(input_path)
         outro_width, outro_height = get_dimensions(OUTRO_VIDEO_PATH)
 
-        # Build filter_complex with scaling if dimensions differ
+        # ---------- AUDIO FILTER (FIXES TINNY SOUND) ----------
+        audio_filter = (
+            f"[0:a]aformat=channel_layouts=stereo:sample_rates=48000[a0];"
+            f"[1:a]aformat=channel_layouts=stereo:sample_rates=48000[a1];"
+            f"[a0][a1]acrossfade="
+            f"d={FADE_DURATION}:c1=tri:c2=tri[a];"
+            f"[a]loudnorm=I=-16:TP=-1.5:LRA=11[a]"
+        )
+
+        # ---------- VIDEO + AUDIO FILTER COMPLEX ----------
         if (input_width, input_height) == (outro_width, outro_height):
-            # Same dimensions, no scaling needed
             filter_complex = (
-                f"[0:v]fps=30[v0];[1:v]fps=30[v1];"
+                f"[0:v]fps=30[v0];"
+                f"[1:v]fps=30[v1];"
                 f"[v0][v1]"
                 f"xfade=transition=fade:"
                 f"duration={FADE_DURATION}:offset={fade_start}[v];"
-                f"[0:a][1:a]"
-                f"acrossfade=d={FADE_DURATION}[a]"
+                + audio_filter
             )
         else:
-            # Different dimensions, scale outro to match input
             filter_complex = (
-                f"[0:v]fps=30[v0];[1:v]scale={input_width}:{input_height},fps=30[v1];"
+                f"[0:v]fps=30[v0];"
+                f"[1:v]scale={input_width}:{input_height},fps=30[v1];"
                 f"[v0][v1]"
                 f"xfade=transition=fade:"
                 f"duration={FADE_DURATION}:offset={fade_start}[v];"
-                f"[0:a][1:a]"
-                f"acrossfade=d={FADE_DURATION}[a]"
+                + audio_filter
             )
 
-        # FFmpeg crossfade command
+        # FFmpeg command
         cmd = [
             "/usr/bin/ffmpeg",
             "-i", input_path,
@@ -155,7 +162,7 @@ class GoHammThis(commands.Cog):
             "-level:v", "4.0",
             "-movflags", "+faststart",
             "-c:a", "aac",
-            "-b:a", "128k",
+            "-b:a", "192k",
             "-y",
             output_path
         ]
@@ -164,7 +171,7 @@ class GoHammThis(commands.Cog):
         if result.returncode != 0:
             raise Exception(f"FFmpeg error:\n{result.stderr}")
 
-        # Send result
+        # Send result (PUBLIC)
         await interaction.followup.send(
             content="🔥 **Hamm’d.**",
             file=discord.File(output_path)
