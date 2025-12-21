@@ -13,7 +13,7 @@ GUILD_ID = 1097913605082579024
 
 OUTPUT_EXT = "mp4"              # mp4 | mov | webm
 FADE_DURATION = 3.0             # seconds
-OUTRO_VIDEO_PATH = os.path.join(os.path.dirname(__file__), "gohammfiles", "hammvideo - Trim.mp4")
+OUTRO_VIDEO_PATH = os.path.join(os.path.dirname(__file__), "gohammfiles", "hammvidhigh.mp4")
 TEMP_DIR = os.path.join(os.path.dirname(__file__), "gohammfiles", "temp_videos")
 
 MAX_CONCURRENT_JOBS = 1         # DO NOT raise unless you know your CPU
@@ -38,20 +38,36 @@ def get_duration(path: str) -> float:
 
 
 def get_dimensions(path: str) -> tuple[int, int]:
-    """Return video dimensions (width, height) using ffprobe"""
+    """Return video dimensions (width, height) using ffprobe (robust)"""
     result = subprocess.run(
         [
             "/usr/bin/ffprobe",
             "-v", "error",
             "-select_streams", "v:0",
             "-show_entries", "stream=width,height",
-            "-of", "csv=p=0",
+            "-of", "json",
             path
         ],
         capture_output=True,
         text=True
     )
-    width, height = result.stdout.strip().split(',')
+
+    if result.returncode != 0 or not result.stdout.strip():
+        raise Exception(f"ffprobe failed to read video dimensions:\n{result.stderr}")
+
+    import json
+    data = json.loads(result.stdout)
+
+    streams = data.get("streams", [])
+    if not streams:
+        raise Exception("No video stream found in file")
+
+    width = streams[0].get("width")
+    height = streams[0].get("height")
+
+    if not width or not height:
+        raise Exception("Video stream missing width/height")
+
     return int(width), int(height)
 
 
