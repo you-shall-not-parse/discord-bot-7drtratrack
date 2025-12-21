@@ -12,7 +12,7 @@ import uuid
 GUILD_ID = 1097913605082579024
 
 OUTPUT_EXT = "mp4"              # mp4 | mov | webm
-FADE_DURATION = 0.6             # seconds
+FADE_DURATION = 3.0             # seconds
 OUTRO_VIDEO_PATH = os.path.join(os.path.dirname(__file__), "gohammfiles", "hammvideo.mp4")
 TEMP_DIR = os.path.join(os.path.dirname(__file__), "gohammfiles", "temp_videos")
 
@@ -150,7 +150,13 @@ class GoHammThis(commands.Cog):
             "-filter_complex", filter_complex,
             "-map", "[v]",
             "-map", "[a]",
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-profile:v", "main",
+            "-level:v", "4.0",
             "-movflags", "+faststart",
+            "-c:a", "aac",
+            "-b:a", "128k",
             "-y",
             output_path
         ]
