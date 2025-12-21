@@ -103,8 +103,6 @@ class GoHammThis(commands.Cog):
         interaction = job.interaction
         video = job.attachment
 
-        await interaction.followup.send("🎬 Processing your video…", ephemeral=True)
-
         uid = uuid.uuid4().hex
         input_path = f"{TEMP_DIR}/{uid}_input"
         output_path = f"{TEMP_DIR}/{uid}_output.{OUTPUT_EXT}"
@@ -196,7 +194,7 @@ class GoHammThis(commands.Cog):
                 ephemeral=True
             )
 
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
 
         job = GoHammJob(interaction, video)
         await self.queue.put(job)
@@ -206,7 +204,6 @@ class GoHammThis(commands.Cog):
         await interaction.followup.send(
             f"📥 Added to queue.\n"
             f"⏳ Position: **{position}**",
-            ephemeral=True
         )
 
 
