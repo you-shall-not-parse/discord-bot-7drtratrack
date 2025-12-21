@@ -13,7 +13,7 @@ GUILD_ID = 1097913605082579024
 
 OUTPUT_EXT = "mp4"              # mp4 | mov | webm
 FADE_DURATION = 3.0             # seconds
-OUTRO_VIDEO_PATH = os.path.join(os.path.dirname(__file__), "gohammfiles", "hammvideo.mp4")
+OUTRO_VIDEO_PATH = os.path.join(os.path.dirname(__file__), "gohammfiles", "hammvideo - Trim.mp4")
 TEMP_DIR = os.path.join(os.path.dirname(__file__), "gohammfiles", "temp_videos")
 
 MAX_CONCURRENT_JOBS = 1         # DO NOT raise unless you know your CPU
