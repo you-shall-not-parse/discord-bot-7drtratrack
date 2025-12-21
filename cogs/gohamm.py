@@ -90,7 +90,8 @@ class GoHammThis(commands.Cog):
             except Exception as e:
                 try:
                     await job.interaction.followup.send(
-                        f"❌ Processing failed:\n```{e}```"
+                        f"❌ Processing failed:\n```{e}```",
+                        ephemeral=True
                     )
                 except:
                     pass
@@ -102,7 +103,7 @@ class GoHammThis(commands.Cog):
         interaction = job.interaction
         video = job.attachment
 
-        await interaction.followup.send("🎬 Processing your video…")
+        await interaction.followup.send("🎬 Processing your video…", ephemeral=True)
 
         uid = uuid.uuid4().hex
         input_path = f"{TEMP_DIR}/{uid}_input"
@@ -204,7 +205,8 @@ class GoHammThis(commands.Cog):
 
         await interaction.followup.send(
             f"📥 Added to queue.\n"
-            f"⏳ Position: **{position}**"
+            f"⏳ Position: **{position}**",
+            ephemeral=True
         )
 
 
