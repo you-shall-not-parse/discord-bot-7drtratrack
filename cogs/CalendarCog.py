@@ -47,6 +47,12 @@ EDIT_MODAL_FIELDS = [
     {"key": "title", "label": "New title (optional)", "required": False, "style": discord.TextStyle.short},
 ]
 
+ADVANCED_EDIT_MODAL_FIELDS = [
+    {"key": "organiser", "label": "New organiser (mention/ID, leave blank to keep)", "required": False},
+    {"key": "squad", "label": "New squad maker (mention/ID, leave blank to keep)", "required": False},
+    {"key": "thread", "label": "New thread channel (mention/ID/name, leave blank to keep)", "required": False},
+]
+
 # ---------------- Utility ----------------
 def initialize_files():
     """Ensure the events and state files exist"""
@@ -523,14 +529,23 @@ class AddEventModal(discord.ui.Modal):
             self.add_item(text_input)
 
     async def on_submit(self, interaction: discord.Interaction):
-        core_data = {
-            "title": self.inputs["title"].value.strip(),
-            "description": self.inputs["description"].value.strip() if self.inputs["description"].value else None,
-            "date": self.inputs["date"].value.strip() if self.inputs["date"].value else None,
-            "time_str": self.inputs["time"].value.strip() if self.inputs["time"].value else None,
-            "recurring_raw": self.inputs["recurring"].value.strip() if self.inputs["recurring"].value else None,
-        }
-        await interaction.response.send_modal(AdvancedAddEventModal(self.cog, core_data))
+        try:
+            core_data = {
+                "title": self.inputs["title"].value.strip(),
+                "description": self.inputs["description"].value.strip() if self.inputs["description"].value else None,
+                "date": self.inputs["date"].value.strip() if self.inputs["date"].value else None,
+                "time_str": self.inputs["time"].value.strip() if self.inputs["time"].value else None,
+                "recurring_raw": self.inputs["recurring"].value.strip() if self.inputs["recurring"].value else None,
+            }
+            await interaction.response.send_modal(AdvancedAddEventModal(self.cog, core_data))
+        except Exception as e:
+            print(f"Error in AddEventModal.on_submit: {e}")
+            import traceback
+            traceback.print_exc()
+            if not interaction.response.is_done():
+                await interaction.response.send_message("⚠️ Failed to open advanced options. Please try again.", ephemeral=True)
+            else:
+                await interaction.followup.send("⚠️ Failed to open advanced options. Please try again.", ephemeral=True)
 
 
 class AdvancedAddEventModal(discord.ui.Modal):
@@ -550,23 +565,33 @@ class AdvancedAddEventModal(discord.ui.Modal):
             self.add_item(text_input)
 
     async def on_submit(self, interaction: discord.Interaction):
-        await self.cog.handle_add_from_modal(
-            interaction,
-            title=self.core_data["title"],
-            description=self.core_data["description"],
-            date=self.core_data["date"],
-            time_str=self.core_data["time_str"],
-            organiser_raw=self.inputs["organiser"].value.strip() if self.inputs["organiser"].value else None,
-            squad_raw=self.inputs["squad"].value.strip() if self.inputs["squad"].value else None,
-            thread_raw=self.inputs["thread"].value.strip() if self.inputs["thread"].value else None,
-            recurring_raw=self.core_data["recurring_raw"],
-        )
+        try:
+            await self.cog.handle_add_from_modal(
+                interaction,
+                title=self.core_data["title"],
+                description=self.core_data["description"],
+                date=self.core_data["date"],
+                time_str=self.core_data["time_str"],
+                organiser_raw=self.inputs["organiser"].value.strip() if self.inputs["organiser"].value else None,
+                squad_raw=self.inputs["squad"].value.strip() if self.inputs["squad"].value else None,
+                thread_raw=self.inputs["thread"].value.strip() if self.inputs["thread"].value else None,
+                recurring_raw=self.core_data["recurring_raw"],
+            )
+        except Exception as e:
+            print(f"Error in AdvancedAddEventModal.on_submit: {e}")
+            import traceback
+            traceback.print_exc()
+            if not interaction.response.is_done():
+                await interaction.response.send_message("⚠️ Failed to add event. Please try again.", ephemeral=True)
+            else:
+                await interaction.followup.send("⚠️ Failed to add event. Please try again.", ephemeral=True)
 
 
 class EditEventModal(discord.ui.Modal):
     def __init__(self, cog: "CalendarCog", event: dict):
         super().__init__(title=f"Edit: {event['title']}")
         self.cog = cog
+        self.event = event
         self.event_title = event["title"]
         self.inputs: Dict[str, discord.ui.TextInput] = {}
         for field in EDIT_MODAL_FIELDS:
@@ -587,18 +612,65 @@ class EditEventModal(discord.ui.Modal):
             self.add_item(text_input)
 
     async def on_submit(self, interaction: discord.Interaction):
-        await self.cog.handle_edit_from_modal(
-            interaction,
-            title=self.event_title,
-            new_title=self.inputs["title"].value.strip() if self.inputs["title"].value else None,
-            description=self.inputs["description"].value if self.inputs["description"].value is not None else None,
-            date=self.inputs["date"].value.strip() if self.inputs["date"].value else None,
-            time_str=self.inputs["time"].value.strip() if self.inputs["time"].value else None,
-            organiser_raw=self.inputs["organiser"].value.strip() if self.inputs["organiser"].value else None,
-            squad_raw=self.inputs["squad"].value.strip() if self.inputs["squad"].value else None,
-            thread_raw=self.inputs["thread"].value.strip() if self.inputs["thread"].value else None,
-            recurring_raw=self.inputs["recurring"].value.strip() if self.inputs["recurring"].value else None,
-        )
+        try:
+            core_data = {
+                "title": self.event_title,
+                "new_title": self.inputs["title"].value.strip() if self.inputs["title"].value else None,
+                "description": self.inputs["description"].value if self.inputs["description"].value is not None else None,
+                "date": self.inputs["date"].value.strip() if self.inputs["date"].value else None,
+                "time_str": self.inputs["time"].value.strip() if self.inputs["time"].value else None,
+                "recurring_raw": self.inputs["recurring"].value.strip() if self.inputs["recurring"].value else None,
+            }
+            await interaction.response.send_modal(AdvancedEditEventModal(self.cog, self.event, core_data))
+        except Exception as e:
+            print(f"Error in EditEventModal.on_submit: {e}")
+            import traceback
+            traceback.print_exc()
+            if not interaction.response.is_done():
+                await interaction.response.send_message("⚠️ Failed to open advanced edit options. Please try again.", ephemeral=True)
+            else:
+                await interaction.followup.send("⚠️ Failed to open advanced edit options. Please try again.", ephemeral=True)
+
+
+class AdvancedEditEventModal(discord.ui.Modal):
+    def __init__(self, cog: "CalendarCog", event: dict, core_data: Dict[str, Optional[str]]):
+        super().__init__(title="Edit Event – Advanced")
+        self.cog = cog
+        self.event = event
+        self.core_data = core_data
+        self.inputs: Dict[str, discord.ui.TextInput] = {}
+        for field in ADVANCED_EDIT_MODAL_FIELDS:
+            text_input = discord.ui.TextInput(
+                label=field["label"],
+                style=field.get("style", discord.TextStyle.short),
+                required=field.get("required", False),
+                max_length=field.get("max_length"),
+            )
+            self.inputs[field["key"]] = text_input
+            self.add_item(text_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            await self.cog.handle_edit_from_modal(
+                interaction,
+                title=self.core_data["title"],
+                new_title=self.core_data["new_title"],
+                description=self.core_data["description"],
+                date=self.core_data["date"],
+                time_str=self.core_data["time_str"],
+                organiser_raw=self.inputs["organiser"].value.strip() if self.inputs["organiser"].value else None,
+                squad_raw=self.inputs["squad"].value.strip() if self.inputs["squad"].value else None,
+                thread_raw=self.inputs["thread"].value.strip() if self.inputs["thread"].value else None,
+                recurring_raw=self.core_data["recurring_raw"],
+            )
+        except Exception as e:
+            print(f"Error in AdvancedEditEventModal.on_submit: {e}")
+            import traceback
+            traceback.print_exc()
+            if not interaction.response.is_done():
+                await interaction.response.send_message("⚠️ Failed to update event. Please try again.", ephemeral=True)
+            else:
+                await interaction.followup.send("⚠️ Failed to update event. Please try again.", ephemeral=True)
 
 
 class EventSelect(discord.ui.Select):
