@@ -3,9 +3,9 @@ import pytz
 import calendar
 import discord
 import os
-import re
 from datetime import datetime, timedelta, time
 from typing import Optional, List, Dict, Any
+from discord import app_commands
 from discord.ext import commands, tasks
 
 # ---------------- Config ----------------
@@ -24,34 +24,8 @@ THREAD_CREATION_HOURS_BEFORE = 48
 # Auto (re)publish the calendar on startup. It will delete the previous embed and post a new one.
 AUTO_PUBLISH_ON_START = True
 
-# Modal field definitions for easy maintenance
-ADD_MODAL_FIELDS = [
-    {"key": "title", "label": "Title", "required": True, "max_length": 100, "style": discord.TextStyle.short},
-    {"key": "description", "label": "Description (optional)", "required": False, "style": discord.TextStyle.paragraph},
-    {"key": "date", "label": "Date (DD/MM/YYYY or TBC)", "required": False},
-    {"key": "time", "label": "Time (HH:MM, optional)", "required": False},
-    {"key": "recurring", "label": "Recurring? (yes/no)", "required": False},
-]
+TARGET_GUILD = discord.Object(id=CALENDAR_GUILD_ID)
 
-ADVANCED_ADD_MODAL_FIELDS = [
-    {"key": "organiser", "label": "Organiser (mention/ID, blank = you)", "required": False},
-    {"key": "squad", "label": "Squad maker (mention/ID, optional)", "required": False},
-    {"key": "thread", "label": "Thread channel (mention/ID/name, optional)", "required": False},
-]
-
-EDIT_MODAL_FIELDS = [
-    {"key": "description", "label": "New description (optional)", "required": False, "style": discord.TextStyle.paragraph},
-    {"key": "date", "label": "New date (DD/MM/YYYY, 'clear'/'TBC' to unset)", "required": False},
-    {"key": "time", "label": "New time (HH:MM, optional)", "required": False},
-    {"key": "recurring", "label": "Recurring? (yes/no, leave blank to keep)", "required": False},
-    {"key": "title", "label": "New title (optional)", "required": False, "style": discord.TextStyle.short},
-]
-
-ADVANCED_EDIT_MODAL_FIELDS = [
-    {"key": "organiser", "label": "New organiser (mention/ID, leave blank to keep)", "required": False},
-    {"key": "squad", "label": "New squad maker (mention/ID, leave blank to keep)", "required": False},
-    {"key": "thread", "label": "New thread channel (mention/ID/name, leave blank to keep)", "required": False},
-]
 
 # ---------------- Utility ----------------
 def initialize_files():
@@ -467,321 +441,6 @@ def get_next_occurrence(event: dict, base_time: Optional[datetime] = None) -> Op
     return next_occurrence
 
 
-def parse_bool(value: Optional[str]) -> Optional[bool]:
-    if value is None or value.strip() == "":
-        return None
-    lowered = value.strip().lower()
-    if lowered in {"yes", "y", "true", "t", "1"}:
-        return True
-    if lowered in {"no", "n", "false", "f", "0"}:
-        return False
-    return None
-
-
-def parse_member_input(guild: discord.Guild, raw: Optional[str]) -> Optional[discord.Member]:
-    if not raw:
-        return None
-    match = re.search(r"\d+", raw)
-    member_id = int(match.group()) if match else None
-    if member_id:
-        member = guild.get_member(member_id)
-        if member:
-            return member
-    # Fallback to name match
-    lowered = raw.lower()
-    for member in guild.members:
-        if member.name.lower() == lowered or member.display_name.lower() == lowered:
-            return member
-    return None
-
-
-def parse_channel_input(guild: discord.Guild, raw: Optional[str]) -> Optional[discord.TextChannel]:
-    if not raw:
-        return None
-    lowered = raw.strip().lower()
-    if lowered in {"none", "no", "off", "skip"}:
-        return None
-    match = re.search(r"\d+", raw)
-    channel_id = int(match.group()) if match else None
-    if channel_id:
-        channel = guild.get_channel(channel_id)
-        if isinstance(channel, discord.TextChannel):
-            return channel
-    for channel in guild.text_channels:
-        if channel.name.lower() == lowered:
-            return channel
-    return None
-
-
-class AddEventModal(discord.ui.Modal):
-    def __init__(self, cog: "CalendarCog"):
-        super().__init__(title="Add Calendar Event")
-        self.cog = cog
-        self.inputs: Dict[str, discord.ui.TextInput] = {}
-        for field in ADD_MODAL_FIELDS:
-            kwargs = {
-                "label": field["label"],
-                "required": field.get("required", False),
-            }
-            if "style" in field:
-                kwargs["style"] = field["style"]
-            if "max_length" in field:
-                kwargs["max_length"] = field["max_length"]
-            text_input = discord.ui.TextInput(**kwargs)
-            self.inputs[field["key"]] = text_input
-            self.add_item(text_input)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            core_data = {
-                "title": self.inputs["title"].value.strip(),
-                "description": self.inputs["description"].value.strip() if self.inputs["description"].value else None,
-                "date": self.inputs["date"].value.strip() if self.inputs["date"].value else None,
-                "time_str": self.inputs["time"].value.strip() if self.inputs["time"].value else None,
-                "recurring_raw": self.inputs["recurring"].value.strip() if self.inputs["recurring"].value else None,
-            }
-            await interaction.response.send_modal(AdvancedAddEventModal(self.cog, core_data))
-        except Exception as e:
-            print(f"Error in AddEventModal.on_submit: {e}")
-            import traceback
-            traceback.print_exc()
-            if not interaction.response.is_done():
-                await interaction.response.send_message("⚠️ Failed to open advanced options. Please try again.", ephemeral=True)
-            else:
-                await interaction.followup.send("⚠️ Failed to open advanced options. Please try again.", ephemeral=True)
-
-
-class AdvancedAddEventModal(discord.ui.Modal):
-    def __init__(self, cog: "CalendarCog", core_data: Dict[str, Optional[str]]):
-        super().__init__(title="Add Event – Advanced")
-        self.cog = cog
-        self.core_data = core_data
-        self.inputs: Dict[str, discord.ui.TextInput] = {}
-        for field in ADVANCED_ADD_MODAL_FIELDS:
-            kwargs = {
-                "label": field["label"],
-                "required": field.get("required", False),
-            }
-            if "style" in field:
-                kwargs["style"] = field["style"]
-            if "max_length" in field:
-                kwargs["max_length"] = field["max_length"]
-            text_input = discord.ui.TextInput(**kwargs)
-            self.inputs[field["key"]] = text_input
-            self.add_item(text_input)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            await self.cog.handle_add_from_modal(
-                interaction,
-                title=self.core_data["title"],
-                description=self.core_data["description"],
-                date=self.core_data["date"],
-                time_str=self.core_data["time_str"],
-                organiser_raw=self.inputs["organiser"].value.strip() if self.inputs["organiser"].value else None,
-                squad_raw=self.inputs["squad"].value.strip() if self.inputs["squad"].value else None,
-                thread_raw=self.inputs["thread"].value.strip() if self.inputs["thread"].value else None,
-                recurring_raw=self.core_data["recurring_raw"],
-            )
-        except Exception as e:
-            print(f"Error in AdvancedAddEventModal.on_submit: {e}")
-            import traceback
-            traceback.print_exc()
-            if not interaction.response.is_done():
-                await interaction.response.send_message("⚠️ Failed to add event. Please try again.", ephemeral=True)
-            else:
-                await interaction.followup.send("⚠️ Failed to add event. Please try again.", ephemeral=True)
-
-
-class EditEventModal(discord.ui.Modal):
-    def __init__(self, cog: "CalendarCog", event: dict):
-        super().__init__(title=f"Edit: {event['title']}")
-        self.cog = cog
-        self.event = event
-        self.event_title = event["title"]
-        self.inputs: Dict[str, discord.ui.TextInput] = {}
-        for field in EDIT_MODAL_FIELDS:
-            default_value = ""
-            if field["key"] == "title":
-                default_value = event.get("title", "")
-            elif field["key"] == "description":
-                default_value = event.get("description", "") or ""
-
-            kwargs = {
-                "label": field["label"],
-                "required": field.get("required", False),
-            }
-            if "style" in field:
-                kwargs["style"] = field["style"]
-            if "max_length" in field:
-                kwargs["max_length"] = field["max_length"]
-            if default_value:
-                kwargs["default"] = default_value
-                
-            text_input = discord.ui.TextInput(**kwargs)
-            self.inputs[field["key"]] = text_input
-            self.add_item(text_input)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            core_data = {
-                "title": self.event_title,
-                "new_title": self.inputs["title"].value.strip() if self.inputs["title"].value else None,
-                "description": self.inputs["description"].value if self.inputs["description"].value is not None else None,
-                "date": self.inputs["date"].value.strip() if self.inputs["date"].value else None,
-                "time_str": self.inputs["time"].value.strip() if self.inputs["time"].value else None,
-                "recurring_raw": self.inputs["recurring"].value.strip() if self.inputs["recurring"].value else None,
-            }
-            await interaction.response.send_modal(AdvancedEditEventModal(self.cog, self.event, core_data))
-        except Exception as e:
-            print(f"Error in EditEventModal.on_submit: {e}")
-            import traceback
-            traceback.print_exc()
-            if not interaction.response.is_done():
-                await interaction.response.send_message("⚠️ Failed to open advanced edit options. Please try again.", ephemeral=True)
-            else:
-                await interaction.followup.send("⚠️ Failed to open advanced edit options. Please try again.", ephemeral=True)
-
-
-class AdvancedEditEventModal(discord.ui.Modal):
-    def __init__(self, cog: "CalendarCog", event: dict, core_data: Dict[str, Optional[str]]):
-        super().__init__(title="Edit Event – Advanced")
-        self.cog = cog
-        self.event = event
-        self.core_data = core_data
-        self.inputs: Dict[str, discord.ui.TextInput] = {}
-        for field in ADVANCED_EDIT_MODAL_FIELDS:
-            kwargs = {
-                "label": field["label"],
-                "required": field.get("required", False),
-            }
-            if "style" in field:
-                kwargs["style"] = field["style"]
-            if "max_length" in field:
-                kwargs["max_length"] = field["max_length"]
-            text_input = discord.ui.TextInput(**kwargs)
-            self.inputs[field["key"]] = text_input
-            self.add_item(text_input)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            await self.cog.handle_edit_from_modal(
-                interaction,
-                title=self.core_data["title"],
-                new_title=self.core_data["new_title"],
-                description=self.core_data["description"],
-                date=self.core_data["date"],
-                time_str=self.core_data["time_str"],
-                organiser_raw=self.inputs["organiser"].value.strip() if self.inputs["organiser"].value else None,
-                squad_raw=self.inputs["squad"].value.strip() if self.inputs["squad"].value else None,
-                thread_raw=self.inputs["thread"].value.strip() if self.inputs["thread"].value else None,
-                recurring_raw=self.core_data["recurring_raw"],
-            )
-        except Exception as e:
-            print(f"Error in AdvancedEditEventModal.on_submit: {e}")
-            import traceback
-            traceback.print_exc()
-            if not interaction.response.is_done():
-                await interaction.response.send_message("⚠️ Failed to update event. Please try again.", ephemeral=True)
-            else:
-                await interaction.followup.send("⚠️ Failed to update event. Please try again.", ephemeral=True)
-
-
-class EventSelect(discord.ui.Select):
-    def __init__(self, cog: "CalendarCog", events: list, action: str):
-        # Ensure unique option values even with duplicate titles by including index
-        options = [discord.SelectOption(label=e["title"], value=str(idx)) for idx, e in enumerate(events[:25])]
-        placeholder = "Select event to edit" if action == "edit" else "Select event to remove"
-        super().__init__(placeholder=placeholder, options=options, min_values=1, max_values=1)
-        self.cog = cog
-        self.action = action
-        self.events_snapshot = events
-
-    async def callback(self, interaction: discord.Interaction):
-        try:
-            idx = int(self.values[0])
-        except ValueError:
-            await interaction.response.send_message("❌ Invalid selection.", ephemeral=True)
-            return
-
-        events = load_events()
-        event = events[idx] if 0 <= idx < len(events) else None
-        if not event:
-            await interaction.response.send_message("❌ Event not found.", ephemeral=True)
-            return
-        if not has_calendar_permission(interaction.user):
-            await interaction.response.send_message("❌ You don't have permission to manage events.", ephemeral=True)
-            return
-
-        if self.action == "edit":
-            await interaction.response.send_modal(EditEventModal(self.cog, event))
-        else:
-            await self.cog.handle_remove_from_select(interaction, event)
-
-
-class EventSelectView(discord.ui.View):
-    def __init__(self, cog: "CalendarCog", events: list, action: str):
-        super().__init__(timeout=300)
-        self.add_item(EventSelect(cog, events, action))
-
-
-class CalendarView(discord.ui.View):
-    def __init__(self, cog: "CalendarCog"):
-        super().__init__(timeout=None)
-        self.cog = cog
-
-    async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item) -> None:
-        # Log and give a user-facing message if a button/select raises
-        print(f"Calendar view error on {item.custom_id if hasattr(item, 'custom_id') else 'component'}: {error}")
-        if not interaction.response.is_done():
-            await interaction.response.send_message("⚠️ Something went wrong handling that action. Please try again.", ephemeral=True)
-        else:
-            await interaction.followup.send("⚠️ Something went wrong handling that action. Please try again.", ephemeral=True)
-
-    @discord.ui.button(label="Add Event", style=discord.ButtonStyle.primary, custom_id="calendar_add")
-    async def add_event(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not has_calendar_permission(interaction.user):
-            await interaction.response.send_message("❌ You don't have permission to manage events.", ephemeral=True)
-            return
-        await interaction.response.send_modal(AddEventModal(self.cog))
-
-    @discord.ui.button(label="Edit Event", style=discord.ButtonStyle.secondary, custom_id="calendar_edit")
-    async def edit_event(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not has_calendar_permission(interaction.user):
-            await interaction.response.send_message("❌ You don't have permission to manage events.", ephemeral=True)
-            return
-        events = load_events()
-        if not events:
-            await interaction.response.send_message("No events to edit.", ephemeral=True)
-            return
-        view = EventSelectView(self.cog, events, action="edit")
-        await interaction.response.send_message("Select an event to edit:", view=view, ephemeral=True)
-
-    @discord.ui.button(label="Remove Event", style=discord.ButtonStyle.danger, custom_id="calendar_remove")
-    async def remove_event(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not has_calendar_permission(interaction.user):
-            await interaction.response.send_message("❌ You don't have permission to manage events.", ephemeral=True)
-            return
-        events = load_events()
-        if not events:
-            await interaction.response.send_message("No events to remove.", ephemeral=True)
-            return
-        view = EventSelectView(self.cog, events, action="remove")
-        await interaction.response.send_message("Select an event to remove:", view=view, ephemeral=True)
-
-    @discord.ui.button(label="Refresh Calendar", style=discord.ButtonStyle.success, custom_id="calendar_refresh")
-    async def refresh_calendar(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not has_calendar_permission(interaction.user):
-            await interaction.response.send_message("❌ You don't have permission to refresh the calendar.", ephemeral=True)
-            return
-        await interaction.response.defer(ephemeral=True)
-        result = await self.cog.update_calendar(interaction.guild)
-        if result:
-            await interaction.followup.send("✅ Calendar refreshed.", ephemeral=True)
-        else:
-            await interaction.followup.send("⚠️ Failed to refresh calendar.", ephemeral=True)
-
-
 # ---------------- Calendar Cog ----------------
 class CalendarCog(commands.Cog):
     """Calendar management for the unit"""
@@ -791,9 +450,6 @@ class CalendarCog(commands.Cog):
         # Initialize files on cog load
         initialize_files()
         print("Calendar cog initialized")
-        self.calendar_view = CalendarView(self)
-        # Persistent view to survive restarts
-        self.bot.add_view(self.calendar_view)
         # Start the tasks
         self.cleanup_expired_events.start()
         self.check_upcoming_events.start()
@@ -854,7 +510,7 @@ class CalendarCog(commands.Cog):
             # Update existing message
             try:
                 print(f"Updating existing calendar message {message.id}")
-                await message.edit(embed=embed, view=self.calendar_view)
+                await message.edit(embed=embed)
                 print(f"✅ Successfully updated calendar message {message.id}")
                 return message
             except Exception as e:
@@ -864,7 +520,7 @@ class CalendarCog(commands.Cog):
         # Create a new message if there wasn't one or editing failed
         try:
             print(f"Creating new calendar message in channel {channel.name}")
-            new_msg = await channel.send(embed=embed, view=self.calendar_view)
+            new_msg = await channel.send(embed=embed)
             set_message_id_for_guild(guild.id, new_msg.id)
             print(f"✅ Successfully created new calendar message (ID: {new_msg.id})")
             return new_msg
@@ -963,265 +619,6 @@ class CalendarCog(commands.Cog):
             
         # If that fails, find any channel we can post in
         return find_sendable_channel(guild)
-
-    # ---------- Interaction Handlers ----------
-    async def handle_add_from_modal(
-        self,
-        interaction: discord.Interaction,
-        *,
-        title: str,
-        description: Optional[str],
-        date: Optional[str],
-        time_str: Optional[str],
-        organiser_raw: Optional[str],
-        squad_raw: Optional[str],
-        thread_raw: Optional[str],
-        recurring_raw: Optional[str],
-    ) -> None:
-        if not has_calendar_permission(interaction.user):
-            await interaction.response.send_message("❌ You don't have permission to manage events.", ephemeral=True)
-            return
-
-        organiser = interaction.user
-        squad_maker = None
-        thread_channel = None
-        recurring_flag = parse_bool(recurring_raw) or False
-
-        # Initialize event with date as None (TBC)
-        event_date = None
-        has_time_flag = False
-        original_hour = None
-        original_minute = None
-
-        # Parse date if provided and not "TBC"
-        if date and date.lower() != "tbc":
-            event_date = parse_date(date)
-            if not event_date:
-                await interaction.response.send_message("❌ Invalid date format. Use DD/MM/YYYY or 'TBC'.", ephemeral=True)
-                return
-
-            # Check if date is in the past (only for non-recurring events)
-            if not recurring_flag and is_date_in_past(event_date):
-                await interaction.response.send_message("❌ Cannot add events in the past. Please use a future date.", ephemeral=True)
-                return
-
-            # Parse time if provided and date exists
-            if time_str:
-                event_time = parse_time(time_str)
-                if not event_time:
-                    await interaction.response.send_message("❌ Invalid time format. Use HH:MM (24-hour).", ephemeral=True)
-                    return
-
-                original_hour = event_time.hour
-                original_minute = event_time.minute
-
-                event_date = event_date.replace(hour=event_time.hour, minute=event_time.minute)
-                has_time_flag = True
-
-                if not recurring_flag and is_date_in_past(event_date):
-                    await interaction.response.send_message("❌ Cannot add events in the past. Please use a future date and time.", ephemeral=True)
-                    return
-
-        # Cannot have a recurring event without a date
-        if recurring_flag and not event_date:
-            await interaction.response.send_message("❌ Recurring events must have a date specified.", ephemeral=True)
-            return
-
-        events = load_events()
-        new_event = {
-            "title": title,
-            "description": description,
-            "date": event_date.isoformat() if event_date else None,
-            "has_time": has_time_flag,
-            "organiser": organiser.id,
-            "squad_maker": squad_maker.id if squad_maker else None,
-            "guild_id": interaction.guild_id,
-            "thread_id": None,
-            "recurring": recurring_flag,
-            "create_threads": True,  # default: allow threads using calendar channel when needed
-        }
-
-        if has_time_flag and original_hour is not None and original_minute is not None:
-            new_event["original_hour"] = original_hour
-            new_event["original_minute"] = original_minute
-
-        await interaction.response.defer(ephemeral=True)
-
-        events.append(new_event)
-        save_events(events)
-
-        result = await self.update_calendar(interaction.guild)
-        if result:
-            if recurring_flag and thread_channel:
-                await interaction.followup.send(
-                    f"✅ Recurring event added! Discussion threads will automatically open {THREAD_CREATION_HOURS_BEFORE} hours before each occurrence.",
-                    ephemeral=True,
-                )
-            else:
-                await interaction.followup.send("✅ Event added and calendar updated.", ephemeral=True)
-        else:
-            await interaction.followup.send("⚠️ Event added but failed to update calendar display.", ephemeral=True)
-
-    async def handle_edit_from_modal(
-        self,
-        interaction: discord.Interaction,
-        *,
-        title: str,
-        new_title: Optional[str],
-        description: Optional[str],
-        date: Optional[str],
-        time_str: Optional[str],
-        organiser_raw: Optional[str],
-        squad_raw: Optional[str],
-        thread_raw: Optional[str],
-        recurring_raw: Optional[str],
-    ) -> None:
-        if not has_calendar_permission(interaction.user):
-            await interaction.response.send_message("❌ You don't have permission to manage events.", ephemeral=True)
-            return
-
-        events = load_events()
-        event = next((e for e in events if e["title"] == title), None)
-        if not event:
-            await interaction.response.send_message("❌ Event not found.", ephemeral=True)
-            return
-
-        current_date = datetime.fromisoformat(event["date"]) if event.get("date") else None
-        was_recurring = event.get("recurring", False)
-        recurring_flag = was_recurring if parse_bool(recurring_raw) is None else parse_bool(recurring_raw)
-
-        if new_title:
-            event["title"] = new_title
-
-        if description is not None:
-            event["description"] = description
-
-        if date:
-            if date.lower() in ["clear", "tbc"]:
-                if recurring_flag:
-                    await interaction.response.send_message("❌ Recurring events must have a date specified.", ephemeral=True)
-                    return
-                event["date"] = None
-                event["has_time"] = False
-                event.pop("original_hour", None)
-                event.pop("original_minute", None)
-            else:
-                event_date = parse_date(date)
-                if not event_date:
-                    await interaction.response.send_message("❌ Invalid date format. Use DD/MM/YYYY or 'clear'/'TBC' to set as TBC.", ephemeral=True)
-                    return
-
-                if not recurring_flag and is_date_in_past(event_date):
-                    await interaction.response.send_message("❌ Cannot set event date to the past. Please use a future date.", ephemeral=True)
-                    return
-
-                if not time_str and current_date and event.get("date") and event.get("has_time", False):
-                    event_date = event_date.replace(hour=current_date.hour, minute=current_date.minute)
-                else:
-                    event["has_time"] = False
-                    event.pop("original_hour", None)
-                    event.pop("original_minute", None)
-
-                event["date"] = event_date.isoformat()
-
-        if time_str and event.get("date"):
-            event_time = parse_time(time_str)
-            if not event_time:
-                await interaction.response.send_message("❌ Invalid time format. Use HH:MM (24-hour).", ephemeral=True)
-                return
-
-            event["original_hour"] = event_time.hour
-            event["original_minute"] = event_time.minute
-
-            current_date = datetime.fromisoformat(event["date"])
-            updated_date = current_date.replace(hour=event_time.hour, minute=event_time.minute)
-
-            if not recurring_flag and is_date_in_past(updated_date):
-                await interaction.response.send_message("❌ Cannot set event time to the past. Please use a future time.", ephemeral=True)
-                return
-
-            event["date"] = updated_date.isoformat()
-            event["has_time"] = True
-
-        if parse_bool(recurring_raw) is not None:
-            if recurring_flag and not event.get("date"):
-                await interaction.response.send_message("❌ Cannot make an event recurring without a date.", ephemeral=True)
-                return
-            if recurring_flag and not was_recurring and event.get("thread_id"):
-                event["thread_id"] = None
-            event["recurring"] = recurring_flag
-
-        organiser = parse_member_input(interaction.guild, organiser_raw)
-        if organiser is not None:
-            event["organiser"] = organiser.id
-
-        squad_maker = parse_member_input(interaction.guild, squad_raw)
-        if squad_maker is not None:
-            event["squad_maker"] = squad_maker.id
-
-        # Thread creation now defaults to calendar channel; toggle via recurring flag only
-        event["create_threads"] = True
-        if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
-
-        if new_title or description is not None or date or time_str or organiser is not None or squad_maker is not None:
-            await self.update_thread_message(interaction.guild, event)
-
-        save_events(events)
-
-        result = await self.update_calendar(interaction.guild)
-        if result:
-            if not was_recurring and recurring_flag:
-                if event.get("create_threads", False):
-                    await interaction.followup.send(
-                        f"✅ Event updated to recurring! Discussion threads will automatically open {THREAD_CREATION_HOURS_BEFORE} hours before each occurrence.",
-                        ephemeral=True,
-                    )
-                else:
-                    await interaction.followup.send("✅ Event updated to recurring! No threads will be created for this event.", ephemeral=True)
-            else:
-                await interaction.followup.send("✅ Event updated and calendar refreshed.", ephemeral=True)
-        else:
-            await interaction.followup.send("⚠️ Event updated but failed to refresh calendar display.", ephemeral=True)
-
-    async def handle_remove_from_select(self, interaction: discord.Interaction, event: dict) -> None:
-        if not has_calendar_permission(interaction.user):
-            await interaction.response.send_message("❌ You don't have permission to manage events.", ephemeral=True)
-            return
-
-        events = load_events()
-        target = next((e for e in events if e["title"] == event["title"]), None)
-        if not target:
-            await interaction.response.send_message("❌ Event not found.", ephemeral=True)
-            return
-
-        if event.get("recurring") and event.get("thread_info"):
-            for date_str, thread_id in event["thread_info"].items():
-                try:
-                    thread = interaction.guild.get_thread(thread_id)
-                    if thread:
-                        await thread.edit(archived=True, locked=True)
-                        print(f"Archived and locked thread for recurring event '{event['title']}' on {date_str}")
-                except Exception as e:
-                    print(f"Failed to archive thread: {e}")
-        elif event.get("thread_id"):
-            try:
-                thread = interaction.guild.get_thread(event["thread_id"])
-                if thread:
-                    await thread.edit(archived=True, locked=True)
-                    print(f"Archived and locked thread for event '{event['title']}'")
-            except Exception as e:
-                print(f"Failed to archive thread: {e}")
-
-        events = [e for e in events if e["title"] != event["title"]]
-        save_events(events)
-
-        await interaction.response.defer(ephemeral=True)
-        result = await self.update_calendar(interaction.guild)
-        if result:
-            await interaction.followup.send("🗑️ Event removed and calendar updated.", ephemeral=True)
-        else:
-            await interaction.followup.send("⚠️ Event removed but failed to update calendar display.", ephemeral=True)
 
     # ---------- Periodic Tasks ----------
     @tasks.loop(hours=12)  # Run twice a day
@@ -1400,6 +797,395 @@ class CalendarCog(commands.Cog):
         await self.bot.wait_until_ready()
         print("Starting periodic tasks")
 
+    # ---------- Autocomplete ----------
+    async def autocomplete_event_titles(
+        self, interaction: discord.Interaction, current: str
+    ) -> List[app_commands.Choice[str]]:
+        events = load_events()
+        titles = sorted({e["title"] for e in events})
+        filtered = [t for t in titles if current.lower() in t.lower()]
+        return [app_commands.Choice(name=t, value=t) for t in filtered[:25]]
+
+    # ---------- Commands ----------
+    @app_commands.guilds(TARGET_GUILD)
+    @app_commands.command(name="addtocalendar", description="Add a new event to the unit calendar.")
+    @app_commands.describe(
+        title="Event title",
+        description="Optional description of the event",
+        date="Date in DD/MM/YYYY format (optional, use 'TBC' or leave empty if unknown)",
+        time="Time in HH:MM format (24-hour, optional)",
+        organiser="The event organiser",
+        squad_maker="Squad maker (optional)",
+        thread_channel="Channel to create a thread for this event (optional)",
+        recurring="Whether this event repeats weekly (shows on 2-week rolling basis)"
+    )
+    async def addtocalendar(
+        self,
+        interaction: discord.Interaction,
+        title: str,
+        organiser: discord.Member,
+        date: Optional[str] = None,
+        description: Optional[str] = None,
+        time: Optional[str] = None,
+        squad_maker: Optional[discord.Member] = None,
+        thread_channel: Optional[discord.TextChannel] = None,
+        recurring: Optional[bool] = False
+    ):
+        if not has_calendar_permission(interaction.user):
+            await interaction.response.send_message(
+                "❌ You don't have permission to manage events.", ephemeral=True
+            )
+            return
+
+        # Initialize event with date as None (TBC)
+        event_date = None
+        has_time_flag = False
+        original_hour = None
+        original_minute = None
+            
+        # Parse date if provided and not "TBC"
+        if date and date.lower() != "tbc":
+            event_date = parse_date(date)
+            if not event_date:
+                await interaction.response.send_message(
+                    "❌ Invalid date format. Use DD/MM/YYYY or 'TBC'.", ephemeral=True
+                )
+                return
+                
+            # Check if date is in the past (only for non-recurring events)
+            if not recurring and is_date_in_past(event_date):
+                await interaction.response.send_message(
+                    "❌ Cannot add events in the past. Please use a future date.", ephemeral=True
+                )
+                return
+
+            # Parse time if provided and date exists
+            if time:
+                event_time = parse_time(time)
+                if not event_time:
+                    await interaction.response.send_message(
+                        "❌ Invalid time format. Use HH:MM (24-hour).", ephemeral=True
+                    )
+                    return
+                    
+                # Store the exact input time components
+                original_hour = event_time.hour
+                original_minute = event_time.minute
+                
+                # Combine date and time
+                event_date = event_date.replace(
+                    hour=event_time.hour,
+                    minute=event_time.minute
+                )
+                has_time_flag = True
+                
+                # Check again with time component if date is in the past (only for non-recurring events)
+                if not recurring and is_date_in_past(event_date):
+                    await interaction.response.send_message(
+                        "❌ Cannot add events in the past. Please use a future date and time.", ephemeral=True
+                    )
+                    return
+        
+        # Cannot have a recurring event without a date
+        if recurring and not event_date:
+            await interaction.response.send_message(
+                "❌ Recurring events must have a date specified.", ephemeral=True
+            )
+            return
+        
+        events = load_events()
+        new_event = {
+            "title": title,
+            "description": description,
+            "date": event_date.isoformat() if event_date else None,
+            "has_time": has_time_flag,
+            "organiser": organiser.id,
+            "squad_maker": squad_maker.id if squad_maker else None,
+            "guild_id": interaction.guild_id,
+            "thread_id": None,
+            "recurring": recurring,
+            "create_threads": thread_channel is not None,  # Track whether threads should be created
+        }
+        
+        # Add original time components if time was provided
+        if has_time_flag and original_hour is not None and original_minute is not None:
+            new_event["original_hour"] = original_hour
+            new_event["original_minute"] = original_minute
+
+        # Only create thread immediately for non-recurring events
+        # Recurring events will have threads created before each occurrence
+        # based on the THREAD_CREATION_HOURS_BEFORE setting
+        if thread_channel and not recurring:
+            thread = await self.create_thread_for_event(interaction.guild, new_event, thread_channel)
+            if thread:
+                new_event["thread_id"] = thread.id
+            else:
+                await interaction.response.send_message(
+                    "⚠️ Event added but failed to create thread.", ephemeral=True
+                )
+                return
+        # For recurring events with thread_channel, threads will be created automatically
+        # before each occurrence, so we just continue with event creation
+
+        events.append(new_event)
+        save_events(events)
+
+        # Update the calendar embed
+        await interaction.response.defer(ephemeral=True)
+        result = await self.update_calendar(interaction.guild)
+        
+        if result:
+            if recurring and thread_channel:
+                await interaction.followup.send(
+                    f"✅ Recurring event added! Discussion threads will automatically "
+                    f"open {THREAD_CREATION_HOURS_BEFORE} hours before each occurrence.", 
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send("✅ Event added and calendar updated.", ephemeral=True)
+        else:
+            await interaction.followup.send("⚠️ Event added but failed to update calendar display.", ephemeral=True)
+
+    @app_commands.guilds(TARGET_GUILD)
+    @app_commands.command(name="editcalendar", description="Edit an event on the calendar.")
+    @app_commands.autocomplete(title=autocomplete_event_titles)
+    @app_commands.describe(
+        title="Title of the event to edit",
+        new_title="New event title (optional)",
+        description="New description (optional)",
+        date="New date in DD/MM/YYYY format (use 'clear' or 'TBC' to set as TBC)",
+        time="New time in HH:MM format (24-hour, optional)",
+        organiser="New event organiser (optional)",
+        squad_maker="New squad maker (optional)",
+        thread_channel="Create a new thread in this channel (optional)",
+        recurring="Whether this event repeats weekly (optional)"
+    )
+    async def editcalendar(
+        self,
+        interaction: discord.Interaction,
+        title: str,
+        new_title: Optional[str] = None,
+        description: Optional[str] = None,
+        date: Optional[str] = None,
+        time: Optional[str] = None,
+        organiser: Optional[discord.Member] = None,
+        squad_maker: Optional[discord.Member] = None,
+        thread_channel: Optional[discord.TextChannel] = None,
+        recurring: Optional[bool] = None
+    ):
+        if not has_calendar_permission(interaction.user):
+            await interaction.response.send_message(
+                "❌ You don't have permission to manage events.", ephemeral=True
+            )
+            return
+
+        events = load_events()
+        try:
+            event = next(e for e in events if e["title"] == title)
+        except StopIteration:
+            await interaction.response.send_message("❌ Event not found.", ephemeral=True)
+            return
+
+        # Store the original event date and recurring status
+        current_date = datetime.fromisoformat(event["date"]) if event.get("date") else None
+        was_recurring = event.get("recurring", False)
+        is_recurring = was_recurring if recurring is None else recurring
+        
+        # Update title if provided
+        if new_title:
+            event["title"] = new_title
+
+        # Update description if provided
+        if description is not None:  # Allow empty string to clear description
+            event["description"] = description
+            
+        # Handle date changes
+        if date:
+            # Check if user wants to clear the date
+            if date.lower() in ['clear', 'tbc']:
+                # Cannot clear date for recurring events
+                if is_recurring:
+                    await interaction.response.send_message(
+                        "❌ Recurring events must have a date specified.", ephemeral=True
+                    )
+                    return
+                    
+                event["date"] = None
+                event["has_time"] = False
+                # Remove time fields if they exist
+                event.pop("original_hour", None)
+                event.pop("original_minute", None)
+            else:
+                event_date = parse_date(date)
+                if not event_date:
+                    await interaction.response.send_message(
+                        "❌ Invalid date format. Use DD/MM/YYYY or 'clear'/'TBC' to set as TBC.", ephemeral=True
+                    )
+                    return
+                
+                # Check if new date is in the past (only for non-recurring events)
+                if not is_recurring and is_date_in_past(event_date):
+                    await interaction.response.send_message(
+                        "❌ Cannot set event date to the past. Please use a future date.", ephemeral=True
+                    )
+                    return
+                    
+                # If only date is provided and there was a previous time, keep it
+                if not time and current_date and event["date"] and event.get("has_time", False):
+                    event_date = event_date.replace(
+                        hour=current_date.hour,
+                        minute=current_date.minute
+                    )
+                    # Keep has_time flag and original time components
+                else:
+                    # Reset has_time flag if no time is specified
+                    event["has_time"] = False
+                    # Remove time fields if they exist
+                    event.pop("original_hour", None)
+                    event.pop("original_minute", None)
+                    
+                event["date"] = event_date.isoformat()
+            
+        # Handle time changes separately (only if there's a date)
+        if time and event["date"]:
+            event_time = parse_time(time)
+            if not event_time:
+                await interaction.response.send_message(
+                    "❌ Invalid time format. Use HH:MM (24-hour).", ephemeral=True
+                )
+                return
+                
+            # Store the exact input time components
+            event["original_hour"] = event_time.hour
+            event["original_minute"] = event_time.minute
+                
+            # Update just the time component
+            current_date = datetime.fromisoformat(event["date"])
+            updated_date = current_date.replace(
+                hour=event_time.hour,
+                minute=event_time.minute
+            )
+            
+            # Check if the new datetime is in the past (only for non-recurring events)
+            if not is_recurring and is_date_in_past(updated_date):
+                await interaction.response.send_message(
+                    "❌ Cannot set event time to the past. Please use a future time.", ephemeral=True
+                )
+                return
+                
+            event["date"] = updated_date.isoformat()
+            event["has_time"] = True
+            
+        # Update recurring status if provided
+        if recurring is not None:
+            # Cannot make an event recurring if it has no date
+            if recurring and not event.get("date"):
+                await interaction.response.send_message(
+                    "❌ Cannot make an event recurring without a date.", ephemeral=True
+                )
+                return
+                
+            # If changing from non-recurring to recurring, clear the thread_id
+            # so that threads will be created before occurrences instead
+            if recurring and not was_recurring and event.get("thread_id"):
+                event["thread_id"] = None
+                
+            event["recurring"] = recurring
+            
+        # Update organiser if provided
+        if organiser is not None:
+            event["organiser"] = organiser.id
+            
+        # Update squad maker if provided
+        if squad_maker is not None:
+            event["squad_maker"] = squad_maker.id
+            
+        # Update thread channel if provided
+        if thread_channel is not None:
+            # Update create_threads flag based on whether a channel was specified
+            event["create_threads"] = thread_channel is not None
+            
+            # Create new thread if requested and not a recurring event
+            if thread_channel and not is_recurring:
+                thread = await self.create_thread_for_event(interaction.guild, event, thread_channel)
+                if thread:
+                    event["thread_id"] = thread.id
+
+        # Update existing thread titles and content
+        if new_title or description is not None or date or time or organiser is not None or squad_maker is not None:
+            await self.update_thread_message(interaction.guild, event)
+                
+        save_events(events)
+
+        await interaction.response.defer(ephemeral=True)
+        result = await self.update_calendar(interaction.guild)
+        
+        # Prepare the response message
+        if result:
+            if not was_recurring and is_recurring:
+                if event.get("create_threads", False):
+                    await interaction.followup.send(
+                        f"✅ Event updated to recurring! Discussion threads will automatically "
+                        f"open {THREAD_CREATION_HOURS_BEFORE} hours before each occurrence.",
+                        ephemeral=True
+                    )
+                else:
+                    await interaction.followup.send(
+                        "✅ Event updated to recurring! No threads will be created for this event.",
+                        ephemeral=True
+                    )
+            else:
+                await interaction.followup.send("✅ Event updated and calendar refreshed.", ephemeral=True)
+        else:
+            await interaction.followup.send("⚠️ Event updated but failed to refresh calendar display.", ephemeral=True)
+
+    @app_commands.guilds(TARGET_GUILD)
+    @app_commands.command(name="removefromcalendar", description="Remove an event from the calendar.")
+    @app_commands.autocomplete(title=autocomplete_event_titles)
+    @app_commands.describe(title="Title of the event to remove")
+    async def removefromcalendar(self, interaction: discord.Interaction, title: str):
+        if not has_calendar_permission(interaction.user):
+            await interaction.response.send_message(
+                "❌ You don't have permission to manage events.", ephemeral=True
+            )
+            return
+
+        events = load_events()
+        try:
+            event = next(e for e in events if e["title"] == title)
+        except StopIteration:
+            await interaction.response.send_message("❌ Event not found.", ephemeral=True)
+            return
+
+        # Archive threads if they exist
+        if event.get("recurring") and event.get("thread_info"):
+            for date_str, thread_id in event["thread_info"].items():
+                try:
+                    thread = interaction.guild.get_thread(thread_id)
+                    if thread:
+                        await thread.edit(archived=True, locked=True)
+                        print(f"Archived and locked thread for recurring event '{title}' on {date_str}")
+                except Exception as e:
+                    print(f"Failed to archive thread: {e}")
+        elif event.get("thread_id"):
+            try:
+                thread = interaction.guild.get_thread(event["thread_id"])
+                if thread:
+                    await thread.edit(archived=True, locked=True)
+                    print(f"Archived and locked thread for event '{title}'")
+            except Exception as e:
+                print(f"Failed to archive thread: {e}")
+
+        events = [e for e in events if e["title"] != title]
+        save_events(events)
+
+        await interaction.response.defer(ephemeral=True)
+        result = await self.update_calendar(interaction.guild)
+        if result:
+            await interaction.followup.send("🗑️ Event removed and calendar updated.", ephemeral=True)
+        else:
+            await interaction.followup.send("⚠️ Event removed but failed to update calendar display.", ephemeral=True)
+
     # ---------- Startup ----------
     @commands.Cog.listener()
     async def on_ready(self):
@@ -1407,6 +1193,13 @@ class CalendarCog(commands.Cog):
         
         # Run initial cleanup of expired events
         await self.cleanup_expired_events()
+        
+        # Ensure commands are synced to the target guild only
+        try:
+            synced = await self.bot.tree.sync(guild=discord.Object(id=CALENDAR_GUILD_ID))
+            print(f"Synced {len(synced)} commands to guild {CALENDAR_GUILD_ID}")
+        except Exception as e:
+            print(f"Failed to sync commands: {e}")
 
         # Always try to publish the calendar on startup
         if AUTO_PUBLISH_ON_START:
@@ -1414,7 +1207,30 @@ class CalendarCog(commands.Cog):
                 guild = self.bot.get_guild(CALENDAR_GUILD_ID)
                 if guild:
                     print(f"Found guild: {guild.name} (ID: {guild.id})")
-                    await self.update_calendar(guild)
+                    # On startup, we'll create a new message regardless of existing ones
+                    channel = self.get_calendar_channel(guild)
+                    if channel:
+                        # Delete previous message if exists
+                        prev_id = get_message_id_for_guild(guild.id)
+                        if prev_id:
+                            try:
+                                msg = await channel.fetch_message(prev_id)
+                                await msg.delete()
+                                print(f"Deleted previous calendar message {prev_id}")
+                            except Exception as e:
+                                print(f"Could not delete previous message: {e}")
+                        
+                        # Create a new message
+                        events = load_events()
+                        embed = build_calendar_embed(events)
+                        try:
+                            new_msg = await channel.send(embed=embed)
+                            set_message_id_for_guild(guild.id, new_msg.id)
+                            print(f"Created new calendar message on startup (ID: {new_msg.id})")
+                        except Exception as e:
+                            print(f"Failed to create calendar message on startup: {e}")
+                    else:
+                        print("Could not find calendar channel")
                 else:
                     print(f"❌ Could not find guild with ID {CALENDAR_GUILD_ID}")
             except Exception as e:
