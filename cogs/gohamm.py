@@ -187,9 +187,9 @@ class GoHammThis(commands.Cog):
         if result.returncode != 0:
             raise Exception(f"FFmpeg error:\n{result.stderr}")
 
-        # Send result (PUBLIC)
+        # Send result (PUBLIC) and mention initiator
         await interaction.followup.send(
-            content="🔥 **Hamm’d.**",
+            content=f"{interaction.user.mention} 🔥 **Hamm’d.**",
             file=discord.File(output_path)
         )
 
