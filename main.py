@@ -76,17 +76,14 @@ async def main():
     async with bot:
         await bot.load_extension("cogs.bulkrole")
         await bot.load_extension("cogs.certify")
-        # await bot.load_extension("cogs.LoreCogV2")
         await bot.load_extension("cogs.recruitform")
         await bot.load_extension("cogs.EmbedManager")
         await bot.load_extension("cogs.SquadUp")
         await bot.load_extension("cogs.CalendarCog")
         await bot.load_extension("cogs.BirthdayCog")
         # await bot.load_extension("cogs.Killfeedcog")
-        # await bot.load_extension("cogs.HLLStatsCog")
         await bot.load_extension("cogs.mapvote")
         await bot.load_extension("cogs.HLLInfLeaderboard")
-        # await bot.load_extension("cogs.HLLRecLeaderboard")
         await bot.load_extension("cogs.HLLArmLeaderboard")
         await bot.load_extension("cogs.gohamm")        
         await bot.load_extension("cogs.GameMonCog")
@@ -94,7 +91,6 @@ async def main():
         await bot.load_extension("cogs.trainee_tracker")
         await bot.load_extension("cogs.armour_trainee_tracker")
         await bot.load_extension("cogs.recon_troop_tracker")
-        # await bot.load_extension("cogs.rcon_tracker")
         await bot.start(TOKEN)
 
 if __name__ == "__main__":
