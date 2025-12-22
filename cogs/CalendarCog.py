@@ -610,6 +610,14 @@ class CalendarView(discord.ui.View):
         super().__init__(timeout=None)
         self.cog = cog
 
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item) -> None:
+        # Log and give a user-facing message if a button/select raises
+        print(f"Calendar view error on {item.custom_id if hasattr(item, 'custom_id') else 'component'}: {error}")
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ Something went wrong handling that action. Please try again.", ephemeral=True)
+        else:
+            await interaction.followup.send("⚠️ Something went wrong handling that action. Please try again.", ephemeral=True)
+
     @discord.ui.button(label="Add Event", style=discord.ButtonStyle.primary, custom_id="calendar_add")
     async def add_event(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not has_calendar_permission(interaction.user):
