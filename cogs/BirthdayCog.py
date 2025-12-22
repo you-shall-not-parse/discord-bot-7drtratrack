@@ -167,51 +167,6 @@ class BirthdayCog(commands.Cog):
         )
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="testbirthday", description="Post a test birthday message in the birthday channel")
-    @app_commands.describe(
-        target="Member to celebrate (defaults to you)",
-        display_age="Show age using the stored birthday if available",
-        age_override="Override age shown (e.g., 21)"
-    )
-    async def testbirthday(
-        self,
-        interaction: discord.Interaction,
-        target: discord.Member | None = None,
-        display_age: bool = False,
-        age_override: int | None = None
-    ):
-        user = target or interaction.user
-        guild = interaction.guild
-        if guild is None:
-            return await interaction.response.send_message("Guild only.", ephemeral=True)
-
-        channel = guild.get_channel(BIRTHDAY_CHANNEL_ID)
-        if channel is None:
-            return await interaction.response.send_message("Birthday channel not found.", ephemeral=True)
-
-        msg = f"🎉 Happy Birthday to {user.mention}!"
-
-        age_part = ""
-        if age_override is not None and age_override > 0:
-            age_part = f" ({age_override} years old)"
-        elif display_age:
-            date_str, _ = self.get_user_birthday(guild.id, user.id)
-            if date_str:
-                tz = pytz.timezone(TIMEZONE)
-                today = datetime.now(tz).date()
-                bday = datetime.strptime(date_str, "%d/%m/%Y").date()
-                age = today.year - bday.year - ((today.month, today.day) < (bday.month, bday.day))
-                age_part = f" ({age} years old)"
-
-        if age_part:
-            msg += age_part
-
-        gif_url = random.choice(BIRTHDAY_GIF_URLS) if BIRTHDAY_GIF_URLS else None
-        content = f"{msg}\n{gif_url}" if gif_url else msg
-
-        await channel.send(content)
-        await interaction.response.send_message("Posted.", ephemeral=True)
-
     # ---------------- Tasks ----------------
     @tasks.loop(time=time(hour=9, minute=0))
     async def check_birthdays(self):
