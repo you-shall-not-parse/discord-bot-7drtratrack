@@ -13,7 +13,7 @@ from xml.etree import ElementTree
 
 # ================== CONFIG ==================
 
-POST_TIME_UTC = time(hour=10, minute=0, tzinfo=timezone.utc)
+POST_TIME_UTC = time(hour=17, minute=45, tzinfo=timezone.utc)
 
 CHECK_INTERVAL_MINUTES = 30   # how often RSS feeds are checked
 
