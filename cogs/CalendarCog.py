@@ -30,21 +30,21 @@ ADD_MODAL_FIELDS = [
     {"key": "description", "label": "Description (optional)", "required": False, "style": discord.TextStyle.paragraph},
     {"key": "date", "label": "Date (DD/MM/YYYY or TBC)", "required": False},
     {"key": "time", "label": "Time (HH:MM, optional)", "required": False},
+    {"key": "recurring", "label": "Recurring? (yes/no)", "required": False},
+]
+
+ADVANCED_ADD_MODAL_FIELDS = [
     {"key": "organiser", "label": "Organiser (mention/ID, blank = you)", "required": False},
     {"key": "squad", "label": "Squad maker (mention/ID, optional)", "required": False},
     {"key": "thread", "label": "Thread channel (mention/ID/name, optional)", "required": False},
-    {"key": "recurring", "label": "Recurring? (yes/no, optional)", "required": False},
 ]
 
 EDIT_MODAL_FIELDS = [
-    {"key": "title", "label": "New title (optional)", "required": False, "style": discord.TextStyle.short},
     {"key": "description", "label": "New description (optional)", "required": False, "style": discord.TextStyle.paragraph},
     {"key": "date", "label": "New date (DD/MM/YYYY, 'clear'/'TBC' to unset)", "required": False},
     {"key": "time", "label": "New time (HH:MM, optional)", "required": False},
-    {"key": "organiser", "label": "New organiser (mention/ID, optional)", "required": False},
-    {"key": "squad", "label": "New squad maker (mention/ID, optional)", "required": False},
-    {"key": "thread", "label": "Thread channel (mention/ID/name, 'clear' to disable)", "required": False},
     {"key": "recurring", "label": "Recurring? (yes/no, leave blank to keep)", "required": False},
+    {"key": "title", "label": "New title (optional)", "required": False, "style": discord.TextStyle.short},
 ]
 
 # ---------------- Utility ----------------
@@ -523,16 +523,43 @@ class AddEventModal(discord.ui.Modal):
             self.add_item(text_input)
 
     async def on_submit(self, interaction: discord.Interaction):
+        core_data = {
+            "title": self.inputs["title"].value.strip(),
+            "description": self.inputs["description"].value.strip() if self.inputs["description"].value else None,
+            "date": self.inputs["date"].value.strip() if self.inputs["date"].value else None,
+            "time_str": self.inputs["time"].value.strip() if self.inputs["time"].value else None,
+            "recurring_raw": self.inputs["recurring"].value.strip() if self.inputs["recurring"].value else None,
+        }
+        await interaction.response.send_modal(AdvancedAddEventModal(self.cog, core_data))
+
+
+class AdvancedAddEventModal(discord.ui.Modal):
+    def __init__(self, cog: "CalendarCog", core_data: Dict[str, Optional[str]]):
+        super().__init__(title="Add Event – Advanced")
+        self.cog = cog
+        self.core_data = core_data
+        self.inputs: Dict[str, discord.ui.TextInput] = {}
+        for field in ADVANCED_ADD_MODAL_FIELDS:
+            text_input = discord.ui.TextInput(
+                label=field["label"],
+                style=field.get("style", discord.TextStyle.short),
+                required=field.get("required", False),
+                max_length=field.get("max_length"),
+            )
+            self.inputs[field["key"]] = text_input
+            self.add_item(text_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
         await self.cog.handle_add_from_modal(
             interaction,
-            title=self.inputs["title"].value.strip(),
-            description=self.inputs["description"].value.strip() if self.inputs["description"].value else None,
-            date=self.inputs["date"].value.strip() if self.inputs["date"].value else None,
-            time_str=self.inputs["time"].value.strip() if self.inputs["time"].value else None,
+            title=self.core_data["title"],
+            description=self.core_data["description"],
+            date=self.core_data["date"],
+            time_str=self.core_data["time_str"],
             organiser_raw=self.inputs["organiser"].value.strip() if self.inputs["organiser"].value else None,
             squad_raw=self.inputs["squad"].value.strip() if self.inputs["squad"].value else None,
             thread_raw=self.inputs["thread"].value.strip() if self.inputs["thread"].value else None,
-            recurring_raw=self.inputs["recurring"].value.strip() if self.inputs["recurring"].value else None,
+            recurring_raw=self.core_data["recurring_raw"],
         )
 
 
@@ -576,16 +603,23 @@ class EditEventModal(discord.ui.Modal):
 
 class EventSelect(discord.ui.Select):
     def __init__(self, cog: "CalendarCog", events: list, action: str):
-        options = [discord.SelectOption(label=e["title"], value=e["title"]) for e in events[:25]]
+        # Ensure unique option values even with duplicate titles by including index
+        options = [discord.SelectOption(label=e["title"], value=str(idx)) for idx, e in enumerate(events[:25])]
         placeholder = "Select event to edit" if action == "edit" else "Select event to remove"
         super().__init__(placeholder=placeholder, options=options, min_values=1, max_values=1)
         self.cog = cog
         self.action = action
+        self.events_snapshot = events
 
     async def callback(self, interaction: discord.Interaction):
-        title = self.values[0]
+        try:
+            idx = int(self.values[0])
+        except ValueError:
+            await interaction.response.send_message("❌ Invalid selection.", ephemeral=True)
+            return
+
         events = load_events()
-        event = next((e for e in events if e["title"] == title), None)
+        event = events[idx] if 0 <= idx < len(events) else None
         if not event:
             await interaction.response.send_message("❌ Event not found.", ephemeral=True)
             return
@@ -862,14 +896,10 @@ class CalendarCog(commands.Cog):
             await interaction.response.send_message("❌ You don't have permission to manage events.", ephemeral=True)
             return
 
-        organiser = parse_member_input(interaction.guild, organiser_raw) or interaction.user
-        squad_maker = parse_member_input(interaction.guild, squad_raw)
-        thread_channel = parse_channel_input(interaction.guild, thread_raw)
+        organiser = interaction.user
+        squad_maker = None
+        thread_channel = None
         recurring_flag = parse_bool(recurring_raw) or False
-
-        if thread_raw and thread_channel is None:
-            await interaction.response.send_message("❌ Couldn't find the thread channel you specified.", ephemeral=True)
-            return
 
         # Initialize event with date as None (TBC)
         event_date = None
@@ -922,23 +952,14 @@ class CalendarCog(commands.Cog):
             "guild_id": interaction.guild_id,
             "thread_id": None,
             "recurring": recurring_flag,
-            "create_threads": thread_channel is not None,
+            "create_threads": True,  # default: allow threads using calendar channel when needed
         }
 
         if has_time_flag and original_hour is not None and original_minute is not None:
             new_event["original_hour"] = original_hour
             new_event["original_minute"] = original_minute
 
-        if thread_channel and not recurring_flag:
-            await interaction.response.defer(ephemeral=True)
-            thread = await self.create_thread_for_event(interaction.guild, new_event, thread_channel)
-            if thread:
-                new_event["thread_id"] = thread.id
-            else:
-                await interaction.followup.send("⚠️ Event added but failed to create thread.", ephemeral=True)
-                return
-        else:
-            await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
 
         events.append(new_event)
         save_events(events)
@@ -1052,25 +1073,8 @@ class CalendarCog(commands.Cog):
         if squad_maker is not None:
             event["squad_maker"] = squad_maker.id
 
-        if thread_raw is not None:
-            thread_channel = parse_channel_input(interaction.guild, thread_raw)
-            if thread_raw and thread_channel is None and thread_raw.lower() not in {"clear", "none", "off"}:
-                await interaction.response.send_message("❌ Couldn't find the thread channel you specified.", ephemeral=True)
-                return
-
-            if thread_raw.lower() in {"clear", "none", "off"}:
-                event["create_threads"] = False
-            else:
-                event["create_threads"] = thread_channel is not None
-                if thread_channel and not recurring_flag:
-                    # Create thread immediately if needed
-                    await interaction.response.defer(ephemeral=True)
-                    thread = await self.create_thread_for_event(interaction.guild, event, thread_channel)
-                    if thread:
-                        event["thread_id"] = thread.id
-                    else:
-                        await interaction.followup.send("⚠️ Event updated but failed to create thread.", ephemeral=True)
-                        return
+        # Thread creation now defaults to calendar channel; toggle via recurring flag only
+        event["create_threads"] = True
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
 
