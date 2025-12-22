@@ -519,12 +519,14 @@ class AddEventModal(discord.ui.Modal):
         self.cog = cog
         self.inputs: Dict[str, discord.ui.TextInput] = {}
         for field in ADD_MODAL_FIELDS:
-            text_input = discord.ui.TextInput(
-                label=field["label"],
-                style=field.get("style", discord.TextStyle.short),
-                required=field.get("required", False),
-                max_length=field.get("max_length"),
-            )
+            kwargs = {
+                "label": field["label"],
+                "style": field.get("style", discord.TextStyle.short),
+                "required": field.get("required", False),
+            }
+            if "max_length" in field:
+                kwargs["max_length"] = field["max_length"]
+            text_input = discord.ui.TextInput(**kwargs)
             self.inputs[field["key"]] = text_input
             self.add_item(text_input)
 
@@ -555,12 +557,14 @@ class AdvancedAddEventModal(discord.ui.Modal):
         self.core_data = core_data
         self.inputs: Dict[str, discord.ui.TextInput] = {}
         for field in ADVANCED_ADD_MODAL_FIELDS:
-            text_input = discord.ui.TextInput(
-                label=field["label"],
-                style=field.get("style", discord.TextStyle.short),
-                required=field.get("required", False),
-                max_length=field.get("max_length"),
-            )
+            kwargs = {
+                "label": field["label"],
+                "style": field.get("style", discord.TextStyle.short),
+                "required": field.get("required", False),
+            }
+            if "max_length" in field:
+                kwargs["max_length"] = field["max_length"]
+            text_input = discord.ui.TextInput(**kwargs)
             self.inputs[field["key"]] = text_input
             self.add_item(text_input)
 
@@ -640,12 +644,14 @@ class AdvancedEditEventModal(discord.ui.Modal):
         self.core_data = core_data
         self.inputs: Dict[str, discord.ui.TextInput] = {}
         for field in ADVANCED_EDIT_MODAL_FIELDS:
-            text_input = discord.ui.TextInput(
-                label=field["label"],
-                style=field.get("style", discord.TextStyle.short),
-                required=field.get("required", False),
-                max_length=field.get("max_length"),
-            )
+            kwargs = {
+                "label": field["label"],
+                "style": field.get("style", discord.TextStyle.short),
+                "required": field.get("required", False),
+            }
+            if "max_length" in field:
+                kwargs["max_length"] = field["max_length"]
+            text_input = discord.ui.TextInput(**kwargs)
             self.inputs[field["key"]] = text_input
             self.add_item(text_input)
 
