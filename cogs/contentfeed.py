@@ -13,7 +13,7 @@ from xml.etree import ElementTree
 
 # ================== CONFIG ==================
 
-POST_TIME_UTC = time(hour=17, minute=51, tzinfo=timezone.utc)
+POST_TIME_UTC = time(hour=12, minute=0, tzinfo=timezone.utc)
 
 CHECK_INTERVAL_MINUTES = 30   # how often RSS feeds are checked
 
@@ -21,14 +21,24 @@ DATA_DIR = "data"
 
 CREATORS = [
     {
-        "name": "WarStoriesChannel",
-        "channel_id": "UC3fOzMSxcmCXZLmAM9vy1IQ",
-        "post_to": 1099806153170489485  # <-- Discord channel ID
+        "name": "Historigraph",
+        "channel_id": "UCffCZhWRKiNeirye8kyfC3Q",
+        "post_to": 1106900027659522108  # <-- Discord channel ID
     },
     {
         "name": "YarnHub",
         "channel_id": "UC-f2WBfSCZiu0bOBydjot3w",
-        "post_to": 1099806153170489485
+        "post_to": 1106900027659522108
+    },
+    {
+        "name": "TheIntelReport",
+        "channel_id": "UC7Ay_bxnYWSS9ZDPpqAE1RQ",
+        "post_to": 1106900027659522108
+    },
+    {
+        "name": "OculusImperia",
+        "channel_id": "UC8AaO8zkIoxbUp1_p0rl13g",
+        "post_to": 1399102943004721224
     }
 ]
 
@@ -134,12 +144,27 @@ class YouTubeFeed(commands.Cog):
     @tasks.loop(time=POST_TIME_UTC)
     async def daily_post(self):
         logger.info(f"Daily post task fired at {datetime.now(timezone.utc)}")
-        video = self._select_eligible_video()
-        if not video:
-            logger.warning(f"No eligible videos to post. Total videos: {len(self.known_videos)}, Last posted: {self.last_posted}")
+        
+        # Group videos by their target channel
+        videos_by_channel = {}
+        for video in self.known_videos:
+            channel_id = video["post_to"]
+            if channel_id not in videos_by_channel:
+                videos_by_channel[channel_id] = []
+            videos_by_channel[channel_id].append(video)
+        
+        if not videos_by_channel:
+            logger.warning("No videos available for any channel")
             return
-        logger.info(f"Selected video: {video['url']} from {video['creator']}")
-        await self._post_video(video)
+        
+        # For each channel, select and post one eligible video
+        for channel_id, videos in videos_by_channel.items():
+            video = self._select_eligible_video_from_pool(videos)
+            if not video:
+                logger.warning(f"No eligible video for channel {channel_id}. Total: {len(videos)}, Posted: {len([v for v in videos if self.last_posted.get(v['url'])])}")
+                continue
+            logger.info(f"Selected video for channel {channel_id}: {video['url']} from {video['creator']}")
+            await self._post_video(video)
 
     @check_feeds.before_loop
     async def before_check(self):
@@ -151,10 +176,11 @@ class YouTubeFeed(commands.Cog):
 
     # ---------------- Helpers ----------------
 
-    def _select_eligible_video(self):
+    def _select_eligible_video_from_pool(self, videos):
+        """Select an eligible video from a given list of videos."""
         now = datetime.now(timezone.utc)
         eligible = []
-        for v in self.known_videos:
+        for v in videos:
             last_time = self.last_posted.get(v["url"])
             if not last_time:
                 eligible.append(v)
@@ -165,15 +191,20 @@ class YouTubeFeed(commands.Cog):
                 last_dt = now - timedelta(days=365)
             if now - last_dt >= timedelta(days=REPOST_COOLDOWN_DAYS):
                 eligible.append(v)
-        logger.debug(f"Video eligibility: {len(self.known_videos)} total, {len(eligible)} eligible for posting")
+        
+        logger.debug(f"Video pool eligibility: {len(videos)} total, {len(eligible)} eligible")
         if not eligible:
-            # Fallback: pick a random video from all known videos
-            if self.known_videos:
-                logger.info(f"No eligible videos, picking random from {len(self.known_videos)} total videos")
-                return random.choice(self.known_videos)
+            # Fallback: pick a random video from the pool
+            if videos:
+                logger.info(f"No eligible videos, picking random from {len(videos)} total")
+                return random.choice(videos)
             return None
         eligible.sort(key=lambda x: x["added_at"], reverse=True)
         return eligible[0]
+
+    def _select_eligible_video(self):
+        """Select an eligible video from all known videos (for backward compatibility)."""
+        return self._select_eligible_video_from_pool(self.known_videos)
 
     async def _post_video(self, video):
         now = datetime.now(timezone.utc)
