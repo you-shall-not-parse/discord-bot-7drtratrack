@@ -13,7 +13,7 @@ from xml.etree import ElementTree
 
 # ================== CONFIG ==================
 
-POST_TIME_UTC = time(hour=17, minute=45, tzinfo=timezone.utc)
+POST_TIME_UTC = time(hour=17, minute=51, tzinfo=timezone.utc)
 
 CHECK_INTERVAL_MINUTES = 30   # how often RSS feeds are checked
 
@@ -133,9 +133,12 @@ class YouTubeFeed(commands.Cog):
 
     @tasks.loop(time=POST_TIME_UTC)
     async def daily_post(self):
+        logger.info(f"Daily post task fired at {datetime.now(timezone.utc)}")
         video = self._select_eligible_video()
         if not video:
+            logger.warning(f"No eligible videos to post. Total videos: {len(self.known_videos)}, Last posted: {self.last_posted}")
             return
+        logger.info(f"Selected video: {video['url']} from {video['creator']}")
         await self._post_video(video)
 
     @check_feeds.before_loop
@@ -162,7 +165,12 @@ class YouTubeFeed(commands.Cog):
                 last_dt = now - timedelta(days=365)
             if now - last_dt >= timedelta(days=REPOST_COOLDOWN_DAYS):
                 eligible.append(v)
+        logger.debug(f"Video eligibility: {len(self.known_videos)} total, {len(eligible)} eligible for posting")
         if not eligible:
+            # Fallback: pick a random video from all known videos
+            if self.known_videos:
+                logger.info(f"No eligible videos, picking random from {len(self.known_videos)} total videos")
+                return random.choice(self.known_videos)
             return None
         eligible.sort(key=lambda x: x["added_at"], reverse=True)
         return eligible[0]
@@ -180,6 +188,7 @@ class YouTubeFeed(commands.Cog):
             await channel.send(f"📺 **{video['creator']}**\n{video['url']}")
             self.last_posted[video["url"]] = now.isoformat()
             save_json(LAST_POSTED_FILE, self.last_posted)
+            logger.info(f"Successfully posted video: {video['url']} at {now}")
         except discord.Forbidden:
             logger.error("Missing permissions to post in target channel")
         except discord.HTTPException as e:
