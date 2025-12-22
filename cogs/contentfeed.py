@@ -188,7 +188,6 @@ class YouTubeFeed(commands.Cog):
     # ---------------- Slash Command ----------------
     @app_commands.command(name="forcecontent", description="Force-post the latest eligible content video")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
-    @app_commands.checks.guild_only()
     async def forcecontent(self, interaction: discord.Interaction):
         user = interaction.user
         if not isinstance(user, discord.Member):
