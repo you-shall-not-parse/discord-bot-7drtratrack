@@ -79,6 +79,9 @@ class YouTubeFeed(commands.Cog):
         self.last_seen = load_json(LAST_SEEN_FILE, {})
         self.last_posted = load_json(LAST_POSTED_FILE, {})
 
+        # Remove any videos/entries from creators no longer configured
+        self.prune_removed_creators()
+
         self.check_feeds.start()
         self.daily_post.start()
 
@@ -205,6 +208,32 @@ class YouTubeFeed(commands.Cog):
     def _select_eligible_video(self):
         """Select an eligible video from all known videos (for backward compatibility)."""
         return self._select_eligible_video_from_pool(self.known_videos)
+
+    def prune_removed_creators(self):
+        """Drop persisted videos/state for creators no longer in CREATORS."""
+        allowed_channels = {c["channel_id"] for c in CREATORS}
+
+        # Filter known videos
+        before_known = len(self.known_videos)
+        self.known_videos = [v for v in self.known_videos if v.get("channel_id") in allowed_channels]
+
+        # Filter last_seen (keyed by channel_id)
+        before_seen = len(self.last_seen)
+        self.last_seen = {k: v for k, v in self.last_seen.items() if k in allowed_channels}
+
+        # Filter last_posted (keyed by video URL) to only keep videos still in known_videos
+        valid_urls = {v["url"] for v in self.known_videos}
+        before_posted = len(self.last_posted)
+        self.last_posted = {k: v for k, v in self.last_posted.items() if k in valid_urls}
+
+        if (before_known != len(self.known_videos)) or (before_seen != len(self.last_seen)) or (before_posted != len(self.last_posted)):
+            logger.info(
+                f"Pruned removed creators: known {before_known}->{len(self.known_videos)}, "
+                f"last_seen {before_seen}->{len(self.last_seen)}, last_posted {before_posted}->{len(self.last_posted)}"
+            )
+            save_json(KNOWN_VIDEOS_FILE, self.known_videos)
+            save_json(LAST_SEEN_FILE, self.last_seen)
+            save_json(LAST_POSTED_FILE, self.last_posted)
 
     async def _post_video(self, video):
         now = datetime.now(timezone.utc)
