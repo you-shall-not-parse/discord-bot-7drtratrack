@@ -255,7 +255,7 @@ class YouTubeFeed(commands.Cog):
             logger.error(f"HTTP error posting content: {e}")
 
     # ---------------- Slash Command ----------------
-    @app_commands.command(name="forcecontent", description="Force-post the latest eligible content video")
+    @app_commands.command(name="forcecontent", description="Force-post the latest eligible content video to all channels")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     async def forcecontent(self, interaction: discord.Interaction):
         user = interaction.user
@@ -264,11 +264,30 @@ class YouTubeFeed(commands.Cog):
         if CONTENT_ADMIN_ROLE_ID not in [r.id for r in user.roles]:
             return await interaction.response.send_message("You don't have permission to use this.", ephemeral=True)
 
-        video = self._select_eligible_video()
-        if not video:
+        # Group videos by their target channel (same as daily post)
+        videos_by_channel = {}
+        for video in self.known_videos:
+            channel_id = video["post_to"]
+            if channel_id not in videos_by_channel:
+                videos_by_channel[channel_id] = []
+            videos_by_channel[channel_id].append(video)
+        
+        if not videos_by_channel:
+            return await interaction.response.send_message("No videos available for any channel.", ephemeral=True)
+        
+        posted_videos = []
+        # For each channel, select and post one eligible video
+        for channel_id, videos in videos_by_channel.items():
+            video = self._select_eligible_video_from_pool(videos)
+            if video:
+                await self._post_video(video)
+                posted_videos.append(f"{video['creator']} to <#{channel_id}>")
+        
+        if not posted_videos:
             return await interaction.response.send_message("No eligible videos to post right now.", ephemeral=True)
-        await self._post_video(video)
-        await interaction.response.send_message(f"Posted: {video['url']} from {video['creator']}", ephemeral=True)
+        
+        summary = "\n".join(posted_videos)
+        await interaction.response.send_message(f"Posted videos:\n{summary}", ephemeral=True)
 
 
 async def setup(bot):
