@@ -86,6 +86,10 @@ class YouTubeFeed(commands.Cog):
         # Remove any videos/entries from creators no longer configured
         self.prune_removed_creators()
 
+        # Ensure all stored videos point at the currently configured target channels.
+        # (Prevents stale persisted `post_to` values from sending content to the wrong channel.)
+        self._normalize_video_targets()
+
         self.check_feeds.start()
         self.daily_post.start()
 
@@ -238,12 +242,34 @@ class YouTubeFeed(commands.Cog):
 
     def _videos_by_target_channel(self):
         videos_by_channel = {}
+        post_to_by_creator_channel = {c["channel_id"]: c["post_to"] for c in CREATORS}
+
         for video in self.known_videos:
-            channel_id = video.get("post_to")
-            if channel_id is None:
+            creator_channel_id = video.get("channel_id")
+            post_to = post_to_by_creator_channel.get(creator_channel_id)
+            if post_to is None:
                 continue
-            videos_by_channel.setdefault(channel_id, []).append(video)
+
+            # Keep video dict consistent with current config.
+            video["post_to"] = post_to
+            videos_by_channel.setdefault(post_to, []).append(video)
+
         return videos_by_channel
+
+    def _normalize_video_targets(self):
+        """Rewrite stored video 'post_to' fields to match current CREATORS config."""
+        post_to_by_creator_channel = {c["channel_id"]: c["post_to"] for c in CREATORS}
+        changed = False
+        for video in self.known_videos:
+            creator_channel_id = video.get("channel_id")
+            post_to = post_to_by_creator_channel.get(creator_channel_id)
+            if post_to is None:
+                continue
+            if video.get("post_to") != post_to:
+                video["post_to"] = post_to
+                changed = True
+        if changed:
+            save_json(KNOWN_VIDEOS_FILE, self.known_videos)
 
     def prune_removed_creators(self):
         """Drop persisted videos/state for creators no longer in CREATORS."""
@@ -261,6 +287,14 @@ class YouTubeFeed(commands.Cog):
         valid_urls = {v["url"] for v in self.known_videos}
         before_posted = len(self.last_posted)
         self.last_posted = {k: v for k, v in self.last_posted.items() if k in valid_urls}
+
+        # Normalize targets after filtering (covers config changes).
+        post_to_by_creator_channel = {c["channel_id"]: c["post_to"] for c in CREATORS}
+        for video in self.known_videos:
+            creator_channel_id = video.get("channel_id")
+            post_to = post_to_by_creator_channel.get(creator_channel_id)
+            if post_to is not None:
+                video["post_to"] = post_to
 
         if (before_known != len(self.known_videos)) or (before_seen != len(self.last_seen)) or (before_posted != len(self.last_posted)):
             logger.info(
