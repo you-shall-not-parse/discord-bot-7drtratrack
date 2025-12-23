@@ -478,6 +478,67 @@ class GameMonCog(commands.Cog):
             except discord.HTTPException as e:
                 logger.error(f"HTTP error deleting message: {e}")
 
+    # ---------- Presence / Activity Updates ----------
+    @commands.Cog.listener()
+    async def on_presence_update(self, before: discord.Member, after: discord.Member):
+        """Track users starting/stopping games and refresh the embed (debounced)."""
+        try:
+            # Ignore bots and other guilds
+            if after.bot:
+                return
+            if after.guild is None or after.guild.id != GUILD_ID:
+                return
+
+            user_id = str(after.id)
+
+            # Optional: disable tracking for users without explicit preferences
+            if TEMP_DISABLE_DEFAULT_MONITORING and user_id not in self.prefs:
+                return
+
+            pref = self.prefs.get(user_id, DEFAULT_PREFERENCE)
+
+            # Determine current tracked game (if any)
+            current_game = None
+            if pref == "opt_in" and after.activities:
+                for activity in after.activities:
+                    game = self.get_game_from_activity(activity)
+                    if game and game not in IGNORED_GAMES:
+                        current_game = game
+                        break
+
+            changed = False
+
+            # Helper: remove user from all games
+            for game_name, users in list(self.state.get("games", {}).items()):
+                if user_id in users and game_name != current_game:
+                    users.remove(user_id)
+                    changed = True
+                if not users:
+                    self.state["games"].pop(game_name, None)
+
+            # If opted out, ensure they are not tracked
+            if pref != "opt_in":
+                if changed:
+                    await self.save_json(STATE_FILE, self.state)
+                    await self.schedule_update()
+                return
+
+            # If opted in and playing a tracked game, add them
+            if current_game:
+                if current_game not in self.state["games"]:
+                    self.state["games"][current_game] = []
+                    changed = True
+                if user_id not in self.state["games"][current_game]:
+                    self.state["games"][current_game].append(user_id)
+                    changed = True
+                self.state.setdefault("last_seen", {})[user_id] = datetime.datetime.utcnow().isoformat()
+
+            if changed:
+                await self.save_json(STATE_FILE, self.state)
+                await self.schedule_update()
+        except Exception as e:
+            logger.error(f"Error in on_presence_update: {e}")
+
     # ---------- Embed Update ----------
     async def update_embed(self, force_new=False):
         """Update the embed message in the thread, or create a new one if needed or forced"""
