@@ -2,13 +2,11 @@ import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 import logging
-
 import aiohttp
-import asyncio
 import json
 import os
 import random
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, time, timezone
 from xml.etree import ElementTree
 
 # ================== CONFIG ==================
@@ -17,7 +15,10 @@ POST_TIME_UTC = time(hour=12, minute=0, tzinfo=timezone.utc)
 
 CHECK_INTERVAL_MINUTES = 30   # how often RSS feeds are checked
 
-DATA_DIR = "data"
+# Use an absolute data directory so the bot doesn't depend on the process working directory.
+# (Fixes cases where yt_*.json are created somewhere else, causing repeated posts.)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(BASE_DIR, "data")
 
 CREATORS = [
     {
@@ -37,7 +38,8 @@ CREATORS = [
     }
 ]
 
-REPOST_COOLDOWN_DAYS = 7
+# How many videos to keep per creator in the local pool.
+MAX_VIDEOS_PER_CREATOR = 50
 
 # ============================================
 
@@ -55,9 +57,16 @@ logger.setLevel(logging.INFO)
 
 def load_json(path, default):
     if not os.path.exists(path):
+        # Create the file so state persists across restarts.
+        save_json(path, default)
         return default
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        # If the file is corrupt/empty, reset it.
+        save_json(path, default)
+        return default
 
 
 def save_json(path, data):
@@ -114,26 +123,49 @@ class YouTubeFeed(commands.Cog):
             if not entries:
                 return
 
-            latest_entry = entries[0]
-            vid_el = latest_entry.find("yt:videoId", ns)
-            if vid_el is None or not vid_el.text:
-                return
-            video_id = vid_el.text
-            video_url = f"https://www.youtube.com/watch?v={video_id}"
+            # Track the newest video we've seen for this creator (helps reduce churn).
+            newest_vid_el = entries[0].find("yt:videoId", ns)
+            if newest_vid_el is not None and newest_vid_el.text:
+                self.last_seen[creator["channel_id"]] = newest_vid_el.text
 
-            if self.last_seen.get(creator["channel_id"]) == video_id:
-                return
+            # Build a quick lookup to avoid O(n) scans for every entry.
+            known_urls = {v.get("url") for v in self.known_videos}
 
-            self.last_seen[creator["channel_id"]] = video_id
+            # Add multiple recent entries (not only the newest), so random selection has a pool.
+            for entry in entries:
+                vid_el = entry.find("yt:videoId", ns)
+                if vid_el is None or not vid_el.text:
+                    continue
+                video_id = vid_el.text
+                video_url = f"https://www.youtube.com/watch?v={video_id}"
 
-            if video_url not in [v["url"] for v in self.known_videos]:
+                if video_url in known_urls:
+                    continue
+
+                published_el = entry.find("atom:published", ns)
+                added_at = datetime.now(timezone.utc).isoformat()
+                if published_el is not None and published_el.text:
+                    try:
+                        # YouTube RSS uses RFC3339 like: 2025-12-23T12:34:56+00:00 or ...Z
+                        ts = published_el.text.replace("Z", "+00:00")
+                        added_at = datetime.fromisoformat(ts).astimezone(timezone.utc).isoformat()
+                    except Exception:
+                        pass
+
                 self.known_videos.append({
                     "creator": creator["name"],
                     "channel_id": creator["channel_id"],
                     "url": video_url,
-                    "added_at": datetime.now(timezone.utc).isoformat(),
+                    "added_at": added_at,
                     "post_to": creator["post_to"]
                 })
+                known_urls.add(video_url)
+
+            # Cap stored videos per creator so the pool doesn't grow forever.
+            creator_videos = [v for v in self.known_videos if v.get("channel_id") == creator["channel_id"]]
+            others = [v for v in self.known_videos if v.get("channel_id") != creator["channel_id"]]
+            creator_videos.sort(key=lambda x: x.get("added_at", ""), reverse=True)
+            self.known_videos = others + creator_videos[:MAX_VIDEOS_PER_CREATOR]
         except Exception as e:
             logger.error(f"Error parsing RSS for {creator['name']}: {e}")
 
@@ -142,14 +174,8 @@ class YouTubeFeed(commands.Cog):
     @tasks.loop(time=POST_TIME_UTC)
     async def daily_post(self):
         logger.info(f"Daily post task fired at {datetime.now(timezone.utc)}")
-        
-        # Group videos by their target channel
-        videos_by_channel = {}
-        for video in self.known_videos:
-            channel_id = video["post_to"]
-            if channel_id not in videos_by_channel:
-                videos_by_channel[channel_id] = []
-            videos_by_channel[channel_id].append(video)
+
+        videos_by_channel = self._videos_by_target_channel()
         
         if not videos_by_channel:
             logger.warning("No videos available for any channel")
@@ -175,34 +201,49 @@ class YouTubeFeed(commands.Cog):
     # ---------------- Helpers ----------------
 
     def _select_eligible_video_from_pool(self, videos):
-        """Select an eligible video from a given list of videos."""
-        now = datetime.now(timezone.utc)
-        eligible = []
+        """Pick a random video from the provided pool (per-channel).
+
+        This intentionally ignores cooldown/eligibility and instead focuses on variety.
+        It will try to avoid immediately re-posting the most recently posted URL in this pool.
+        """
+        if not videos:
+            return None
+
+        # Try to avoid the most-recently-posted URL in this pool (helps when spamming /forcecontent).
+        most_recent_url = None
+        most_recent_dt = None
         for v in videos:
-            last_time = self.last_posted.get(v["url"])
-            if not last_time:
-                eligible.append(v)
+            url = v.get("url")
+            ts = self.last_posted.get(url)
+            if not ts:
                 continue
             try:
-                last_dt = datetime.fromisoformat(last_time)
+                dt = datetime.fromisoformat(ts)
             except Exception:
-                last_dt = now - timedelta(days=365)
-            if now - last_dt >= timedelta(days=REPOST_COOLDOWN_DAYS):
-                eligible.append(v)
-        
-        logger.debug(f"Video pool eligibility: {len(videos)} total, {len(eligible)} eligible")
-        if not eligible:
-            # Fallback: pick a random video from the pool
-            if videos:
-                logger.info(f"No eligible videos, picking random from {len(videos)} total")
-                return random.choice(videos)
-            return None
-        # Pick randomly from eligible videos to avoid always posting the same one
-        return random.choice(eligible)
+                continue
+            if most_recent_dt is None or dt > most_recent_dt:
+                most_recent_dt = dt
+                most_recent_url = url
+
+        if most_recent_url and len(videos) > 1:
+            candidates = [v for v in videos if v.get("url") != most_recent_url]
+            if candidates:
+                return random.choice(candidates)
+
+        return random.choice(videos)
 
     def _select_eligible_video(self):
         """Select an eligible video from all known videos (for backward compatibility)."""
         return self._select_eligible_video_from_pool(self.known_videos)
+
+    def _videos_by_target_channel(self):
+        videos_by_channel = {}
+        for video in self.known_videos:
+            channel_id = video.get("post_to")
+            if channel_id is None:
+                continue
+            videos_by_channel.setdefault(channel_id, []).append(video)
+        return videos_by_channel
 
     def prune_removed_creators(self):
         """Drop persisted videos/state for creators no longer in CREATORS."""
@@ -259,16 +300,22 @@ class YouTubeFeed(commands.Cog):
         if CONTENT_ADMIN_ROLE_ID not in [r.id for r in user.roles]:
             return await interaction.response.send_message("You don't have permission to use this.", ephemeral=True)
 
-        # Group videos by their target channel (same as daily post)
-        videos_by_channel = {}
-        for video in self.known_videos:
-            channel_id = video["post_to"]
-            if channel_id not in videos_by_channel:
-                videos_by_channel[channel_id] = []
-            videos_by_channel[channel_id].append(video)
+        # Refresh feeds now (so /forcecontent doesn't depend on the 30-minute loop).
+        # Defer to avoid Discord's interaction timeout during network fetches.
+        await interaction.response.defer(ephemeral=True)
+        try:
+            async with aiohttp.ClientSession() as session:
+                for creator in CREATORS:
+                    await self.fetch_creator_feed(session, creator)
+            save_json(KNOWN_VIDEOS_FILE, self.known_videos)
+            save_json(LAST_SEEN_FILE, self.last_seen)
+        except Exception as e:
+            logger.error(f"Forcecontent RSS refresh failed: {e}")
+
+        videos_by_channel = self._videos_by_target_channel()
         
         if not videos_by_channel:
-            return await interaction.response.send_message("No videos available for any channel.", ephemeral=True)
+            return await interaction.followup.send("No videos available for any channel.")
         
         posted_videos = []
         # For each channel, select and post one eligible video
@@ -279,10 +326,10 @@ class YouTubeFeed(commands.Cog):
                 posted_videos.append(f"{video['creator']} to <#{channel_id}>")
         
         if not posted_videos:
-            return await interaction.response.send_message("No eligible videos to post right now.", ephemeral=True)
+            return await interaction.followup.send("No videos available to post right now.")
         
         summary = "\n".join(posted_videos)
-        await interaction.response.send_message(f"Posted videos:\n{summary}", ephemeral=True)
+        await interaction.followup.send(f"Posted videos:\n{summary}")
 
 
 async def setup(bot):
