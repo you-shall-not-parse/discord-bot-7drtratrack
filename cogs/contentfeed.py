@@ -21,11 +21,6 @@ DATA_DIR = "data"
 
 CREATORS = [
     {
-        "name": "Historigraph",
-        "channel_id": "UCffCZhWRKiNeirye8kyfC3Q",
-        "post_to": 1106900027659522108  # <-- Discord channel ID
-    },
-    {
         "name": "YarnHub",
         "channel_id": "UC-f2WBfSCZiu0bOBydjot3w",
         "post_to": 1106900027659522108
@@ -202,8 +197,8 @@ class YouTubeFeed(commands.Cog):
                 logger.info(f"No eligible videos, picking random from {len(videos)} total")
                 return random.choice(videos)
             return None
-        eligible.sort(key=lambda x: x["added_at"], reverse=True)
-        return eligible[0]
+        # Pick randomly from eligible videos to avoid always posting the same one
+        return random.choice(eligible)
 
     def _select_eligible_video(self):
         """Select an eligible video from all known videos (for backward compatibility)."""
