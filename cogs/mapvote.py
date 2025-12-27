@@ -822,7 +822,7 @@ class MapVote(commands.Cog):
                 pretty = next((p for p, mid in MAPS.items() if mid == winner_id), winner_id)
                 res = rcon_set_rotation([winner_id])
 
-                await self.broadcast_to_all(f"{pretty} has won the vote!\nHead over to dsc.gg/7drc to cast your vote on the next map!")
+                await self.broadcast_to_all(f"{pretty} has won the vote!\nHead over to discord.gg/7dr to cast your vote on the next map!")
                 winner_msg = await channel.send(
                     f"🏆 **Winner: {pretty}**\n"
                     f"The next rotation has been set to this map only."
