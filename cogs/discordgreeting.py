@@ -14,11 +14,18 @@ logger = logging.getLogger(__name__)
 # The first matching role found on the member will be used.
 ROLE_DM_MESSAGES: dict[str, str] = {
 	# Example:
-	"Infantry Trainee": "Welcome! Since you chose Infantry...",
-	"Tank Crew Trainee": "Welcome! Since you chose Armour...",
-	"Recon Trainee": "Welcome! Since you chose Recon...",
-	"Blueberry": "Welcome! Since you chose Blueberry...",
-	"Diplomat": "Welcome! Since you chose Diplomat...",
+	"Infantry Trainee": " Welcome! Since you chose Infantry trainee...",
+	"Tank Crew Trainee": "Welcome! Since you chose Armour trainee...",
+	"Recon Trainee": "Welcome! Since you chose Recon trainee...",
+	"Blueberry": "**Welcome! Since you chose Blueberry...** \n\n" 
+	"Check out <#1441744889145720942> and join us in <#1441511200474271875> for HLL chatter, in <#1398672228803018763>  for other games or in <#1399082728313458778> for hobbies.\n\n"
+    "👋 We recommend you add your current T17 HLL in-game name with the # numbers after it in <#1098665953706909848> so we can identify each other!\n\n"
+    "😲 We also have <#1099248200776421406> channel for you to add your own server roles for in game rank.\n\n"
+	"You can also map vote here <#1441751747935735878>\n\n",
+	"Diplomat": "**Welcome! Since you chose Diplomat...** \n\n" 
+	"👋 Check out <#1441744889145720942> and join us in <#1441511200474271875> for HLL chatter, in <#1398672228803018763> for other games or in <#1399082728313458778> for hobbies.\n\n"
+	"You can see all of our upcoming events in <#1332736267485708419> to plan and organise events with us! \n\n"
+    "You can also map vote here <#1441751747935735878>\n\n",
 }
 
 # If the member's matched onboarding role is in this set, the bot will also
