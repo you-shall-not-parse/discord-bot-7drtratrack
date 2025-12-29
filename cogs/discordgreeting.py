@@ -18,15 +18,15 @@ ROLE_DM_MESSAGES: dict[str, str] = {
 	"Tank Crew Trainee": "Welcome! Since you chose Armour trainee...",
 	"Recon Trainee": "Welcome! Since you chose Recon trainee...",
 	"Blueberry": "**Welcome! Since you chose Blueberry...** \n\n" 
-	"Check out [#❓｜community-info-and-faq](https://discord.com/channels/1097913605082579024/1441744889145720942) and join us in [#🫐｜community-chat](https://discord.com/channels/1097913605082579024/1441511200474271875) for HLL chatter, in [#🕹️｜the-arcade](https://discord.com/channels/1097913605082579024/1398672228803018763)  for other games or in [#🧙🏻‍♂️｜side-quests](https://discordapp.com/channels/1097913605082579024/1399082728313458778) for hobbies.\n\n"
+	"Check out [#community-info-and-faq](https://discord.com/channels/1097913605082579024/1441744889145720942) and join us in [#community-chat](https://discord.com/channels/1097913605082579024/1441511200474271875) for HLL chatter, in [#the-arcade](https://discord.com/channels/1097913605082579024/1398672228803018763)  for other games or in [#side-quests](https://discordapp.com/channels/1097913605082579024/1399082728313458778) for hobbies.\n\n"
     "👋 We recommend you add your current T17 HLL in-game name with the # numbers after it in [#team-17-names](https://discord.com/channels/1097913605082579024/1098665953706909848) so we can identify each other!\n\n"
     "😲 We also have [#reaction-roles](https://discord.com/channels/1097913605082579024/1099248200776421406) channel for you to add your own server roles for in game rank.\n\n"
 	"Interested in joining us? Click the button in [#recruitform-requests](https://discord.com/channels/1097913605082579024/1401634001248190515)\n\n",
-	"You can also map vote here [#🗺️｜map-voting](https://discord.com/channels/1097913605082579024/1441751747935735878)\n\n"
+	"You can also map vote here [#map-voting](https://discord.com/channels/1097913605082579024/1441751747935735878)\n\n"
 	"Diplomat": "**Welcome! Since you chose Diplomat...** \n\n" 
-	"👋 Check out [#❓｜community-info-and-faq](https://discord.com/channels/1097913605082579024/1441744889145720942) and join us in [#🫐｜community-chat](https://discord.com/channels/1097913605082579024/1441511200474271875) for HLL chatter, in [#🕹️｜the-arcade](https://discord.com/channels/1097913605082579024/1398672228803018763) for other games or in [#🧙🏻‍♂️｜side-quests](https://discordapp.com/channels/1097913605082579024/1399082728313458778) for hobbies.\n\n"
+	"👋 Check out [#community-info-and-faq](https://discord.com/channels/1097913605082579024/1441744889145720942) and join us in [#community-chat](https://discord.com/channels/1097913605082579024/1441511200474271875) for HLL chatter, in [#the-arcade](https://discord.com/channels/1097913605082579024/1398672228803018763) for other games or in [#side-quests](https://discordapp.com/channels/1097913605082579024/1399082728313458778) for hobbies.\n\n"
 	"You can see all of our upcoming events in [#upcoming-events-calendar](https://discord.com/channels/1097913605082579024/1332736267485708419) to plan and organise events with us! \n\n"
-    "You can also map vote here [#🗺️｜map-voting](https://discord.com/channels/1097913605082579024/1441751747935735878)\n\n",
+    "You can also map vote here [#map-voting](https://discord.com/channels/1097913605082579024/1441751747935735878)\n\n",
 }
 
 # If the member's matched onboarding role is in this set, the bot will also
