@@ -139,8 +139,17 @@ class DiscordGreeting(commands.Cog):
 
 	@commands.Cog.listener()
 	async def on_member_join(self, member: discord.Member):
+		# Allow leave/rejoin testing (or genuine rejoins) to receive DMs again.
+		self._already_dmed.discard(member.id)
+		# Note: we intentionally don't try to cancel any prior tasks here; those
+		# would be from a previous join and will naturally no-op or time out.
 		# Discord Onboarding roles are often applied *after* join, so we wait/poll.
 		asyncio.create_task(self._welcome_after_onboarding(member))
+
+	@commands.Cog.listener()
+	async def on_member_remove(self, member: discord.Member):
+		# If they leave and rejoin later, they should be eligible to receive the DM again.
+		self._already_dmed.discard(member.id)
 
 	@commands.Cog.listener()
 	async def on_member_update(self, before: discord.Member, after: discord.Member):
