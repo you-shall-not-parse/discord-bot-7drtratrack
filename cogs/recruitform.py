@@ -201,7 +201,7 @@ class RecruitFormCog(commands.Cog):
                 "Filling in this form is one of three short steps to joining us! \n\n"
                 "If you're on mobile, you may need to click the speech button to the right in order to open the text input.\n\n"
                 "You can type 'cancel' at any time to abort and you can restart by clicking the 'start application' button"
-                " in <#1401634001248190515> channel. This form will time-out after 5 minutes. \n\n"
+                " in [#recruitform-requests](https://discord.com/channels/1097913605082579024/1401634001248190515) channel. This form will time-out after 5 minutes. \n\n"
                 "By completing this form you agree to follow the rules, be a positive member and attend our events 1-2 times per week.\n\n"
                 "Please answer the following questions one by one:\n\n"
             )
