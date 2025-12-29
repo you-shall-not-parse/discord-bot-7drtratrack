@@ -48,6 +48,20 @@ class DiscordGreeting(commands.Cog):
 	def __init__(self, bot: commands.Bot):
 		self.bot = bot
 		self._already_dmed: set[int] = set()
+		self._welcome_tasks: dict[int, asyncio.Task] = {}
+		self._dm_locks: dict[int, asyncio.Lock] = {}
+
+	def _get_dm_lock(self, user_id: int) -> asyncio.Lock:
+		lock = self._dm_locks.get(user_id)
+		if lock is None:
+			lock = asyncio.Lock()
+			self._dm_locks[user_id] = lock
+		return lock
+
+	def _cancel_welcome_task(self, user_id: int) -> None:
+		task = self._welcome_tasks.pop(user_id, None)
+		if task and not task.done():
+			task.cancel()
 
 	def _pick_role_and_message(self, member: discord.Member) -> Optional[tuple[str, str]]:
 		if not ROLE_DM_MESSAGES:
@@ -96,60 +110,72 @@ class DiscordGreeting(commands.Cog):
 			)
 
 	async def _safe_dm(self, member: discord.Member, message: str) -> bool:
-		try:
-			await member.send(message)
-			return True
-		except discord.Forbidden:
-			logger.info("Cannot DM member %s (%s): DMs closed.", member, member.id)
-			return False
-		except discord.HTTPException as e:
-			logger.warning("Failed to DM member %s (%s): %s", member, member.id, e)
-			return False
+		lock = self._get_dm_lock(member.id)
+		async with lock:
+			# Re-check inside the lock so join-task + member_update cannot double-send.
+			if member.id in self._already_dmed:
+				return False
+			try:
+				await member.send(message)
+				self._already_dmed.add(member.id)
+				return True
+			except discord.Forbidden:
+				logger.info("Cannot DM member %s (%s): DMs closed.", member, member.id)
+				return False
+			except discord.HTTPException as e:
+				logger.warning("Failed to DM member %s (%s): %s", member, member.id, e)
+				return False
 
 	async def _welcome_after_onboarding(self, member: discord.Member) -> None:
 		# Avoid double-sends from join + role update events.
 		if member.id in self._already_dmed:
 			return
+		try:
+			waited = 0
+			picked = self._pick_role_and_message(member)
+			while picked is None and waited < MAX_WAIT_FOR_ONBOARDING_ROLE_SECONDS:
+				await asyncio.sleep(ROLE_POLL_INTERVAL_SECONDS)
+				waited += ROLE_POLL_INTERVAL_SECONDS
 
-		waited = 0
-		picked = self._pick_role_and_message(member)
-		while picked is None and waited < MAX_WAIT_FOR_ONBOARDING_ROLE_SECONDS:
-			await asyncio.sleep(ROLE_POLL_INTERVAL_SECONDS)
-			waited += ROLE_POLL_INTERVAL_SECONDS
+				# Member object may be stale; refetch from guild to see latest roles.
+				try:
+					fresh = await member.guild.fetch_member(member.id)
+				except discord.HTTPException:
+					fresh = member
 
-			# Member object may be stale; refetch from guild to see latest roles.
-			try:
-				fresh = await member.guild.fetch_member(member.id)
-			except discord.HTTPException:
-				fresh = member
+				picked = self._pick_role_and_message(fresh)
 
-			picked = self._pick_role_and_message(fresh)
+			matched_role_name: Optional[str] = None
+			matched_message: Optional[str] = None
+			if picked is not None:
+				matched_role_name, matched_message = picked
 
-		matched_role_name: Optional[str] = None
-		matched_message: Optional[str] = None
-		if picked is not None:
-			matched_role_name, matched_message = picked
-
-		final_message = matched_message or DEFAULT_DM_MESSAGE
-		sent = await self._safe_dm(member, final_message)
-		if sent:
-			self._already_dmed.add(member.id)
-			if matched_role_name:
+			final_message = matched_message or DEFAULT_DM_MESSAGE
+			sent = await self._safe_dm(member, final_message)
+			if sent and matched_role_name:
 				self._maybe_start_recruit_form(member, matched_role_name)
+		except asyncio.CancelledError:
+			# Cancelled because another path (e.g. member_update) already handled it.
+			return
+		finally:
+			self._welcome_tasks.pop(member.id, None)
 
 	@commands.Cog.listener()
 	async def on_member_join(self, member: discord.Member):
 		# Allow leave/rejoin testing (or genuine rejoins) to receive DMs again.
 		self._already_dmed.discard(member.id)
+		self._cancel_welcome_task(member.id)
 		# Note: we intentionally don't try to cancel any prior tasks here; those
 		# would be from a previous join and will naturally no-op or time out.
 		# Discord Onboarding roles are often applied *after* join, so we wait/poll.
-		asyncio.create_task(self._welcome_after_onboarding(member))
+		task = asyncio.create_task(self._welcome_after_onboarding(member))
+		self._welcome_tasks[member.id] = task
 
 	@commands.Cog.listener()
 	async def on_member_remove(self, member: discord.Member):
 		# If they leave and rejoin later, they should be eligible to receive the DM again.
 		self._already_dmed.discard(member.id)
+		self._cancel_welcome_task(member.id)
 
 	@commands.Cog.listener()
 	async def on_member_update(self, before: discord.Member, after: discord.Member):
@@ -168,7 +194,7 @@ class DiscordGreeting(commands.Cog):
 					matched_role_name, matched_message = picked
 					sent = await self._safe_dm(after, matched_message)
 					if sent:
-						self._already_dmed.add(after.id)
+						self._cancel_welcome_task(after.id)
 						self._maybe_start_recruit_form(after, matched_role_name)
 
 
