@@ -1,0 +1,167 @@
+import asyncio
+import logging
+from typing import Optional
+
+import discord
+from discord.ext import commands
+
+logger = logging.getLogger(__name__)
+
+# =============================
+# DM TEXT CONFIG (EDIT THIS)
+# =============================
+# Put your onboarding role NAMES here (must match exactly).
+# The first matching role found on the member will be used.
+ROLE_DM_MESSAGES: dict[str, str] = {
+	# Example:
+	"Infantry Trainee": "Welcome! Since you chose Infantry...",
+	"Tank Crew Trainee": "Welcome! Since you chose Armour...",
+	"Recon Trainee": "Welcome! Since you chose Recon...",
+	"Blueberry": "Welcome! Since you chose Blueberry...",
+	"Diplomat": "Welcome! Since you chose Diplomat...",
+}
+
+# If the member's matched onboarding role is in this set, the bot will also
+# automatically start the Recruit Form DM flow (from cogs/recruitform.py).
+RECRUIT_FORM_TRIGGER_ROLES: set[str] = {
+	# Put 3 of your 5 onboarding role names here.
+	# Example: "Infantry",
+	"Infantry Trainee",
+    "Recon Trainee",
+	"Tank Crew Trainee",
+}
+
+# If none of the roles above are found after waiting, this message is used.
+DEFAULT_DM_MESSAGE = (
+	"Welcome! Please complete onboarding and pick a role. "
+	"If you don’t receive the right DM, ping an admin in #entree-chat and they'll assist you."
+)
+
+# How long to wait for Discord Onboarding to apply roles (seconds)
+MAX_WAIT_FOR_ONBOARDING_ROLE_SECONDS = 10 * 60
+
+# Poll interval while waiting (seconds)
+ROLE_POLL_INTERVAL_SECONDS = 5
+
+
+class DiscordGreeting(commands.Cog):
+	def __init__(self, bot: commands.Bot):
+		self.bot = bot
+		self._already_dmed: set[int] = set()
+
+	def _pick_role_and_message(self, member: discord.Member) -> Optional[tuple[str, str]]:
+		if not ROLE_DM_MESSAGES:
+			return None
+
+		member_role_names = {r.name for r in member.roles}
+		for role_name, message in ROLE_DM_MESSAGES.items():
+			if role_name in member_role_names:
+				return role_name, message
+		return None
+
+	def _maybe_start_recruit_form(self, member: discord.Member, matched_role_name: str) -> None:
+		if not RECRUIT_FORM_TRIGGER_ROLES:
+			return
+		if matched_role_name not in RECRUIT_FORM_TRIGGER_ROLES:
+			return
+
+		recruit_cog = self.bot.get_cog("RecruitFormCog")
+		if recruit_cog is None:
+			logger.warning(
+				"RecruitFormCog not loaded; cannot auto-start recruit form for %s (%s).",
+				member,
+				member.id,
+			)
+			return
+
+		starter = getattr(recruit_cog, "start_form_session", None)
+		if starter is None:
+			logger.warning(
+				"RecruitFormCog has no start_form_session(); cannot auto-start recruit form for %s (%s).",
+				member,
+				member.id,
+			)
+			return
+
+		try:
+			started = starter(member)
+			if started:
+				logger.info("Auto-started recruit form for %s (%s)", member, member.id)
+		except Exception as e:
+			logger.warning(
+				"Failed to auto-start recruit form for %s (%s): %s",
+				member,
+				member.id,
+				e,
+			)
+
+	async def _safe_dm(self, member: discord.Member, message: str) -> bool:
+		try:
+			await member.send(message)
+			return True
+		except discord.Forbidden:
+			logger.info("Cannot DM member %s (%s): DMs closed.", member, member.id)
+			return False
+		except discord.HTTPException as e:
+			logger.warning("Failed to DM member %s (%s): %s", member, member.id, e)
+			return False
+
+	async def _welcome_after_onboarding(self, member: discord.Member) -> None:
+		# Avoid double-sends from join + role update events.
+		if member.id in self._already_dmed:
+			return
+
+		waited = 0
+		picked = self._pick_role_and_message(member)
+		while picked is None and waited < MAX_WAIT_FOR_ONBOARDING_ROLE_SECONDS:
+			await asyncio.sleep(ROLE_POLL_INTERVAL_SECONDS)
+			waited += ROLE_POLL_INTERVAL_SECONDS
+
+			# Member object may be stale; refetch from guild to see latest roles.
+			try:
+				fresh = await member.guild.fetch_member(member.id)
+			except discord.HTTPException:
+				fresh = member
+
+			picked = self._pick_role_and_message(fresh)
+
+		matched_role_name: Optional[str] = None
+		matched_message: Optional[str] = None
+		if picked is not None:
+			matched_role_name, matched_message = picked
+
+		final_message = matched_message or DEFAULT_DM_MESSAGE
+		sent = await self._safe_dm(member, final_message)
+		if sent:
+			self._already_dmed.add(member.id)
+			if matched_role_name:
+				self._maybe_start_recruit_form(member, matched_role_name)
+
+	@commands.Cog.listener()
+	async def on_member_join(self, member: discord.Member):
+		# Discord Onboarding roles are often applied *after* join, so we wait/poll.
+		asyncio.create_task(self._welcome_after_onboarding(member))
+
+	@commands.Cog.listener()
+	async def on_member_update(self, before: discord.Member, after: discord.Member):
+		# If onboarding role gets applied after join and the poll hasn't sent yet,
+		# this gives us a second chance to send immediately.
+		if after.id in self._already_dmed:
+			return
+
+		if ROLE_DM_MESSAGES:
+			before_names = {r.name for r in before.roles}
+			after_names = {r.name for r in after.roles}
+			newly_added = after_names - before_names
+			if any(role_name in newly_added for role_name in ROLE_DM_MESSAGES.keys()):
+				picked = self._pick_role_and_message(after)
+				if picked:
+					matched_role_name, matched_message = picked
+					sent = await self._safe_dm(after, matched_message)
+					if sent:
+						self._already_dmed.add(after.id)
+						self._maybe_start_recruit_form(after, matched_role_name)
+
+
+async def setup(bot: commands.Bot):
+	await bot.add_cog(DiscordGreeting(bot))

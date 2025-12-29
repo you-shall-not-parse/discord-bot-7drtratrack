@@ -265,6 +265,19 @@ class RecruitFormCog(commands.Cog):
             if active is asyncio.current_task():
                 self._sessions.pop(user.id, None)
 
+    def start_form_session(self, user: discord.User) -> bool:
+        """Start the DM form for a user if not already in progress.
+
+        Returns True if a new session was started, False if one is already active.
+        """
+        existing = self._sessions.get(user.id)
+        if existing and not existing.done():
+            return False
+
+        task = asyncio.create_task(self.start_form(user))
+        self._sessions[user.id] = task
+        return True
+
     async def post_answers(self, user, answers):
         """Posts the answers to the designated channel as a NEW embed every time."""
         channel = self.bot.get_channel(ANSWER_POST_CHANNEL_ID)
@@ -330,18 +343,13 @@ class RecruitButtonView(discord.ui.View):
 
         user_id = interaction.user.id
 
-        # Prevent concurrent sessions (stops double-click duplicates)
-        existing = self.cog._sessions.get(user_id)
-        if existing and not existing.done():
+        started = self.cog.start_form_session(interaction.user)
+        if not started:
             await interaction.response.send_message(
                 "You already have a form in progress in your DMs. Please complete it or wait for it to time out.",
                 ephemeral=True
             )
             return
-
-        # Register session BEFORE any await to avoid race conditions
-        task = asyncio.create_task(self.cog.start_form(interaction.user))
-        self.cog._sessions[user_id] = task
 
         await interaction.response.send_message(
             "Check your DMs for the recruitment form!",
