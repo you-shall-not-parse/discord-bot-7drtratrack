@@ -151,30 +151,30 @@ class EmbedManager(commands.Cog):
             color=discord.Color.red()
         )
         embed3.add_field(
-            name="The servers you will see as a non-clan member @Blueberry!",
+            name="The servers you will see as a non-clan member, i.e. Blueberry (B) or Diplomat (D). It doesn't particulary matter if you are a diplomat but in the blueberry role, it just means the experience might not be tailored fully for you!",
             value=(
                 ":pencil:｜**Information** \n"
-                "- <#1098337552194351114> \n"
-                "- <#1296885095138852967> \n"
-                "- <#1098525492631572564> \n"
-                "- <#1098316982459314279> \n"          
-                "- <#1099248200776421406> \n"
-                "- <#1441744889145720942> \n"          
-                "- <#1441751747935735878> \n"
-                "- <#1332736267485708419> (Diplomats-Only)\n"
+                "- <#1098337552194351114> [B][D] \n"
+                "- <#1296885095138852967> [B][D] \n"
+                "- <#1098525492631572564> [B][D] \n"
+                "- <#1098316982459314279> [B] \n"          
+                "- <#1099248200776421406> [B] \n"
+                "- <#1441744889145720942> [B] \n"          
+                "- <#1441751747935735878> [B] \n"
+                "- <#1332736267485708419> [D]\n"\
                 ":military_helmet:｜**Recruits** \n"
-                "- <#1098330967166419055> \n"
-                "- <#1401634001248190515> \n"     
-                "- <#1098665953706909848> \n"
+                "- <#1098330967166419055> [B][D] \n"
+                "- <#1401634001248190515> [B] \n"     
+                "- <#1098665953706909848> [B] \n"
                 ":speech_balloon:｜**General** \n"
-                "- <#1441511200474271875> \n"
-                "- <#1099090838203666474> \n"
-                "- <#1398672228803018763> \n"
-                "- <#1399082728313458778> \n"
+                "- <#1441511200474271875> [B][D] \n"
+                "- <#1099090838203666474> [B] \n"
+                "- <#1398672228803018763> [B][D] \n"
+                "- <#1399082728313458778> [B][D] \n"
                 ":speaker:｜**Voice Chat** \n"
-                "- <#1409966793321091255> \n"
+                "- <#1409966793321091255> [B] \n"
                 ":shirt:｜**Merchandise** \n"
-                "- <#1212477923542704188> \n"
+                "- <#1212477923542704188> [B][D] \n"
             ),
             inline=False
         )
