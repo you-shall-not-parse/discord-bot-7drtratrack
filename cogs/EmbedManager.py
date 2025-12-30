@@ -94,24 +94,24 @@ class EmbedManager(commands.Cog):
 
         # ---------------- EMBED 2 ----------------
         embed2 = discord.Embed(
-            title="Blueberry :blueberries: Frequently Asked Questions (FAQs)",
+            title="Frequently Asked Questions (FAQs)",
             description="",
             color=discord.Color.red()
         )
         embed2.add_field(
             name=":question: How do I join 7DR?",
             value=(
-                "Please fill in a recruit form in <#1401634001248190515> and we'll get back to you! Make sure to state which training school you'd like to join: Infantry, Armour, or Recon.\n"
-                "You must be 18+ and level 20 in-game."
-                " If accepted, you will join a school of your choosing and once you complete your basic training you will be assigned to a unit."
+                "You must first complete a recruit form to be considered.\n\n"
+                "Direct-entry trainees will have recieved a message from RatBot. If you missed this or you're a blueberry, please press the Start Application button in <#1401634001248190515> and we'll get back to you!\n"
+                "If accepted, you will join a school of your choosing and once you complete your basic training (aim-shoot-communicate) you will be assigned to a unit."
             ),
             inline=False
         )
         embed2.add_field(
             name=":question: How do I find a squad?",
             value=(
-                "As a non-clan member (blueberry) you'll be able to see the <#1099090838203666474> channel."
-                " Drop a message in there to link up with clan members or other non-clan members (blueberries)"
+                "Drop a message in <#1099090838203666474> to link up with clan members or non-clan members (blueberries)"
+                "Keep an eye on server seeding events in <#1441511200474271875> channel too!"
             ),
             inline=False
         )
@@ -123,11 +123,9 @@ class EmbedManager(commands.Cog):
             inline=False
         )
         embed2.add_field(
-            name=":question: When can I play with 7DR?",
+            name=":question: How do I vote for a map?",
             value=(
-                "We won't always be available to play :cry: and occasionally will be playing clan matches in a locked server"
-                ", or we might be otherwise occupied... no need to stress however, we will notify you in <#1441511200474271875>"
-                " when we are planning to seed our server and you can join in on the fun, or let us know where you are and we will join you!"
+                "You can vote for maps in <#1441751747935735878>!"
             ),
             inline=False
         )
@@ -150,32 +148,57 @@ class EmbedManager(commands.Cog):
             description="",
             color=discord.Color.red()
         )
+        embed3.description = (
+            "This directory shows the channels you can see as a non‑clan member: **Blueberry (B)** or **Diplomat (D)**.\n"
+            "Diplomat access is mostly informational; Blueberry access may not be fully tailored.\n"
+            "Direct‑entry trainees and clan members will gain more access after onboarding and role assignment."
+        )
+
         embed3.add_field(
-            name="The servers you will see as a non-clan member, i.e. Blueberry (B) or Diplomat (D). It doesn't particulary matter if you are a diplomat but in the blueberry role, it just means the experience might not be tailored fully for you!",
+            name=":pencil:｜Information",
             value=(
-                ":pencil:｜**Information** \n"
-                "- <#1098337552194351114> [B][D] \n"
-                "- <#1296885095138852967> [B][D] \n"
-                "- <#1098525492631572564> [B][D] \n"
-                "- <#1098316982459314279> [B] \n"          
-                "- <#1099248200776421406> [B] \n"
-                "- <#1441744889145720942> [B] \n"          
-                "- <#1441751747935735878> [B] \n"
-                "- <#1332736267485708419> [D]\n"\
-                ":military_helmet:｜**Recruits** \n"
-                "- <#1098330967166419055> [B][D] \n"
-                "- <#1401634001248190515> [B] \n"     
-                "- <#1098665953706909848> [B] \n"
-                ":speech_balloon:｜**General** \n"
-                "- <#1441511200474271875> [B][D] \n"
-                "- <#1099090838203666474> [B] \n"
-                "- <#1398672228803018763> [B][D] \n"
-                "- <#1399082728313458778> [B][D] \n"
-                ":speaker:｜**Voice Chat** \n"
-                "- <#1409966793321091255> [B] \n"
-                ":shirt:｜**Merchandise** \n"
-                "- <#1212477923542704188> [B][D] \n"
+            "- <#1098337552194351114> [B][D]\n"
+            "- <#1296885095138852967> [B][D]\n"
+            "- <#1098525492631572564> [B][D]\n"
+            "- <#1098316982459314279> [B]\n"
+            "- <#1099248200776421406> [B]\n"
+            "- <#1441744889145720942> [B][D]\n"
+            "- <#1441751747935735878> [B][D]\n"
+            "- <#1332736267485708419> [D]"
             ),
+            inline=False
+        )
+
+        embed3.add_field(
+            name=":military_helmet:｜Recruits",
+            value=(
+            "- <#1098330967166419055> [B][D]\n"
+            "- <#1401634001248190515> [B]\n"
+            "- <#1098665953706909848> [B]"
+            ),
+            inline=False
+        )
+
+        embed3.add_field(
+            name=":speech_balloon:｜General",
+            value=(
+            "- <#1441511200474271875> [B][D]\n"
+            "- <#1099090838203666474> [B]\n"
+            "- <#1398672228803018763> [B][D]\n"
+            "- <#1399082728313458778> [B][D]"
+            ),
+            inline=False
+        )
+
+        embed3.add_field(
+            name=":speaker:｜Voice Chat",
+            value="- <#1409966793321091255> [B]",
+            inline=False
+        )
+
+        embed3.add_field(
+            name=":shirt:｜Merchandise",
+            value="- <#1212477923542704188> [B][D]",
             inline=False
         )
         blocks.append({

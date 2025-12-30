@@ -3,21 +3,20 @@ import discord
 from discord.ext import commands
 import sqlite3
 import os
+import json
+import time
 
 # === CONFIGURATION ===
 FORM_CHANNEL_ID = 1401634001248190515   # Channel where the form embed/button is posted
 ANSWER_POST_CHANNEL_ID = 1098331019364552845  # Channel where form responses are posted
 
 QUESTIONS = [
-    "**What is your current T17 username?**",
-    "**What is your Age? (as a number/integer)**",
-    "**What is your country of residence?**",
-    "**What is your timezone?**",
-    "**What is your Hell Let Loose in-game level?**",
-    "**What is your Discord username?**",
-    "**How did you find us?**",
-    "**Details of any previous milsim experience (established units, not games you've played)?**",
-    "**What do you enjoy about HLL, particular role and/or play style (offensive/defensive etc)?**",
+    "**Q1 What is your Age? (as a number/integer)**",
+    "**Q2 What is your country of residence?**",
+    "**Q3 What is your Hell Let Loose in-game level?**",
+    "**Q4 How did you find us?**",
+    "**Q5 Details of any previous milsim experience (established units, not games you've played)?**",
+    "**Q6 What do you enjoy about HLL, particular role and/or play style (offensive/defensive etc)?**",
 ]
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "nickname.db")
@@ -38,6 +37,16 @@ class RecruitFormCog(commands.Cog):
         """Ensure the DB supports multiple submissions per user, migrate if needed."""
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
+
+        # Session persistence for in-progress DM flows (so restarts don't wipe progress)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS recruit_sessions (
+                user_id INTEGER PRIMARY KEY,
+                step_index INTEGER NOT NULL,
+                answers_json TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+        """)
 
         # Detect if table exists
         c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='recruit_embeds'")
@@ -79,6 +88,66 @@ class RecruitFormCog(commands.Cog):
             c.execute("DROP TABLE recruit_embeds")
             c.execute("ALTER TABLE recruit_embeds_new RENAME TO recruit_embeds")
 
+        conn.commit()
+        conn.close()
+
+    def load_form_session(self, user_id: int) -> tuple[int, list[str]] | None:
+        """Return (step_index, answers) for an in-progress user session, or None."""
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute(
+            "SELECT step_index, answers_json FROM recruit_sessions WHERE user_id = ?",
+            (user_id,),
+        )
+        row = c.fetchone()
+        conn.close()
+        if not row:
+            return None
+
+        step_index, answers_json = row
+        try:
+            answers = json.loads(answers_json) if answers_json else []
+        except json.JSONDecodeError:
+            answers = []
+
+        if not isinstance(step_index, int) or step_index < 0:
+            step_index = 0
+        if not isinstance(answers, list):
+            answers = []
+
+        # Clamp to valid range
+        step_index = min(step_index, len(QUESTIONS))
+        if len(answers) > len(QUESTIONS):
+            answers = answers[: len(QUESTIONS)]
+
+        return step_index, [str(a) for a in answers]
+
+    def save_form_session(self, user_id: int, step_index: int, answers: list[str]) -> None:
+        """Upsert an in-progress session."""
+        step_index = max(0, min(int(step_index), len(QUESTIONS)))
+        payload = json.dumps(list(answers), ensure_ascii=False)
+        now = int(time.time())
+
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute(
+            """
+            INSERT INTO recruit_sessions (user_id, step_index, answers_json, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                step_index = excluded.step_index,
+                answers_json = excluded.answers_json,
+                updated_at = excluded.updated_at
+            """,
+            (user_id, step_index, payload, now),
+        )
+        conn.commit()
+        conn.close()
+
+    def clear_form_session(self, user_id: int) -> None:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("DELETE FROM recruit_sessions WHERE user_id = ?", (user_id,))
         conn.commit()
         conn.close()
 
@@ -196,32 +265,51 @@ class RecruitFormCog(commands.Cog):
             return
 
         try:
-            await dm.send(
-                "**Welcome to 7DR Recruitment Form!**\n\n"
-                "Filling in this form is one of three short steps to joining us! \n\n"
-                "If you're on mobile, you may need to click the speech button to the right in order to open the text input.\n\n"
-                "You can type 'cancel' at any time to abort and you can restart by clicking the 'start application' button"
-                " in [#recruitform-requests](https://discord.com/channels/1097913605082579024/1401634001248190515) channel. This form will time-out after 5 minutes. \n\n"
-                "By completing this form you agree to follow the rules, be a positive member and attend our events 1-2 times per week.\n\n"
-                "Please answer the following questions one by one:\n\n"
-            )
+            # Resume from persisted state if available (e.g. after a bot restart)
+            resumed = False
+            start_index = 0
+            answers: list[str] = []
+            persisted = self.load_form_session(user.id)
+            if persisted:
+                start_index, answers = persisted
+                resumed = start_index > 0 or len(answers) > 0
 
-            answers = []
-            for question in QUESTIONS:
+            if resumed:
+                await dm.send(
+                    "**Welcome back!**\n\n"
+                    "It looks like you had a recruit form in progress. I'll resume where you left off.\n\n"
+                    "You can type 'cancel' at any time to abort.\n\n"
+                )
+            else:
+                await dm.send(
+                    "**Welcome to 7DR!**\n\n"
+                    "We have 6 quick quesions for you before we can add you to our unit! \n\n"
+                    "If you're on mobile, you may need to click the speech button to the right to open the text input.\n\n"
+                    "You can type 'cancel' at any time to abort and you can restart by clicking 'Start Application' in [#recruitform-requests](https://discord.com/channels/1097913605082579024/1401634001248190515) channel. \n\n"
+                    "Please answer the following questions one by one as they appear:\n\n"
+                )
+
+            # Ensure there's always a session record while active
+            self.save_form_session(user.id, start_index, answers)
+
+            for idx in range(start_index, len(QUESTIONS)):
+                question = QUESTIONS[idx]
                 await dm.send(question)
 
                 def check(m: discord.Message):
                     return m.author == user and m.channel == dm
 
                 try:
-                    msg = await self.bot.wait_for('message', check=check, timeout=300)
+                    msg = await self.bot.wait_for('message', check=check, timeout=3600)
                 except asyncio.TimeoutError:
-                    await dm.send("Timed out waiting for a response. Please click the button again to restart the form.")
+                    await dm.send("Timed out waiting for a response. Please click the button in [#recruitform-requests](https://discord.com/channels/1097913605082579024/1401634001248190515) to restart the form.")
+                    self.clear_form_session(user.id)
                     return
 
                 content = msg.content.strip()
                 if content.lower() in ("cancel", "stop", "quit", "exit"):
-                    await dm.send("Form cancelled. You can restart by clicking the button again.")
+                    await dm.send("Form cancelled. You can restart by clicking the button again in [#recruitform-requests](https://discord.com/channels/1097913605082579024/1401634001248190515)  to restart the form..")
+                    self.clear_form_session(user.id)
                     return
 
                 if not content:
@@ -230,20 +318,25 @@ class RecruitFormCog(commands.Cog):
                         msg = await self.bot.wait_for('message', check=check, timeout=60)
                         content = msg.content.strip()
                     except asyncio.TimeoutError:
-                        await dm.send("Timed out waiting for a response. Please click the button again to restart the form using the button in #recruitform_requests channel.")
+                        await dm.send("Timed out waiting for a response. Please click the button again to restart the form using the button in [#recruitform-requests](https://discord.com/channels/1097913605082579024/1401634001248190515) channel.")
+                        self.clear_form_session(user.id)
                         return
                     if not content:
-                        await dm.send("Answer was empty again. Cancelling - please restart the form using the button in #recruitform_requests channel.")
+                        await dm.send("Answer was empty again. Cancelling - please restart the form using the button in [#recruitform-requests](https://discord.com/channels/1097913605082579024/1401634001248190515) channel.")
+                        self.clear_form_session(user.id)
                         return
 
                 answers.append(content)
+                # Persist progress after each answer
+                self.save_form_session(user.id, idx + 1, answers)
 
             # Always post a NEW message; do not update prior ones
             await self.post_answers(user, answers)
+            self.clear_form_session(user.id)
             await dm.send(
                 "Thank you! Your answers are now in the [#recruitform-responses](https://discord.com/channels/1097913605082579024/1098331019364552845) channel! and are being reviewed by command staff\n\n"
                 "2️⃣ Your next step of the induction process is to change your T17 in-game name on Hell Let Loose to"
-                " include Pte (Private) at the start and post it in the [#team-17-names](https://discord.com/channels/1097913605082579024/1098665953706909848) channel so we can change that for you. \n\n"
+                " include Pte (Private) at the start and post it in the [#team-17-names](https://discord.com/channels/1097913605082579024/1098665953706909848) channel so we can change that in discord for you. \n\n"
                 "If unsure see our [tutorial video](https://discord.com/channels/1097913605082579024/1098665953706909848/1445828966006001808) or ask one of our officers! \n\n"
                 "3️⃣ Then add your [7DR] clan tags on the in-game options menu and you're all set! 🥳 \n\n"
                 "Discord can be daunting... we have some [discord tutorial videos](https://discord.com/channels/1097913605082579024/1363096754697797742) to help you sign-up to events and get involved! \n\n"
@@ -342,7 +435,7 @@ class RecruitButtonView(discord.ui.View):
         started = self.cog.start_form_session(interaction.user)
         if not started:
             await interaction.response.send_message(
-                "You already have a form in progress in your DMs. Please complete it or wait for it to time out.",
+                "You already have a form in progress in your DMs. Please complete it or wait for it to time out (5 minutes).",
                 ephemeral=True
             )
             return
