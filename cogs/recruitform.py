@@ -302,13 +302,13 @@ class RecruitFormCog(commands.Cog):
                 try:
                     msg = await self.bot.wait_for('message', check=check, timeout=3600)
                 except asyncio.TimeoutError:
-                    await dm.send("Timed out waiting for a response. Please click the button in [#recruitform-requests](https://discord.com/channels/1097913605082579024/1401634001248190515) to restart the form.")
+                    await dm.send("Timed out waiting for a response. Please click the button after your discord cooldown in [#recruitform-requests](https://discord.com/channels/1097913605082579024/1401634001248190515) to restart the form.")
                     self.clear_form_session(user.id)
                     return
 
                 content = msg.content.strip()
                 if content.lower() in ("cancel", "stop", "quit", "exit"):
-                    await dm.send("Form cancelled. You can restart by clicking the button again in [#recruitform-requests](https://discord.com/channels/1097913605082579024/1401634001248190515)  to restart the form..")
+                    await dm.send("Form cancelled. You can restart by clicking the button again after your discord cooldown in [#recruitform-requests](https://discord.com/channels/1097913605082579024/1401634001248190515)  to restart the form..")
                     self.clear_form_session(user.id)
                     return
 
@@ -318,11 +318,11 @@ class RecruitFormCog(commands.Cog):
                         msg = await self.bot.wait_for('message', check=check, timeout=60)
                         content = msg.content.strip()
                     except asyncio.TimeoutError:
-                        await dm.send("Timed out waiting for a response. Please click the button again to restart the form using the button in [#recruitform-requests](https://discord.com/channels/1097913605082579024/1401634001248190515) channel.")
+                        await dm.send("Timed out waiting for a response. Please click the button again after your discord cooldown to restart the form using the button in [#recruitform-requests](https://discord.com/channels/1097913605082579024/1401634001248190515) channel.")
                         self.clear_form_session(user.id)
                         return
                     if not content:
-                        await dm.send("Answer was empty again. Cancelling - please restart the form using the button in [#recruitform-requests](https://discord.com/channels/1097913605082579024/1401634001248190515) channel.")
+                        await dm.send("Answer was empty again. Cancelling - please restart the form after your discord cooldown using the button in [#recruitform-requests](https://discord.com/channels/1097913605082579024/1401634001248190515) channel.")
                         self.clear_form_session(user.id)
                         return
 

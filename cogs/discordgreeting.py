@@ -13,9 +13,9 @@ logger = logging.getLogger(__name__)
 # Put your onboarding role NAMES here (must match exactly).
 # The first matching role found on the member will be used.
 ROLE_DM_MESSAGES: dict[str, str] = {
-	"Infantry Trainee": " Welcome to 7DR! You chose our Infantry section",
-	"Tank Crew Trainee": "Welcome to 7DR! You chose our  Armour section",
-	"Recon Trainee": "Welcome to 7DR! You chose our Recon section",
+	"Infantry Trainee": " You chose our Infantry section",
+	"Tank Crew Trainee": "You chose our Armour section",
+	"Recon Trainee": "You chose our Recon section",
 	"Blueberry": "**Welcome! Since you chose Blueberry...** \n\n" 
 	"Check out [#community-info-and-faq](https://discord.com/channels/1097913605082579024/1441744889145720942) and join us in [#community-chat](https://discord.com/channels/1097913605082579024/1441511200474271875) for HLL chatter, in [#the-arcade](https://discord.com/channels/1097913605082579024/1398672228803018763)  for other games or in [#side-quests](https://discordapp.com/channels/1097913605082579024/1399082728313458778) for hobbies.\n\n"
     "👋 We recommend you add your current T17 HLL in-game name with the # numbers after it in [#team-17-names](https://discord.com/channels/1097913605082579024/1098665953706909848) so we can identify each other!\n\n"
