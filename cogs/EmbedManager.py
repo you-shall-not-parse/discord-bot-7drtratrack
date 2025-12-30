@@ -101,7 +101,7 @@ class EmbedManager(commands.Cog):
         embed2.add_field(
             name=":question: How do I join 7DR?",
             value=(
-                "You must first complete a recruit form to be considered.\n\n"
+                "You must first complete a recruit form to be considered.\n"
                 "Direct-entry trainees will have recieved a message from RatBot. If you missed this or you're a blueberry, please press the Start Application button in <#1401634001248190515> and we'll get back to you!\n"
                 "If accepted, you will join a school of your choosing and once you complete your basic training (aim-shoot-communicate) you will be assigned to a unit."
             ),
@@ -110,7 +110,7 @@ class EmbedManager(commands.Cog):
         embed2.add_field(
             name=":question: How do I find a squad?",
             value=(
-                "Drop a message in <#1099090838203666474> to link up with clan members or non-clan members (blueberries)"
+                "Drop a message in <#1099090838203666474> to link up with clan members or non-clan members (blueberries)\n"
                 "Keep an eye on server seeding events in <#1441511200474271875> channel too!"
             ),
             inline=False

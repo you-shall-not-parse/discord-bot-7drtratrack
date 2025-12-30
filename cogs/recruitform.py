@@ -345,7 +345,7 @@ class RecruitFormCog(commands.Cog):
         except Exception as e:
             print(f"Error in DM form with {user}: {e}")
             try:
-                await dm.send("An error occurred while processing your form, please try again the same way you did previously.")
+                await dm.send("An error occurred while processing your form, please try again or seek advice in #entree-chat.")
             except Exception:
                 pass
         finally:
