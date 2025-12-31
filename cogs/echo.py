@@ -19,7 +19,10 @@ class Echo(commands.Cog):
 	@app_commands.command(name="7drecho", description="Send a user-defined message.")
 	@app_commands.describe(message="The message to send")
 	async def seven_drecho(self, interaction: discord.Interaction, message: str):
-		await interaction.response.send_message(message)
+		# Ephemeral ack so the channel doesn't show "<user> used /7drecho".
+		await interaction.response.send_message("Sent.", ephemeral=True)
+		if interaction.channel is not None:
+			await interaction.channel.send(message)
 
 	@commands.Cog.listener()
 	async def on_ready(self):
