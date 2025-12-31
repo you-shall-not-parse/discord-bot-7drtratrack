@@ -83,6 +83,7 @@ async def main():
         await bot.load_extension("cogs.BirthdayCog")
         await bot.load_extension("cogs.contentfeed")
         await bot.load_extension("cogs.discordgreeting")
+        await bot.load_extension("cogs.echo")
         # await bot.load_extension("cogs.Killfeedcog")
         await bot.load_extension("cogs.mapvote")
         await bot.load_extension("cogs.HLLInfLeaderboard")
