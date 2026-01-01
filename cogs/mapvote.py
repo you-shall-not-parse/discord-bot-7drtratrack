@@ -45,7 +45,6 @@ MAPS = {
     "St. Mere Eglise Warfare": "stmereeglise_warfare",
     "El Alamein Warfare": "elalamein_warfare",
     "Mortain Warfare": "mortain_warfare_dusk",
-    "Smolensk Warfare (Dusk)": "smolensk_warfare_dusk",
     "Driel Warfare": "driel_warfare",
     "Kursk Warfare": "kursk_warfare",
     "Carentan Warfare (Night)": "carentan_warfare_night",
@@ -55,7 +54,6 @@ MAPS = {
     "Kharkov Warfare": "kharkov_warfare",
     "Purple Heart Lane Warfare (Rain)": "PHL_L_1944_Warfare",
     "Tobruk Warfare (Dawn)": "tobruk_warfare_morning",
-    "Stalingrad Warfare": "STA_L_1942_Warfare",
 }
 
 # Default rotation when mapvote is disabled
