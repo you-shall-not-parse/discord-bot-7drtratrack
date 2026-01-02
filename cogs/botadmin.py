@@ -9,19 +9,13 @@ import subprocess
 
 # --- Admin access (edit these) ---
 GUILD_ID = 1097913605082579024
-ADMIN_ROLE_ID = 1213495462632361994
 
-# Optional: allow a specific owner user ID regardless of role
-OWNER_ID = 1109147750932676649  # Replace with your Discord user ID (or set to 0 to disable)
+# Owner-only: only this Discord user ID can use these commands
+OWNER_ID = 1109147750932676649  # Replace with your Discord user ID
 
 
 def _is_admin(interaction: discord.Interaction) -> bool:
-    if OWNER_ID and getattr(interaction.user, "id", None) == OWNER_ID:
-        return True
-    user = interaction.user
-    if not isinstance(user, discord.Member):
-        return False
-    return any(role.id == ADMIN_ROLE_ID for role in user.roles)
+    return getattr(interaction.user, "id", None) == OWNER_ID
 
 
 def _build_extension_map(bot: commands.Bot) -> dict[str, str]:
@@ -122,20 +116,58 @@ class BotAdmin(commands.Cog):
 
         try:
             await self.bot.reload_extension(extension)
-            await interaction.followup.send(f"Reloaded `{extension}`.", ephemeral=True)
+            # Re-sync slash commands for this guild so any app_command edits appear immediately.
+            try:
+                if interaction.guild_id:
+                    await self.bot.tree.sync(guild=discord.Object(id=interaction.guild_id))
+            except Exception:
+                pass
+
+            # Some cogs do most visible work on startup events/timers.
+            # After reload, force an immediate refresh for known cogs.
+            post_actions: list[str] = []
+            try:
+                if extension.lower() == "cogs.calendarcog":
+                    calendar_cog = self.bot.get_cog("CalendarCog")
+                    if calendar_cog and interaction.guild_id:
+                        guild = self.bot.get_guild(interaction.guild_id)
+                        if guild:
+                            await calendar_cog.update_calendar(guild)
+                            post_actions.append("calendar refreshed")
+                elif extension.lower() == "cogs.recruitform":
+                    recruit_cog = self.bot.get_cog("RecruitFormCog")
+                    if recruit_cog:
+                        # Re-post the embed (reload alone won't re-trigger on_ready)
+                        await recruit_cog.on_ready()
+                        post_actions.append("recruit form embed reposted")
+            except Exception as e:
+                post_actions.append(f"post-action failed: {type(e).__name__}: {e}")
+
+            suffix = f" ({', '.join(post_actions)})" if post_actions else ""
+            await interaction.followup.send(f"Reloaded `{extension}`{suffix}.", ephemeral=True)
         except commands.ExtensionNotLoaded:
             try:
                 await self.bot.load_extension(extension)
+                try:
+                    if interaction.guild_id:
+                        await self.bot.tree.sync(guild=discord.Object(id=interaction.guild_id))
+                except Exception:
+                    pass
+
                 await interaction.followup.send(
                     f"`{extension}` wasn't loaded; loaded it now.",
                     ephemeral=True,
                 )
             except Exception as e:
+                import logging
+                logging.exception("Failed to load extension %s", extension)
                 await interaction.followup.send(
                     f"Failed to load `{extension}`: {type(e).__name__}: {e}",
                     ephemeral=True,
                 )
         except Exception as e:
+            import logging
+            logging.exception("Failed to reload extension %s", extension)
             await interaction.followup.send(
                 f"Failed to reload `{extension}`: {type(e).__name__}: {e}",
                 ephemeral=True,
@@ -253,6 +285,6 @@ class BotAdmin(commands.Cog):
 async def setup(bot: commands.Bot):
     if not isinstance(GUILD_ID, int) or GUILD_ID <= 0:
         raise RuntimeError("Set GUILD_ID (non-zero int) at top of cogs/botadmin.py")
-    if not isinstance(ADMIN_ROLE_ID, int) or ADMIN_ROLE_ID <= 0:
-        raise RuntimeError("Set ADMIN_ROLE_ID (non-zero int) at top of cogs/botadmin.py")
+    if not isinstance(OWNER_ID, int) or OWNER_ID <= 0:
+        raise RuntimeError("Set OWNER_ID (non-zero int) at top of cogs/botadmin.py")
     await bot.add_cog(BotAdmin(bot))
