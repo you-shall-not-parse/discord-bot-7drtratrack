@@ -228,7 +228,7 @@ class RecruitFormCog(commands.Cog):
         embed = discord.Embed(
             title="7DR Recruit Form",
             description=(
-                "We need this info to get you all set up! Sneaky test words again here...\n"
+                "We need this info to get you all set up! More sneaky test words here...\n"
                 "In completing this form I agree to be an active member of this unit,"
                 " positively contributing to the discord server chats, taking part in training"
                 " sessions 1-2 times per week and regularly attending events. \n\n I understand"
