@@ -36,7 +36,7 @@ MAPVOTE_STATE_FILE = "mapvote_state.json"
 
 # Pretty name → CRCON ID
 MAPS = {
-    "Elsenborn Ridge Warfare": "elsenbornridge_warfare_morning",
+    "Elsenborn Ridge Warfare (Dawn)": "elsenbornridge_warfare_morning",
     "Carentan Warfare": "carentan_warfare",
     "Foy Warfare": "foy_warfare",
     "Hill 400 Warfare": "hill400_warfare",
@@ -44,7 +44,7 @@ MAPS = {
     "Utah Beach Warfare": "utahbeach_warfare",
     "St. Mere Eglise Warfare": "stmereeglise_warfare",
     "El Alamein Warfare": "elalamein_warfare",
-    "Mortain Warfare": "mortain_warfare_dusk",
+    "Mortain Warfare (Dusk)": "mortain_warfare_dusk",
     "Driel Warfare": "driel_warfare",
     "Kursk Warfare": "kursk_warfare",
     "Carentan Warfare (Night)": "carentan_warfare_night",
@@ -69,7 +69,7 @@ DEFAULT_ROTATION = [
 
 # Map images (put your real CDN URLs back in here)
 MAP_CDN_IMAGES = {
-    "Elsenborn Ridge Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444494673149300796/ChatGPT_Image_Nov_30_2025_01_05_17_AM.png?ex=69381ebf&is=6936cd3f&hm=cdb114a6a2550d2d83318d3b3c1d6717022fa0c8665c645818fb8c78b8f71fa3",
+    "Elsenborn Ridge Warfare (Dawn)": "https://cdn.discordapp.com/attachments/1098976074852999261/1444494673149300796/ChatGPT_Image_Nov_30_2025_01_05_17_AM.png?ex=69381ebf&is=6936cd3f&hm=cdb114a6a2550d2d83318d3b3c1d6717022fa0c8665c645818fb8c78b8f71fa3",
     "Carentan Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444515451727253544/file_00000000e5f871f488f94dd458b30c09.png?ex=69383219&is=6936e099&hm=40998a104cbffc2fe0b37c515f6158c9722606b7c1ec5d33bdc03e5eb4341e2a",
     "Foy Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444492145913499800/ChatGPT_Image_Nov_30_2025_12_55_43_AM.png?ex=69400564&is=693eb3e4&hm=b9c95afd2e8cb88158af73e707f8dbae744e4458be20369029dd92e8a8a467ab",
     "Hill 400 Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444497579210707004/ChatGPT_Image_Nov_30_2025_01_15_52_AM.png?ex=69382174&is=6936cff4&hm=f9e16ba8d2b9f20dd799bd5970c11f38c1f427689585e2d139cfd1294888a612",
@@ -77,7 +77,7 @@ MAP_CDN_IMAGES = {
     "Utah Beach Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1449831598160740402/ChatGPT_Image_Dec_14_2025_06_32_36_PM.png?ex=69405465&is=693f02e5&hm=ec9dbcc1d930df308756a775714ce19d26bebf261a42f384d20af05dc0014004",
     "St. Mere Eglise Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1447681599117463692/file_000000009b64720e96132fbd67f95f72.png?ex=6938820d&is=6937308d&hm=148aca7f2e9de99f00b1f2cb6c55660ae5ece263e62afa83fbece2f9193610ef",
     "El Alamein Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1448462224795373588/file_00000000627c71f4bbc1994fb582be8c.png?ex=693ff651&is=693ea4d1&hm=e6096c26fb8a2c74e9347ebd8477d3b5956521829486e7b192e18f92cffe8830",
-    "Mortain Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1448462040632004802/76807A80-FA7B-4965-9A21-0798CEA11042.png?ex=693ff625&is=693ea4a5&hm=3a05171a2a203ba1487a324a893829466e68342cebd2659215d53ab9bc93f4b4",
+    "Mortain Warfare (Dusk)": "https://cdn.discordapp.com/attachments/1098976074852999261/1448462040632004802/76807A80-FA7B-4965-9A21-0798CEA11042.png?ex=693ff625&is=693ea4a5&hm=3a05171a2a203ba1487a324a893829466e68342cebd2659215d53ab9bc93f4b4",
     "Smolensk Warfare (Dusk)": "https://cdn.discordapp.com/attachments/1098976074852999261/1449390736989491363/file_0000000022f071f4a9771a3645023ed5.png?ex=69400b50&is=693eb9d0&hm=5d2d3dffc888d136aacd11c3525e1e3070907f147277785651ef3c79ee2dae7f&",
     "Driel Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444671257730744360/file_00000000d254720eb1ce02f6506ae926.png?ex=69381a74&is=6936c8f4&hm=e2772de15b5aa855d3abad443e614d5b2280f7a4f529aaf759f515c70d3ca7cc&",
     "Kursk Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1449501011214598214/Screenshot_20251213_221442_Discord.jpg?ex=693fc943&is=693e77c3&hm=a80dc5533d1f73573ea6d3b0bb1adfa1f51cbd936d81a3fefd5535a1fd3dce67",
