@@ -371,12 +371,6 @@ class HLLArmLeaderboard(commands.Cog):
         embed = await self.build_leaderboard_embed(monthly=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="hllhighs-armmonthtopscores", description="Show this month's armour crew top scores")
-    @app_commands.guilds(discord.Object(id=GUILD_ID))
-    async def hllarmmonthtopscores(self, interaction: discord.Interaction):
-        embed = await self.build_leaderboard_embed(monthly=True)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
     # Admin: overwrite a crew's record for a stat (unique command name)
     @app_commands.command(
         name="hllhighs-armscoreadmin",

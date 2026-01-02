@@ -282,12 +282,6 @@ class HLLInfLeaderboard(commands.Cog):
         embed = await self.build_leaderboard_embed(monthly=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="hllhighs-infmonthtopscores", description="Show top scores for this month")
-    @app_commands.guilds(discord.Object(id=GUILD_ID))
-    async def hllhighsinfmonthtopscores(self, interaction: discord.Interaction):
-        embed = await self.build_leaderboard_embed(monthly=True)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
     # ---------------- Admin: Single-mode overwrite ----------------
     @app_commands.command(
         name="hllhighs-infscoreadmin",
