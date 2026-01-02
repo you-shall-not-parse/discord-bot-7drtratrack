@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
+import asyncio
 import os
 import sys
 import subprocess  
@@ -37,10 +38,27 @@ class BotAdmin(commands.Cog):
     @app_commands.command(name="restart", description="Restart the bot (owner only)")
     @app_commands.check(_is_admin)
     async def restart(self, interaction: discord.Interaction):
-        await interaction.response.send_message("Restarting...")
-        await self.bot.close()
+        await interaction.response.send_message("Restarting...", ephemeral=True)
+
         python = sys.executable
-        os.execl(python, python, *sys.argv)
+        argv = [python, *sys.argv]
+
+        async def _do_restart():
+            # Don't await close() here (it can hang); start it and proceed.
+            try:
+                asyncio.create_task(self.bot.close())
+            except Exception:
+                pass
+
+            # Give the response a moment to flush before replacing the process.
+            await asyncio.sleep(1)
+
+            try:
+                os.execv(python, argv)
+            except Exception:
+                os._exit(1)
+
+        asyncio.create_task(_do_restart())
 
     @app_commands.command(
         name="reload_cog",
