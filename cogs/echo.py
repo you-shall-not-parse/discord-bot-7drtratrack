@@ -7,7 +7,20 @@ from discord.ext import commands
 # Guild-scoped commands require a guild sync (see on_ready below).
 # Default matches other cogs in this repo; override via env var if needed.
 ECHO_GUILD_ID = int(os.getenv("ECHO_GUILD_ID", "1097913605082579024"))
+
+# Role required to use /7drecho (can be overridden via env var ECHO_ROLE_ID)
+ECHO_ROLE_ID = int(os.getenv("ECHO_ROLE_ID", "1213495462632361994"))
 TARGET_GUILD = discord.Object(id=ECHO_GUILD_ID)
+
+
+def _has_echo_role(interaction: discord.Interaction) -> bool:
+	# If not configured, deny by default.
+	if not isinstance(ECHO_ROLE_ID, int) or ECHO_ROLE_ID <= 0:
+		return False
+	user = interaction.user
+	if not isinstance(user, discord.Member):
+		return False
+	return any(role.id == ECHO_ROLE_ID for role in user.roles)
 
 
 class Echo(commands.Cog):
@@ -18,11 +31,25 @@ class Echo(commands.Cog):
 	@app_commands.guild_only()
 	@app_commands.command(name="7drecho", description="Send a user-defined message.")
 	@app_commands.describe(message="The message to send")
+	@app_commands.check(_has_echo_role)
 	async def seven_drecho(self, interaction: discord.Interaction, message: str):
 		# Ephemeral ack so the channel doesn't show "<user> used /7drecho".
 		await interaction.response.send_message("Sent.", ephemeral=True)
 		if interaction.channel is not None:
 			await interaction.channel.send(message)
+
+	@seven_drecho.error
+	async def seven_drecho_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+		if isinstance(error, app_commands.CheckFailure):
+			msg = "You don't have permission to use this command."
+			if not isinstance(ECHO_ROLE_ID, int) or ECHO_ROLE_ID <= 0:
+				msg = "This command isn't configured yet (ECHO_ROLE_ID is not set)."
+			if interaction.response.is_done():
+				await interaction.followup.send(msg, ephemeral=True)
+			else:
+				await interaction.response.send_message(msg, ephemeral=True)
+			return
+		raise error
 
 	@commands.Cog.listener()
 	async def on_ready(self):
