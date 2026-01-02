@@ -24,6 +24,42 @@ def _is_admin(interaction: discord.Interaction) -> bool:
     return any(role.id == ADMIN_ROLE_ID for role in user.roles)
 
 
+def _build_extension_map(bot: commands.Bot) -> dict[str, str]:
+    """Maps lowercase aliases -> canonical extension name.
+
+    Prevents case mismatches like `cogs.embedmanager` vs `cogs.EmbedManager`.
+    """
+    mapping: dict[str, str] = {}
+
+    def _add(candidate: str) -> None:
+        if not candidate:
+            return
+        mapping.setdefault(candidate.lower(), candidate)
+        short = candidate.removeprefix("cogs.")
+        mapping.setdefault(short.lower(), candidate)
+
+    # Loaded extensions are authoritative
+    for ext in bot.extensions.keys():
+        _add(ext)
+
+    # Also include any files under cogs/
+    try:
+        cogs_dir = os.path.dirname(__file__)
+        for filename in os.listdir(cogs_dir):
+            if not filename.endswith(".py"):
+                continue
+            if filename.startswith("_"):
+                continue
+            module = filename[:-3]
+            if module.lower() == "__init__":
+                continue
+            _add(f"cogs.{module}")
+    except Exception:
+        pass
+
+    return mapping
+
+
 @app_commands.guilds(discord.Object(id=GUILD_ID))
 class BotAdmin(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -68,10 +104,19 @@ class BotAdmin(commands.Cog):
     async def reload_cog(self, interaction: discord.Interaction, cog: str):
         await interaction.response.defer(ephemeral=True, thinking=True)
 
-        extension = cog.strip()
-        if not extension:
+        raw = cog.strip()
+        if not raw:
             await interaction.followup.send("Provide a cog name.", ephemeral=True)
             return
+
+        extension_map = _build_extension_map(self.bot)
+        normalized = raw if raw.startswith("cogs.") else f"cogs.{raw}"
+        extension = (
+            extension_map.get(normalized.lower())
+            or extension_map.get(raw.lower())
+            or normalized
+        )
+
         if not extension.startswith("cogs."):
             extension = f"cogs.{extension}"
 
@@ -93,6 +138,62 @@ class BotAdmin(commands.Cog):
         except Exception as e:
             await interaction.followup.send(
                 f"Failed to reload `{extension}`: {type(e).__name__}: {e}",
+                ephemeral=True,
+            )
+
+    @app_commands.command(
+        name="git_pull",
+        description="Run `git pull --ff-only` on the bot repo (admin only).",
+    )
+    @app_commands.check(_is_admin)
+    async def git_pull(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        env = os.environ.copy()
+        env["GIT_TERMINAL_PROMPT"] = "0"  # fail fast if auth would prompt
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git",
+                "pull",
+                "--ff-only",
+                cwd=repo_root,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+            )
+        except FileNotFoundError:
+            await interaction.followup.send(
+                "`git` is not available on PATH on the machine running the bot.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=45)
+        except TimeoutError:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            await interaction.followup.send(
+                "`git pull` timed out (likely waiting on network/auth).",
+                ephemeral=True,
+            )
+            return
+
+        output = (stdout or b"") + (stderr or b"")
+        text = output.decode(errors="replace").strip() or "(no output)"
+
+        if len(text) > 1800:
+            text = text[:1800] + "\n... (truncated)"
+
+        if proc.returncode == 0:
+            await interaction.followup.send(f"```\n{text}\n```", ephemeral=True)
+        else:
+            await interaction.followup.send(
+                f"`git pull` failed (exit {proc.returncode}):\n```\n{text}\n```",
                 ephemeral=True,
             )
 
