@@ -5,7 +5,7 @@ from discord.ext import commands
 
 LEAVE_CHANNEL_ID = 1097913605539774484  # 👈 replace with your channel ID
 
-LEAVE_MESSAGE = "🚪 {display} ({name}) has left the server!"
+LEAVE_MESSAGE = "**{display} ({name})** has just left the server, fuck em"
 
 # ================== COG ==================
 
