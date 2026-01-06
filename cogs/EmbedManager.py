@@ -150,7 +150,7 @@ class EmbedManager(commands.Cog):
         )
         embed3.description = (
             "This directory shows the channels you can see as a non‑clan member: **Blueberry (B)** or **Diplomat (D)**.\n"
-            "Diplomat access is mostly informational; Blueberry access may not be fully tailored.\n"
+            "Diplomat access is mostly informational for organising events with us, Blueberry is more fun-related... You can select both also!\n"
             "Direct‑entry trainees and clan members will gain more access after onboarding and role assignment."
         )
 
@@ -184,6 +184,9 @@ class EmbedManager(commands.Cog):
             value=(
             "- <#1441511200474271875> [B][D]\n"
             "- <#1099090838203666474> [B]\n"
+            "- <#1097913605539774485> [B][D]\n"
+            "- <#1106900027659522108> [B][D]\n"
+            "- <#1114905902651285565> [B][D]\n"
             "- <#1398672228803018763> [B][D]\n"
             "- <#1399082728313458778> [B][D]"
             ),
