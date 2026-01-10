@@ -4,7 +4,6 @@ import os
 import re
 import time
 import urllib.parse
-import unicodedata
 from datetime import datetime, timezone
 
 import discord
@@ -121,8 +120,9 @@ class ReactionReader(commands.Cog):
         if not display_name:
             return 10_000
 
-        s = unicodedata.normalize("NFKC", display_name.strip())
-        s = self._strip_unicode_noise(s)
+        s = display_name.strip()
+        if "#" in s:
+            s = s.split("#", 1)[0].strip()
         s = " ".join(s.split())
         s_lower = s.lower()
 
@@ -131,7 +131,7 @@ class ReactionReader(commands.Cog):
 
         for order_idx, (_code, variants) in enumerate(RANK_ORDER):
             for prefix in variants:
-                p = unicodedata.normalize("NFKC", str(prefix).strip())
+                p = str(prefix).strip()
                 if not p:
                     continue
                 p_lower = p.lower()
@@ -144,92 +144,26 @@ class ReactionReader(commands.Cog):
 
         return best_order if best_order is not None else 10_000
 
-    def _strip_unicode_noise(self, text: str) -> str:
-        # Remove combining marks (Mn/Me) and formatting chars (Cf) that often appear in styled nicknames.
-        # Example: "⁶̆⁵̤̓ᵗ̧̘ʰ͉͜" should collapse closer to "65th".
-        decomposed = unicodedata.normalize("NFKD", text)
-        cleaned = "".join(
-            ch
-            for ch in decomposed
-            if unicodedata.category(ch) not in {"Mn", "Me", "Cf", "Cc"}
-        )
-        return unicodedata.normalize("NFKC", cleaned)
 
-    def _normalize_rank_dot(self, text: str) -> str:
-        # Handle names like "Pte.Timekeeper" or "Cpl.Zaar" by inserting a space after a rank token.
-        # Only applies when the string starts with a known rank and a dot immediately follows.
-        t = text.strip()
-        # Common short rank tokens where this occurs.
-        rank_tokens = ["Pte", "Cpl", "Sgt", "SSG", "SGM", "RSM", "Lt", "Cpt", "WO1", "WO2"]
-        for rt in rank_tokens:
-            prefix = rt + "."
-            if t.lower().startswith(prefix.lower()) and len(t) > len(prefix) and t[len(prefix)] != " ":
-                return rt + " " + t[len(prefix):]
-        return text
-
-    def _strip_trailing_ordinal(self, text: str) -> str:
-        # Remove suffixes like "65th" / "5th" when they appear at the very end.
-        return re.sub(r"\s*\d{1,3}(st|nd|rd|th)$", "", text, flags=re.IGNORECASE).strip()
-
-    def _build_simple_variants(self, text: str) -> list[str]:
-        """Build a small set of safe variants for matching player_name.
-
-        This is intentionally limited to avoid exploding the number of HTTP calls.
-        """
-
-        text = (text or "").strip()
-        if not text:
-            return []
-
-        variants: list[str] = [text]
-
-        # Underscore <-> space (common difference between Discord and in-game names)
-        if "_" in text:
-            variants.append(text.replace("_", " "))
-        if " " in text:
-            variants.append(text.replace(" ", "_"))
-
-        # Hyphen <-> space
-        if "-" in text:
-            variants.append(text.replace("-", " "))
-        if " " in text:
-            variants.append(text.replace(" ", "-"))
-
-        # De-dupe while preserving order
-        out: list[str] = []
-        seen: set[str] = set()
-        for v in variants:
-            vv = " ".join(v.split())
-            if not vv:
-                continue
-            key = vv.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append(vv)
-        return out
+    def _cut_at_hash(self, text: str) -> str:
+        """Return the portion of text before the first '#', trimmed."""
+        t = (text or "").strip()
+        if not t:
+            return ""
+        if "#" in t:
+            t = t.split("#", 1)[0].strip()
+        return " ".join(t.split())
 
     def _normalize_discord_username(self, name: str, *, strip_rank_prefix: bool = False) -> str:
         # "Trimming as needed":
         # - strip leading/trailing whitespace
         # - collapse internal whitespace
-        # - normalize unicode so things like superscripts become plain text
-        # - strip old-style Discord discriminator tokens like "#1579" / "#0" even if followed by suffixes
+        # - strip everything from the first '#' onward (e.g. "Name#1579" -> "Name")
         # - (optional) strip leading rank prefix for lookup fallback
-        name = (name or "").strip()
-        name = unicodedata.normalize("NFKC", name)
-        name = self._strip_unicode_noise(name)
+        name = self._cut_at_hash(name)
         # Replace common separators that can appear "between" tokens.
         name = name.replace("%", " ")
         name = " ".join(name.split())
-        # Remove the last "#<digits>" occurrence (Discord discriminator), but keep any suffix after it.
-        # Examples:
-        # - "Cpt Crump#1597" -> "Cpt Crump"
-        # - "Sgt Charlie#8001⁵ᵗʰ" (after NFKC) -> "Sgt Charlie5th" (then remove "#8001" -> "Sgt Charlie5th")
-        matches = list(re.finditer(r"\s*#\d{1,6}", name))
-        if matches:
-            m = matches[-1]
-            name = (name[: m.start()] + name[m.end() :]).strip()
 
         if strip_rank_prefix:
             # Strip leading rank prefix (lookup-only fallback).
@@ -323,85 +257,47 @@ class ReactionReader(commands.Cog):
         """
 
         raw_candidates: list[str] = []
+        # Prefer server nickname/display name first.
         if member is not None and member.display_name:
             raw_candidates.append(member.display_name)
-        raw_candidates.append(user.name)  # raw username (no discriminator)
+        # Then raw username / global name.
+        raw_candidates.append(user.name)
         gn = getattr(user, "global_name", None)
         if gn:
             raw_candidates.append(gn)
 
-        # Build candidate variants to improve match rate.
-        # IMPORTANT: only strip rank prefixes as a fallback *after* trying the exact (non-rank-stripped) lookup.
-        seen: set[str] = set()
-        unique_raw: list[str] = []
-
-        for c in raw_candidates:
-            if not c:
-                continue
-            # Keep raw-ish variants (we normalize later, depending on fallback mode).
-            for v in (c, c.replace("%", " "), self._normalize_rank_dot(c)):
-                nv = v.strip()
-                if not nv:
-                    continue
-                k = nv.lower()
-                if k in seen:
-                    continue
-                seen.add(k)
-                unique_raw.append(nv)
-
+        # Hard cutoff at '#' and then (if needed) strip rank prefix.
+        # Example: "WO1 Nvil#3292⁵ᵗʰ" -> try "WO1 Nvil" first, then "Nvil".
         http_used = 0
-        for raw in unique_raw:
+        seen_queries: set[str] = set()
+
+        for raw in raw_candidates:
             if http_used >= http_budget_remaining:
                 break
-
-            # Build best-guess query order for this raw candidate.
-            # If an ordinal suffix exists ("...5th"), try without it FIRST.
-            base_norm = self._normalize_discord_username(raw, strip_rank_prefix=False)
-            base_no_ord = self._strip_trailing_ordinal(base_norm)
-
-            base_queries: list[str] = []
-            if base_no_ord and base_no_ord != base_norm:
-                base_queries.append(base_no_ord)
-            if base_norm:
-                base_queries.append(base_norm)
-
-            # 1) Non-rank-stripped queries
-            for q in base_queries:
-                for qq in self._build_simple_variants(q):
-                    if http_used >= http_budget_remaining:
-                        break
-                    pid, did_http = await self._fetch_player_id_cached(qq, strip_rank_prefix=False)
+            cut = self._normalize_discord_username(raw, strip_rank_prefix=False)
+            if cut:
+                k = cut.lower()
+                if k not in seen_queries:
+                    seen_queries.add(k)
+                    pid, did_http = await self._fetch_player_id_cached(cut, strip_rank_prefix=False)
                     if did_http:
                         http_used += 1
                     if pid:
                         return pid, http_used
-                if http_used >= http_budget_remaining:
-                    break
 
             if http_used >= http_budget_remaining:
                 break
 
-            # 2) Fallback lookup (strip rank prefix) — only if it changes the query.
-            stripped_norm = self._normalize_discord_username(raw, strip_rank_prefix=True)
-            if stripped_norm and stripped_norm != base_norm:
-                stripped_no_ord = self._strip_trailing_ordinal(stripped_norm)
-
-                stripped_queries: list[str] = []
-                if stripped_no_ord and stripped_no_ord != stripped_norm:
-                    stripped_queries.append(stripped_no_ord)
-                stripped_queries.append(stripped_norm)
-
-                for q in stripped_queries:
-                    for qq in self._build_simple_variants(q):
-                        if http_used >= http_budget_remaining:
-                            break
-                        pid2, did_http2 = await self._fetch_player_id_cached(qq, strip_rank_prefix=False)
-                        if did_http2:
-                            http_used += 1
-                        if pid2:
-                            return pid2, http_used
-                    if http_used >= http_budget_remaining:
-                        break
+            stripped = self._normalize_discord_username(raw, strip_rank_prefix=True)
+            if stripped and stripped != cut:
+                k2 = stripped.lower()
+                if k2 not in seen_queries:
+                    seen_queries.add(k2)
+                    pid2, did_http2 = await self._fetch_player_id_cached(stripped, strip_rank_prefix=False)
+                    if did_http2:
+                        http_used += 1
+                    if pid2:
+                        return pid2, http_used
 
         return None, http_used
 
@@ -453,6 +349,7 @@ class ReactionReader(commands.Cog):
         player_id: str | None,
     ) -> str:
         nickname = member.display_name if member else (getattr(user, "global_name", None) or user.name)
+        nickname = self._cut_at_hash(nickname)
         username = self._normalize_discord_username(user.name)
 
         nickname = self._escape_for_embed(nickname)
