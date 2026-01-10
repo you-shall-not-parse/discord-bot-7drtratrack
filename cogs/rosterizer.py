@@ -105,8 +105,8 @@ class ReactionReader(commands.Cog):
 
     def _format_user_line(self, user: discord.abc.User, member: discord.Member | None) -> str:
         nickname = member.display_name if member else (getattr(user, "global_name", None) or user.name)
-        # Avoid the new-username '#0' discriminator display by using a mention.
-        return f"- {nickname} ({user.mention})"
+        # "Raw username" in Discord's new system is just user.name (no discriminator).
+        return f"- {nickname} ({user.name})"
 
     def _chunk_embed_descriptions(self, text: str, max_len: int = 3900) -> list[str]:
         # Embed description max is 4096; keep some slack.
