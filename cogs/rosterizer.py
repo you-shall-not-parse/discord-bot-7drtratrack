@@ -4,6 +4,7 @@ import os
 import re
 import time
 import urllib.parse
+import unicodedata
 from datetime import datetime, timezone
 
 import discord
@@ -80,11 +81,19 @@ class ReactionReader(commands.Cog):
         # "Trimming as needed":
         # - strip leading/trailing whitespace
         # - collapse internal whitespace
-        # - strip old-style Discord discriminator suffixes like "#1579" / "#0"
+        # - normalize unicode so things like superscripts become plain text
+        # - strip old-style Discord discriminator tokens like "#1579" / "#0" even if followed by suffixes
         name = (name or "").strip()
+        name = unicodedata.normalize("NFKC", name)
         name = " ".join(name.split())
-        # Remove trailing discriminator (optional preceding space), but leave other '#' intact.
-        name = re.sub(r"\s*#\d{1,6}$", "", name).strip()
+        # Remove the last "#<digits>" occurrence (Discord discriminator), but keep any suffix after it.
+        # Examples:
+        # - "Cpt Crump#1597" -> "Cpt Crump"
+        # - "Sgt Charlie#8001⁵ᵗʰ" (after NFKC) -> "Sgt Charlie5th" (then remove "#8001" -> "Sgt Charlie5th")
+        matches = list(re.finditer(r"\s*#\d{1,6}", name))
+        if matches:
+            m = matches[-1]
+            name = (name[: m.start()] + name[m.end() :]).strip()
         return name
 
     async def _rcon_get(self, endpoint: str) -> dict:
@@ -251,9 +260,8 @@ class ReactionReader(commands.Cog):
         nickname = discord.utils.escape_markdown(discord.utils.escape_mentions(nickname), as_needed=True)
         username = discord.utils.escape_markdown(discord.utils.escape_mentions(username), as_needed=True)
         if player_id:
-            pid = urllib.parse.quote(str(player_id), safe="")
-            url = f"https://www.hllrecords.com/profiles/{pid}"
-            return f"[{nickname}]({url}) ({username}) [{player_id}]"
+            # HLLRecords markdown link disabled for now (it can break if an embed is truncated).
+            return f"{nickname} ({username}) [{player_id}]"
         return f"{nickname} ({username})"
 
     def _chunk_embed_descriptions(self, text: str, max_len: int = 3900) -> list[str]:
@@ -275,37 +283,36 @@ class ReactionReader(commands.Cog):
             parts.append(buf)
         return parts
 
-    def _build_reaction_embed(
+    def _build_reaction_embeds(
         self,
         guild: discord.Guild,
         key: str,
         entries: list[str],
         now: datetime,
-    ) -> discord.Embed:
-        title = f"{key} reactions"
+    ) -> list[discord.Embed]:
+        title_base = f"{key} reactions"
         header = f"**{key} ({len(entries)})**\n\n"
 
         if not entries:
-            description = header + "- None"
+            pages = [header + "- None"]
         else:
-            # Extra spacing between names for readability.
             body = "\n\n".join(entries)
-            description = header + body
+            pages = self._chunk_embed_descriptions(header + body)
 
-        # Keep within the 4096 embed description limit.
-        max_desc = 3900
-        if len(description) > max_desc:
-            truncated = description[: max_desc - 20].rstrip()
-            description = truncated + "\n\n…(truncated)"
+        embeds: list[discord.Embed] = []
+        total = len(pages)
+        for idx, page in enumerate(pages, start=1):
+            title = title_base if total == 1 else f"{title_base} ({idx}/{total})"
+            e = discord.Embed(
+                title=title,
+                description=page,
+                color=discord.Color.blurple(),
+                timestamp=now,
+            )
+            e.set_footer(text=f"Updated • {guild.name}")
+            embeds.append(e)
 
-        e = discord.Embed(
-            title=title,
-            description=description,
-            color=discord.Color.blurple(),
-            timestamp=now,
-        )
-        e.set_footer(text=f"Updated • {guild.name}")
-        return e
+        return embeds
 
     async def _build_results(self, message: discord.Message) -> dict[str, list[str]]:
         results: dict[str, list[str]] = {"I": [], "A": [], "R": []}
@@ -344,7 +351,7 @@ class ReactionReader(commands.Cog):
         now = datetime.now(timezone.utc)
         embeds: list[discord.Embed] = []
         for key in ["I", "A", "R"]:
-            embeds.append(self._build_reaction_embed(guild, key, results.get(key, []), now))
+            embeds.extend(self._build_reaction_embeds(guild, key, results.get(key, []), now))
         return embeds
 
     async def _update_from_message(self, message: discord.Message) -> None:
