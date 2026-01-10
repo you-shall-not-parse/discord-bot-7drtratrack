@@ -20,6 +20,42 @@ class ReactionReader(commands.Cog):
         self.bot = bot
         self._ran_once = False
 
+    async def _send_long_message(self, channel: discord.abc.Messageable, content: str):
+        # Discord hard limit is 2000 characters per message.
+        max_len = 2000
+
+        if len(content) <= max_len:
+            await channel.send(content)
+            return
+
+        # Prefer splitting on line boundaries for readability.
+        lines = content.split("\n")
+        chunk = ""
+        for line in lines:
+            # If a single line is too long, hard-split it.
+            while len(line) > max_len:
+                prefix_space = "" if not chunk else "\n"
+                remaining = max_len - len(chunk) - len(prefix_space)
+                if remaining <= 0:
+                    await channel.send(chunk)
+                    chunk = ""
+                    continue
+                part, line = line[:remaining], line[remaining:]
+                chunk = (chunk + prefix_space + part) if chunk else part
+                await channel.send(chunk)
+                chunk = ""
+
+            proposed = (chunk + "\n" + line) if chunk else line
+            if len(proposed) > max_len:
+                if chunk:
+                    await channel.send(chunk)
+                chunk = line
+            else:
+                chunk = proposed
+
+        if chunk:
+            await channel.send(chunk)
+
     @commands.Cog.listener()
     async def on_ready(self):
         if self._ran_once:
@@ -108,7 +144,7 @@ class ReactionReader(commands.Cog):
             target_channel = message.channel
 
         try:
-            await target_channel.send(output)
+            await self._send_long_message(target_channel, output)
         except discord.Forbidden:
             print(
                 f"Missing permission to send messages in channel {getattr(target_channel, 'id', None)}. "
