@@ -1,16 +1,26 @@
 import asyncio
 import json
 import os
+import time
+import urllib.parse
 from datetime import datetime, timezone
 
 import discord
 from discord.ext import commands
+import requests
 
 # ========= CONFIG =========
 TARGET_MESSAGE_ID = 1458515177438838979
 OUTPUT_CHANNEL_ID = 1099806153170489485  # set to None to post in same channel
 STATE_FILE = "data/rosterizer_state.json"  # stores output message id for editing
 UPDATE_DEBOUNCE_SECONDS = 2.0
+
+# CRCON API (Bearer token) — same pattern as mapvote.py
+CRCON_PANEL_URL = "https://7dr.hlladmin.com/api/"
+CRCON_API_KEY = os.getenv("CRCON_API_KEY")
+PLAYER_LOOKUP_ENABLED = True
+PLAYER_LOOKUP_MAX_PER_UPDATE = 40
+PLAYER_LOOKUP_CACHE_TTL_SECONDS = 3600
 VALID_REACTIONS = {
     "I": "I",
     "🇮": "I",
@@ -29,6 +39,8 @@ class ReactionReader(commands.Cog):
         self._update_task: asyncio.Task | None = None
         self._update_lock = asyncio.Lock()
         self._state = self._load_state()
+        # cache: normalized_username -> (player_id_or_none, timestamp)
+        self._player_id_cache: dict[str, tuple[str | None, float]] = {}
 
     def _load_state(self) -> dict:
         try:
@@ -61,6 +73,76 @@ class ReactionReader(commands.Cog):
 
     def _is_valid_reaction_emoji(self, emoji_str: str) -> bool:
         return emoji_str in VALID_REACTIONS
+
+    def _normalize_discord_username(self, name: str) -> str:
+        # Minimal "trimming as needed": strip and collapse internal whitespace.
+        name = (name or "").strip()
+        name = " ".join(name.split())
+        return name
+
+    async def _rcon_get(self, endpoint: str) -> dict:
+        if not CRCON_API_KEY:
+            return {"error": "CRCON_API_KEY is not set"}
+
+        url = CRCON_PANEL_URL + endpoint
+
+        def _do_request() -> dict:
+            try:
+                r = requests.get(
+                    url,
+                    headers={"Authorization": f"Bearer {CRCON_API_KEY}"},
+                    timeout=10,
+                )
+                return r.json()
+            except Exception as e:
+                return {"error": str(e)}
+
+        return await asyncio.to_thread(_do_request)
+
+    def _extract_first_player_id(self, data) -> str | None:
+        # Be tolerant to API shape changes: search for the first 'player_id' key.
+        if isinstance(data, dict):
+            if "player_id" in data and data["player_id"] is not None:
+                return str(data["player_id"])
+            for v in data.values():
+                found = self._extract_first_player_id(v)
+                if found:
+                    return found
+            return None
+        if isinstance(data, list):
+            for item in data:
+                found = self._extract_first_player_id(item)
+                if found:
+                    return found
+        return None
+
+    async def fetch_player_id_by_discord_username(self, discord_username: str) -> str | None:
+        """Fetch player_id using CRCON get_players_history by player_name.
+
+        Uses Bearer token from CRCON_API_KEY env var.
+        """
+
+        normalized = self._normalize_discord_username(discord_username)
+        if not normalized:
+            return None
+
+        now = time.time()
+        cached = self._player_id_cache.get(normalized.lower())
+        if cached:
+            cached_id, cached_ts = cached
+            if now - cached_ts <= PLAYER_LOOKUP_CACHE_TTL_SECONDS:
+                return cached_id
+
+        player_name_q = urllib.parse.quote(normalized, safe="")
+        endpoint = f"get_players_history?player_name={player_name_q}&page_size=1"
+        data = await self._rcon_get(endpoint)
+        if not data or data.get("failed") or data.get("error"):
+            self._player_id_cache[normalized.lower()] = (None, now)
+            return None
+
+        player_id = self._extract_first_player_id(data.get("result", data))
+        self._player_id_cache[normalized.lower()] = (player_id, now)
+        return player_id
 
     async def _resolve_channel(self, channel_id: int) -> discord.abc.Messageable | None:
         ch = self.bot.get_channel(channel_id)
@@ -103,10 +185,17 @@ class ReactionReader(commands.Cog):
         self._set_output_message_id(source_message.guild.id, sent.id)
         return output_channel, sent
 
-    def _format_user_line(self, user: discord.abc.User, member: discord.Member | None) -> str:
+    def _format_user_line(
+        self,
+        user: discord.abc.User,
+        member: discord.Member | None,
+        player_id: str | None,
+    ) -> str:
         nickname = member.display_name if member else (getattr(user, "global_name", None) or user.name)
-        # "Raw username" in Discord's new system is just user.name (no discriminator).
-        return f"- {nickname} ({user.name})"
+        username = self._normalize_discord_username(user.name)
+        if player_id:
+            return f"- {nickname} ({username}) — {player_id}"
+        return f"- {nickname} ({username})"
 
     def _chunk_embed_descriptions(self, text: str, max_len: int = 3900) -> list[str]:
         # Embed description max is 4096; keep some slack.
@@ -129,6 +218,7 @@ class ReactionReader(commands.Cog):
 
     async def _build_results(self, message: discord.Message) -> dict[str, list[str]]:
         results: dict[str, list[str]] = {"I": [], "A": [], "R": []}
+        lookups_done = 0
 
         for reaction in message.reactions:
             key = VALID_REACTIONS.get(str(reaction.emoji))
@@ -146,7 +236,12 @@ class ReactionReader(commands.Cog):
                     except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                         member = None
 
-                line = self._format_user_line(user, member)
+                player_id: str | None = None
+                if PLAYER_LOOKUP_ENABLED and lookups_done < PLAYER_LOOKUP_MAX_PER_UPDATE:
+                    player_id = await self.fetch_player_id_by_discord_username(user.name)
+                    lookups_done += 1
+
+                line = self._format_user_line(user, member, player_id)
                 if line not in results[key]:
                     results[key].append(line)
 
