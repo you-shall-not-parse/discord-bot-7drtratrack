@@ -18,9 +18,14 @@ VALID_REACTIONS = {
 class ReactionReader(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self._ran_once = False
 
     @commands.Cog.listener()
     async def on_ready(self):
+        if self._ran_once:
+            return
+        self._ran_once = True
+
         print("ReactionReader loaded — running one-time scan")
         await self.run_once()
 
@@ -75,13 +80,42 @@ class ReactionReader(commands.Cog):
 
         output = "\n".join(lines)
 
-        target_channel = (
-            message.channel
-            if OUTPUT_CHANNEL_ID is None
-            else message.guild.get_channel(OUTPUT_CHANNEL_ID)
-        )
+        target_channel = message.channel
 
-        await target_channel.send(output)
+        if OUTPUT_CHANNEL_ID is not None:
+            # Prefer guild-local lookups first
+            target_channel = message.guild.get_channel(OUTPUT_CHANNEL_ID)
+            if target_channel is None:
+                try:
+                    target_channel = await message.guild.fetch_channel(OUTPUT_CHANNEL_ID)
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    target_channel = None
+
+            # Fallback to global lookup (handles cases where the output channel is in a different guild)
+            if target_channel is None:
+                target_channel = self.bot.get_channel(OUTPUT_CHANNEL_ID)
+            if target_channel is None:
+                try:
+                    target_channel = await self.bot.fetch_channel(OUTPUT_CHANNEL_ID)
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    target_channel = None
+
+        if target_channel is None:
+            print(
+                f"Output channel not found/accessible (OUTPUT_CHANNEL_ID={OUTPUT_CHANNEL_ID}); "
+                f"posting in the source channel instead."
+            )
+            target_channel = message.channel
+
+        try:
+            await target_channel.send(output)
+        except discord.Forbidden:
+            print(
+                f"Missing permission to send messages in channel {getattr(target_channel, 'id', None)}. "
+                f"Check the bot's permissions and channel overrides."
+            )
+        except discord.HTTPException as e:
+            print(f"Failed to send output due to HTTPException: {e}")
 
         print("ReactionReader complete — unload when ready")
 
