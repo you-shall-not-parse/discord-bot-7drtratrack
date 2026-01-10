@@ -16,6 +16,7 @@ TARGET_MESSAGE_ID = 1458515177438838979
 OUTPUT_CHANNEL_ID = 1099806153170489485  # set to None to post in same channel
 STATE_FILE = "data/rosterizer_state.json"  # stores output message id for editing
 UPDATE_DEBOUNCE_SECONDS = 2.0
+INCLUDE_HLLRECORDS_LINK = False  # If True, hyperlink names to hllrecords.com when player_id is available
 
 # CRCON API (Bearer token) — same pattern as mapvote.py
 CRCON_PANEL_URL = "https://7dr.hlladmin.com/api/"
@@ -24,6 +25,21 @@ PLAYER_LOOKUP_ENABLED = True
 PLAYER_LOOKUP_MAX_PER_UPDATE = 120
 PLAYER_LOOKUP_CACHE_TTL_SECONDS = 3600
 PLAYER_LOOKUP_NEGATIVE_CACHE_TTL_SECONDS = 120
+
+# Common rank prefixes seen in Discord nicknames (used only for CRCON lookup candidates)
+RANK_PREFIXES = ["Field Marshal", "FM", "General", "Gen",
+    "Lieutenant General", "Lt Gen", "Lt.Gen", "LtGen",
+    "Major General", "Maj Gen", "Maj.Gen", "MajGen",
+    "Brigadier", "Brig", "Colonel", "Col",
+    "Lieutenant Colonel", "Lt Col", "Lt.Col", "LtCol",
+    "Major", "Maj", "Captain", "Cpt", "Lieutenant", "Lt", "Lt.",
+    "2nd Lieutenant", "2Lt", "2ndLt", "2 Lt",
+    "Regimental Sergeant Major", "RSM", "WO1", "WO2",
+    "Warrant Officer", "Warrant Officer",
+    "Sergeant major", "SGM", "Staff Sergeant", "SSG",
+    "Sergeant", "Sgt", "Corporal", "Cpl",
+    "L.Cpl", "LCpl", "L Cpl", "Private", "Pte", "Recruit"]
+
 VALID_REACTIONS = {
     "I": "I",
     "🇮": "I",
@@ -77,14 +93,17 @@ class ReactionReader(commands.Cog):
     def _is_valid_reaction_emoji(self, emoji_str: str) -> bool:
         return emoji_str in VALID_REACTIONS
 
-    def _normalize_discord_username(self, name: str) -> str:
+    def _normalize_discord_username(self, name: str, *, strip_rank_prefix: bool = False) -> str:
         # "Trimming as needed":
         # - strip leading/trailing whitespace
         # - collapse internal whitespace
         # - normalize unicode so things like superscripts become plain text
         # - strip old-style Discord discriminator tokens like "#1579" / "#0" even if followed by suffixes
+        # - (optional) strip leading rank prefix for lookup fallback
         name = (name or "").strip()
         name = unicodedata.normalize("NFKC", name)
+        # Replace common separators that can appear "between" tokens.
+        name = name.replace("%", " ")
         name = " ".join(name.split())
         # Remove the last "#<digits>" occurrence (Discord discriminator), but keep any suffix after it.
         # Examples:
@@ -94,7 +113,22 @@ class ReactionReader(commands.Cog):
         if matches:
             m = matches[-1]
             name = (name[: m.start()] + name[m.end() :]).strip()
+
+        if strip_rank_prefix:
+            # Strip leading rank prefix (lookup-only fallback).
+            # Only strips when it is a standalone token followed by whitespace.
+            rank_pat = r"^(?:" + "|".join(re.escape(r) for r in RANK_PREFIXES) + r")\.?\s+"
+            name = re.sub(rank_pat, "", name, flags=re.IGNORECASE).strip()
         return name
+
+    def _escape_for_embed(self, text: str) -> str:
+        # Escape markdown and mentions to avoid formatting issues (e.g. underscores, brackets).
+        text = discord.utils.escape_mentions(text)
+        text = discord.utils.escape_markdown(text, as_needed=False)
+        # Also escape link-ish characters that aren't covered by escape_markdown.
+        text = text.replace("[", "\\[").replace("]", "\\]")
+        text = text.replace("(", "\\(").replace(")", "\\)")
+        return text
 
     async def _rcon_get(self, endpoint: str) -> dict:
         if not CRCON_API_KEY:
@@ -132,9 +166,9 @@ class ReactionReader(commands.Cog):
                     return found
         return None
 
-    async def _fetch_player_id_cached(self, player_name: str) -> tuple[str | None, bool]:
+    async def _fetch_player_id_cached(self, player_name: str, *, strip_rank_prefix: bool = False) -> tuple[str | None, bool]:
         """Return (player_id, did_http_request)."""
-        normalized = self._normalize_discord_username(player_name)
+        normalized = self._normalize_discord_username(player_name, strip_rank_prefix=strip_rank_prefix)
         if not normalized:
             return None, False
 
@@ -171,38 +205,58 @@ class ReactionReader(commands.Cog):
         Prefers server nickname/display name first (matches DISCORDNICKNAME usage), then falls back to raw username.
         """
 
-        candidates: list[str] = []
+        raw_candidates: list[str] = []
         if member is not None and member.display_name:
-            candidates.append(member.display_name)
-        # raw username (no discriminator)
-        candidates.append(user.name)
-        # global name can differ from username
+            raw_candidates.append(member.display_name)
+        raw_candidates.append(user.name)  # raw username (no discriminator)
         gn = getattr(user, "global_name", None)
         if gn:
-            candidates.append(gn)
+            raw_candidates.append(gn)
 
-        # Deduplicate after normalization
+        # Build candidate variants to improve match rate.
+        # IMPORTANT: only strip rank prefixes as a fallback *after* trying the exact (non-rank-stripped) lookup.
         seen: set[str] = set()
-        unique: list[str] = []
-        for c in candidates:
-            norm = self._normalize_discord_username(c)
-            if not norm:
+        unique_raw: list[str] = []
+
+        for c in raw_candidates:
+            if not c:
                 continue
-            k = norm.lower()
-            if k in seen:
-                continue
-            seen.add(k)
-            unique.append(norm)
+            # Keep raw-ish variants (we normalize later, depending on fallback mode).
+            for v in (c, c.replace("%", " ")):
+                nv = v.strip()
+                if not nv:
+                    continue
+                k = nv.lower()
+                if k in seen:
+                    continue
+                seen.add(k)
+                unique_raw.append(nv)
 
         http_used = 0
-        for c in unique:
+        for raw in unique_raw:
             if http_used >= http_budget_remaining:
                 break
-            pid, did_http = await self._fetch_player_id_cached(c)
+
+            # 1) Exact-ish lookup (no rank stripping)
+            pid, did_http = await self._fetch_player_id_cached(raw, strip_rank_prefix=False)
             if did_http:
                 http_used += 1
             if pid:
                 return pid, http_used
+
+            if http_used >= http_budget_remaining:
+                break
+
+            # 2) Fallback lookup (strip rank prefix)
+            # Only do this if it would change the query.
+            base_norm = self._normalize_discord_username(raw, strip_rank_prefix=False)
+            stripped_norm = self._normalize_discord_username(raw, strip_rank_prefix=True)
+            if stripped_norm and stripped_norm != base_norm:
+                pid2, did_http2 = await self._fetch_player_id_cached(raw, strip_rank_prefix=True)
+                if did_http2:
+                    http_used += 1
+                if pid2:
+                    return pid2, http_used
 
         return None, http_used
 
@@ -256,11 +310,13 @@ class ReactionReader(commands.Cog):
         nickname = member.display_name if member else (getattr(user, "global_name", None) or user.name)
         username = self._normalize_discord_username(user.name)
 
-        # Prevent Discord markdown (e.g. '_' italics) from affecting display.
-        nickname = discord.utils.escape_markdown(discord.utils.escape_mentions(nickname), as_needed=True)
-        username = discord.utils.escape_markdown(discord.utils.escape_mentions(username), as_needed=True)
+        nickname = self._escape_for_embed(nickname)
+        username = self._escape_for_embed(username)
         if player_id:
-            # HLLRecords markdown link disabled for now (it can break if an embed is truncated).
+            if INCLUDE_HLLRECORDS_LINK:
+                pid = urllib.parse.quote(str(player_id), safe="")
+                url = f"https://www.hllrecords.com/profiles/{pid}"
+                return f"[{nickname}]({url}) ({username}) [{player_id}]"
             return f"{nickname} ({username}) [{player_id}]"
         return f"{nickname} ({username})"
 
