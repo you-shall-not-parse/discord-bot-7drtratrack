@@ -1,9 +1,16 @@
+import asyncio
+import json
+import os
+from datetime import datetime, timezone
+
 import discord
 from discord.ext import commands
 
 # ========= CONFIG =========
 TARGET_MESSAGE_ID = 1458515177438838979
 OUTPUT_CHANNEL_ID = 1099806153170489485  # set to None to post in same channel
+STATE_FILE = "data/rosterizer_state.json"  # stores output message id for editing
+UPDATE_DEBOUNCE_SECONDS = 2.0
 VALID_REACTIONS = {
     "I": "I",
     "🇮": "I",
@@ -19,42 +26,179 @@ class ReactionReader(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._ran_once = False
+        self._update_task: asyncio.Task | None = None
+        self._update_lock = asyncio.Lock()
+        self._state = self._load_state()
 
-    async def _send_long_message(self, channel: discord.abc.Messageable, content: str):
-        # Discord hard limit is 2000 characters per message.
-        max_len = 2000
+    def _load_state(self) -> dict:
+        try:
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
 
-        if len(content) <= max_len:
-            await channel.send(content)
-            return
+    def _save_state(self) -> None:
+        os.makedirs(os.path.dirname(STATE_FILE) or ".", exist_ok=True)
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(self._state, f, indent=2)
 
-        # Prefer splitting on line boundaries for readability.
-        lines = content.split("\n")
-        chunk = ""
-        for line in lines:
-            # If a single line is too long, hard-split it.
-            while len(line) > max_len:
-                prefix_space = "" if not chunk else "\n"
-                remaining = max_len - len(chunk) - len(prefix_space)
-                if remaining <= 0:
-                    await channel.send(chunk)
-                    chunk = ""
-                    continue
-                part, line = line[:remaining], line[remaining:]
-                chunk = (chunk + prefix_space + part) if chunk else part
-                await channel.send(chunk)
-                chunk = ""
+    def _get_state_bucket(self, guild_id: int) -> dict:
+        return self._state.setdefault(str(guild_id), {})
 
-            proposed = (chunk + "\n" + line) if chunk else line
+    def _get_output_message_id(self, guild_id: int) -> int | None:
+        bucket = self._get_state_bucket(guild_id)
+        item = bucket.get(str(TARGET_MESSAGE_ID), {})
+        msg_id = item.get("output_message_id")
+        return int(msg_id) if isinstance(msg_id, int) else None
+
+    def _set_output_message_id(self, guild_id: int, message_id: int) -> None:
+        bucket = self._get_state_bucket(guild_id)
+        bucket[str(TARGET_MESSAGE_ID)] = {
+            "output_message_id": message_id,
+            "output_channel_id": OUTPUT_CHANNEL_ID,
+        }
+        self._save_state()
+
+    def _is_valid_reaction_emoji(self, emoji_str: str) -> bool:
+        return emoji_str in VALID_REACTIONS
+
+    async def _resolve_channel(self, channel_id: int) -> discord.abc.Messageable | None:
+        ch = self.bot.get_channel(channel_id)
+        if ch is not None:
+            return ch
+        try:
+            return await self.bot.fetch_channel(channel_id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            return None
+
+    async def _ensure_output_message(
+        self, source_message: discord.Message
+    ) -> tuple[discord.abc.Messageable, discord.Message]:
+        output_channel: discord.abc.Messageable | None
+        if OUTPUT_CHANNEL_ID is None:
+            output_channel = source_message.channel
+        else:
+            output_channel = await self._resolve_channel(OUTPUT_CHANNEL_ID)
+            if output_channel is None:
+                output_channel = source_message.channel
+
+        existing_id = self._get_output_message_id(source_message.guild.id)
+        if existing_id is not None:
+            try:
+                existing = await output_channel.fetch_message(existing_id)  # type: ignore[attr-defined]
+                return output_channel, existing
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException, AttributeError):
+                pass
+
+        placeholder = discord.Embed(
+            title="Roster reactions",
+            description="Preparing roster…",
+            color=discord.Color.blurple(),
+            timestamp=datetime.now(timezone.utc),
+        )
+        sent = await output_channel.send(
+            embeds=[placeholder],
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+        self._set_output_message_id(source_message.guild.id, sent.id)
+        return output_channel, sent
+
+    def _format_user_line(self, user: discord.abc.User, member: discord.Member | None) -> str:
+        nickname = member.display_name if member else (getattr(user, "global_name", None) or user.name)
+        # Avoid the new-username '#0' discriminator display by using a mention.
+        return f"- {nickname} ({user.mention})"
+
+    def _chunk_embed_descriptions(self, text: str, max_len: int = 3900) -> list[str]:
+        # Embed description max is 4096; keep some slack.
+        if len(text) <= max_len:
+            return [text]
+
+        parts: list[str] = []
+        buf = ""
+        for line in text.split("\n"):
+            proposed = (buf + "\n" + line) if buf else line
             if len(proposed) > max_len:
-                if chunk:
-                    await channel.send(chunk)
-                chunk = line
+                if buf:
+                    parts.append(buf)
+                buf = line
             else:
-                chunk = proposed
+                buf = proposed
+        if buf:
+            parts.append(buf)
+        return parts
 
-        if chunk:
-            await channel.send(chunk)
+    async def _build_results(self, message: discord.Message) -> dict[str, list[str]]:
+        results: dict[str, list[str]] = {"I": [], "A": [], "R": []}
+
+        for reaction in message.reactions:
+            key = VALID_REACTIONS.get(str(reaction.emoji))
+            if not key:
+                continue
+
+            async for user in reaction.users():
+                if getattr(user, "bot", False):
+                    continue
+
+                member = message.guild.get_member(user.id)
+                if member is None:
+                    try:
+                        member = await message.guild.fetch_member(user.id)
+                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                        member = None
+
+                line = self._format_user_line(user, member)
+                if line not in results[key]:
+                    results[key].append(line)
+
+        return results
+
+    def _build_embeds(self, guild: discord.Guild, results: dict[str, list[str]]) -> list[discord.Embed]:
+        blocks: list[str] = []
+        for key in ["I", "A", "R"]:
+            blocks.append(f"**{key} ({len(results[key])})**")
+            if results[key]:
+                blocks.extend(results[key])
+            else:
+                blocks.append("- None")
+            blocks.append("")
+
+        body = "\n".join(blocks).strip()
+        pages = self._chunk_embed_descriptions(body)
+
+        embeds: list[discord.Embed] = []
+        now = datetime.now(timezone.utc)
+        for i, page in enumerate(pages):
+            e = discord.Embed(
+                title="Roster reactions" if i == 0 else None,
+                description=page,
+                color=discord.Color.blurple(),
+                timestamp=now,
+            )
+            if i == 0:
+                e.set_footer(text=f"Updated • {guild.name}")
+            embeds.append(e)
+
+        return embeds[:10]  # Discord allows up to 10 embeds per message
+
+    async def _update_from_message(self, message: discord.Message) -> None:
+        async with self._update_lock:
+            output_channel, output_message = await self._ensure_output_message(message)
+            results = await self._build_results(message)
+            embeds = self._build_embeds(message.guild, results)
+
+            try:
+                await output_message.edit(
+                    content=None,
+                    embeds=embeds,
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
+            except discord.Forbidden:
+                print(
+                    f"Missing permission to edit/send in channel {getattr(output_channel, 'id', None)}. "
+                    f"Check the bot's permissions and channel overrides."
+                )
+            except discord.HTTPException as e:
+                print(f"Failed to update roster embed due to HTTPException: {e}")
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -64,6 +208,71 @@ class ReactionReader(commands.Cog):
 
         print("ReactionReader loaded — running one-time scan")
         await self.run_once()
+
+    def _schedule_update(self, guild_id: int, channel_id: int) -> None:
+        if self._update_task and not self._update_task.done():
+            self._update_task.cancel()
+
+        async def _runner() -> None:
+            try:
+                await asyncio.sleep(UPDATE_DEBOUNCE_SECONDS)
+                channel = await self._resolve_channel(channel_id)
+                if channel is None:
+                    print(f"Cannot resolve channel for reaction update: {channel_id}")
+                    return
+
+                # fetch_message is only on TextChannel/Thread/etc; guard with getattr
+                fetch_message = getattr(channel, "fetch_message", None)
+                if fetch_message is None:
+                    print(f"Channel does not support fetch_message: {channel_id}")
+                    return
+
+                msg = await fetch_message(TARGET_MESSAGE_ID)
+                await self._update_from_message(msg)
+            except asyncio.CancelledError:
+                return
+            except discord.Forbidden:
+                print("Forbidden while fetching message for reaction update (missing view/history perms)")
+            except (discord.NotFound, discord.HTTPException) as e:
+                print(f"Failed to fetch/update message for reaction update: {e}")
+
+        self._update_task = asyncio.create_task(_runner())
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
+        if payload.message_id != TARGET_MESSAGE_ID:
+            return
+        if not self._is_valid_reaction_emoji(str(payload.emoji)):
+            return
+        if payload.guild_id is None:
+            return
+        self._schedule_update(payload.guild_id, payload.channel_id)
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent):
+        if payload.message_id != TARGET_MESSAGE_ID:
+            return
+        if not self._is_valid_reaction_emoji(str(payload.emoji)):
+            return
+        if payload.guild_id is None:
+            return
+        self._schedule_update(payload.guild_id, payload.channel_id)
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_clear(self, payload: discord.RawReactionClearEvent):
+        if payload.message_id != TARGET_MESSAGE_ID:
+            return
+        if payload.guild_id is None:
+            return
+        self._schedule_update(payload.guild_id, payload.channel_id)
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_clear_emoji(self, payload: discord.RawReactionClearEmojiEvent):
+        if payload.message_id != TARGET_MESSAGE_ID:
+            return
+        if payload.guild_id is None:
+            return
+        self._schedule_update(payload.guild_id, payload.channel_id)
 
     async def run_once(self):
         message = None
@@ -84,74 +293,7 @@ class ReactionReader(commands.Cog):
             print("Target message not found")
             return
 
-        results = {"I": [], "A": [], "R": []}
-
-        for reaction in message.reactions:
-            key = VALID_REACTIONS.get(str(reaction.emoji))
-            if not key:
-                continue
-
-            async for user in reaction.users():
-                if user.bot:
-                    continue
-
-                member = message.guild.get_member(user.id)
-
-                nickname = member.display_name if member else "No Nickname"
-                username = f"{user.name}#{user.discriminator}"
-
-                entry = f"{nickname} ({username})"
-                if entry not in results[key]:
-                    results[key].append(entry)
-
-        # Build output
-        lines = []
-        for key in ["I", "A", "R"]:
-            lines.append(f"**{key} ({len(results[key])})**")
-            if results[key]:
-                lines.extend(f"- {name}" for name in results[key])
-            else:
-                lines.append("- None")
-            lines.append("")
-
-        output = "\n".join(lines)
-
-        target_channel = message.channel
-
-        if OUTPUT_CHANNEL_ID is not None:
-            # Prefer guild-local lookups first
-            target_channel = message.guild.get_channel(OUTPUT_CHANNEL_ID)
-            if target_channel is None:
-                try:
-                    target_channel = await message.guild.fetch_channel(OUTPUT_CHANNEL_ID)
-                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                    target_channel = None
-
-            # Fallback to global lookup (handles cases where the output channel is in a different guild)
-            if target_channel is None:
-                target_channel = self.bot.get_channel(OUTPUT_CHANNEL_ID)
-            if target_channel is None:
-                try:
-                    target_channel = await self.bot.fetch_channel(OUTPUT_CHANNEL_ID)
-                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                    target_channel = None
-
-        if target_channel is None:
-            print(
-                f"Output channel not found/accessible (OUTPUT_CHANNEL_ID={OUTPUT_CHANNEL_ID}); "
-                f"posting in the source channel instead."
-            )
-            target_channel = message.channel
-
-        try:
-            await self._send_long_message(target_channel, output)
-        except discord.Forbidden:
-            print(
-                f"Missing permission to send messages in channel {getattr(target_channel, 'id', None)}. "
-                f"Check the bot's permissions and channel overrides."
-            )
-        except discord.HTTPException as e:
-            print(f"Failed to send output due to HTTPException: {e}")
+        await self._update_from_message(message)
 
         print("ReactionReader complete — unload when ready")
 

@@ -33,7 +33,7 @@ intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True  # Needed for on_message and message content in DMs
 intents.presences = True  # This is critical for tracking game activity
-
+intents.reactions = True  # Needed for raw reaction events
 # Command prefix (won't affect slash commands)
 bot = commands.Bot(command_prefix="!", intents=intents)
 
