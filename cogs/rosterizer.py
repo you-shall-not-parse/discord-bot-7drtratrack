@@ -93,6 +93,71 @@ class ReactionReader(commands.Cog):
     def _is_valid_reaction_emoji(self, emoji_str: str) -> bool:
         return emoji_str in VALID_REACTIONS
 
+    def _strip_unicode_noise(self, text: str) -> str:
+        # Remove combining marks (Mn/Me) and formatting chars (Cf) that often appear in styled nicknames.
+        # Example: "⁶̆⁵̤̓ᵗ̧̘ʰ͉͜" should collapse closer to "65th".
+        decomposed = unicodedata.normalize("NFKD", text)
+        cleaned = "".join(
+            ch
+            for ch in decomposed
+            if unicodedata.category(ch) not in {"Mn", "Me", "Cf", "Cc"}
+        )
+        return unicodedata.normalize("NFKC", cleaned)
+
+    def _normalize_rank_dot(self, text: str) -> str:
+        # Handle names like "Pte.Timekeeper" or "Cpl.Zaar" by inserting a space after a rank token.
+        # Only applies when the string starts with a known rank and a dot immediately follows.
+        t = text.strip()
+        # Common short rank tokens where this occurs.
+        rank_tokens = ["Pte", "Cpl", "Sgt", "SSG", "SGM", "RSM", "Lt", "Cpt", "WO1", "WO2"]
+        for rt in rank_tokens:
+            prefix = rt + "."
+            if t.lower().startswith(prefix.lower()) and len(t) > len(prefix) and t[len(prefix)] != " ":
+                return rt + " " + t[len(prefix):]
+        return text
+
+    def _strip_trailing_ordinal(self, text: str) -> str:
+        # Remove suffixes like "65th" / "5th" when they appear at the very end.
+        return re.sub(r"\s*\d{1,3}(st|nd|rd|th)$", "", text, flags=re.IGNORECASE).strip()
+
+    def _build_simple_variants(self, text: str) -> list[str]:
+        """Build a small set of safe variants for matching player_name.
+
+        This is intentionally limited to avoid exploding the number of HTTP calls.
+        """
+
+        text = (text or "").strip()
+        if not text:
+            return []
+
+        variants: list[str] = [text]
+
+        # Underscore <-> space (common difference between Discord and in-game names)
+        if "_" in text:
+            variants.append(text.replace("_", " "))
+        if " " in text:
+            variants.append(text.replace(" ", "_"))
+
+        # Hyphen <-> space
+        if "-" in text:
+            variants.append(text.replace("-", " "))
+        if " " in text:
+            variants.append(text.replace(" ", "-"))
+
+        # De-dupe while preserving order
+        out: list[str] = []
+        seen: set[str] = set()
+        for v in variants:
+            vv = " ".join(v.split())
+            if not vv:
+                continue
+            key = vv.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(vv)
+        return out
+
     def _normalize_discord_username(self, name: str, *, strip_rank_prefix: bool = False) -> str:
         # "Trimming as needed":
         # - strip leading/trailing whitespace
@@ -102,6 +167,7 @@ class ReactionReader(commands.Cog):
         # - (optional) strip leading rank prefix for lookup fallback
         name = (name or "").strip()
         name = unicodedata.normalize("NFKC", name)
+        name = self._strip_unicode_noise(name)
         # Replace common separators that can appear "between" tokens.
         name = name.replace("%", " ")
         name = " ".join(name.split())
@@ -222,7 +288,7 @@ class ReactionReader(commands.Cog):
             if not c:
                 continue
             # Keep raw-ish variants (we normalize later, depending on fallback mode).
-            for v in (c, c.replace("%", " ")):
+            for v in (c, c.replace("%", " "), self._normalize_rank_dot(c)):
                 nv = v.strip()
                 if not nv:
                     continue
@@ -237,26 +303,54 @@ class ReactionReader(commands.Cog):
             if http_used >= http_budget_remaining:
                 break
 
-            # 1) Exact-ish lookup (no rank stripping)
-            pid, did_http = await self._fetch_player_id_cached(raw, strip_rank_prefix=False)
-            if did_http:
-                http_used += 1
-            if pid:
-                return pid, http_used
+            # Build best-guess query order for this raw candidate.
+            # If an ordinal suffix exists ("...5th"), try without it FIRST.
+            base_norm = self._normalize_discord_username(raw, strip_rank_prefix=False)
+            base_no_ord = self._strip_trailing_ordinal(base_norm)
+
+            base_queries: list[str] = []
+            if base_no_ord and base_no_ord != base_norm:
+                base_queries.append(base_no_ord)
+            if base_norm:
+                base_queries.append(base_norm)
+
+            # 1) Non-rank-stripped queries
+            for q in base_queries:
+                for qq in self._build_simple_variants(q):
+                    if http_used >= http_budget_remaining:
+                        break
+                    pid, did_http = await self._fetch_player_id_cached(qq, strip_rank_prefix=False)
+                    if did_http:
+                        http_used += 1
+                    if pid:
+                        return pid, http_used
+                if http_used >= http_budget_remaining:
+                    break
 
             if http_used >= http_budget_remaining:
                 break
 
-            # 2) Fallback lookup (strip rank prefix)
-            # Only do this if it would change the query.
-            base_norm = self._normalize_discord_username(raw, strip_rank_prefix=False)
+            # 2) Fallback lookup (strip rank prefix) — only if it changes the query.
             stripped_norm = self._normalize_discord_username(raw, strip_rank_prefix=True)
             if stripped_norm and stripped_norm != base_norm:
-                pid2, did_http2 = await self._fetch_player_id_cached(raw, strip_rank_prefix=True)
-                if did_http2:
-                    http_used += 1
-                if pid2:
-                    return pid2, http_used
+                stripped_no_ord = self._strip_trailing_ordinal(stripped_norm)
+
+                stripped_queries: list[str] = []
+                if stripped_no_ord and stripped_no_ord != stripped_norm:
+                    stripped_queries.append(stripped_no_ord)
+                stripped_queries.append(stripped_norm)
+
+                for q in stripped_queries:
+                    for qq in self._build_simple_variants(q):
+                        if http_used >= http_budget_remaining:
+                            break
+                        pid2, did_http2 = await self._fetch_player_id_cached(qq, strip_rank_prefix=False)
+                        if did_http2:
+                            http_used += 1
+                        if pid2:
+                            return pid2, http_used
+                    if http_used >= http_budget_remaining:
+                        break
 
         return None, http_used
 
