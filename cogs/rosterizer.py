@@ -3,7 +3,7 @@ from discord.ext import commands
 
 # ========= CONFIG =========
 TARGET_MESSAGE_ID = 1458515177438838979
-OUTPUT_CHANNEL_ID = None  # set to None to post in same channel
+OUTPUT_CHANNEL_ID = 1099806153170489485  # set to None to post in same channel
 VALID_REACTIONS = {
     "I": "I",
     "🇮": "I",
