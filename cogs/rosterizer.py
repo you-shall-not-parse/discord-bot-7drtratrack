@@ -26,19 +26,37 @@ PLAYER_LOOKUP_MAX_PER_UPDATE = 120
 PLAYER_LOOKUP_CACHE_TTL_SECONDS = 3600
 PLAYER_LOOKUP_NEGATIVE_CACHE_TTL_SECONDS = 120
 
-# Common rank prefixes seen in Discord nicknames (used only for CRCON lookup candidates)
-RANK_PREFIXES = ["Field Marshal", "FM", "General", "Gen",
-    "Lieutenant General", "Lt Gen", "Lt.Gen", "LtGen",
-    "Major General", "Maj Gen", "Maj.Gen", "MajGen",
-    "Brigadier", "Brig", "Colonel", "Col",
-    "Lieutenant Colonel", "Lt Col", "Lt.Col", "LtCol",
-    "Major", "Maj", "Captain", "Cpt", "Lieutenant", "Lt", "Lt.",
-    "2nd Lieutenant", "2Lt", "2ndLt", "2 Lt",
-    "Regimental Sergeant Major", "RSM", "WO1", "WO2",
-    "Warrant Officer", "Warrant Officer",
-    "Sergeant major", "SGM", "Staff Sergeant", "SSG",
-    "Sergeant", "Sgt", "Corporal", "Cpl",
-    "L.Cpl", "LCpl", "L Cpl", "Private", "Pte", "Recruit"]
+# Rank ladder (highest -> lowest) and accepted prefix variants.
+# Used for: sorting the roster and (as a fallback) stripping rank prefixes during CRCON lookup.
+RANK_ORDER: list[tuple[str, list[str]]] = [
+    ("FM", ["Field Marshal", "FM"]),
+    ("GEN", ["General", "Gen"]),
+    ("LTGEN", ["Lieutenant General", "Lt Gen", "Lt.Gen", "LtGen", "Lt-Gen"]),
+    ("MAJGEN", ["Major General", "Maj Gen", "Maj.Gen", "MajGen", "Maj-Gen"]),
+    ("BRIG", ["Brigadier", "Brig"]),
+
+    ("COL", ["Colonel", "Col"]),
+    ("LTCOL", ["Lieutenant Colonel", "Lt Col", "Lt. Col", "Lt.Col", "LtCol", "Lt-Col"]),
+    ("MAJ", ["Major", "Maj"]),
+    ("CPT", ["Captain", "Cpt"]),
+    ("LT", ["Lieutenant", "Lt", "Lt."]),
+    ("2LT", ["2nd Lieutenant", "2Lt", "2Lt.", "2ndLt", "2nd Lt", "2 Lt"]),
+
+    ("RSM", ["Regimental Sergeant Major", "Regimental Sargent Major", "RSM"]),
+    ("WO1", ["Warrant Officer 1st Class", "Warrant Officer 1", "WO1"]),
+    ("WO2", ["Warrant Officer 2nd Class", "Warrant Officer 2", "WO2"]),
+
+    ("SGM", ["Sergeant Major", "Sergeant major", "SGM"]),
+    ("SSG", ["Staff Sergeant", "Staff Sargent", "SSG"]),
+
+    ("SGT", ["Sergeant", "Sgt"]),
+    ("CPL", ["Corporal", "Cpl"]),
+    ("LCPL", ["Lance Corporal", "L.Cpl", "LCpl", "L Cpl"]),
+    ("PTE", ["Private", "Pte", "Pte."])
+]
+
+# Flattened variants list (kept for regex building in rank-stripping).
+RANK_PREFIXES: list[str] = [v for _code, variants in RANK_ORDER for v in variants]
 
 VALID_REACTIONS = {
     "I": "I",
@@ -92,6 +110,39 @@ class ReactionReader(commands.Cog):
 
     def _is_valid_reaction_emoji(self, emoji_str: str) -> bool:
         return emoji_str in VALID_REACTIONS
+
+    def _rank_index_from_display_name(self, display_name: str) -> int:
+        """Return rank order index for sorting (lower is higher rank).
+
+        Uses the order of RANK_PREFIXES as the precedence list.
+        If no rank prefix is detected, returns a large value (sorted last).
+        """
+
+        if not display_name:
+            return 10_000
+
+        s = unicodedata.normalize("NFKC", display_name.strip())
+        s = self._strip_unicode_noise(s)
+        s = " ".join(s.split())
+        s_lower = s.lower()
+
+        best_order: int | None = None
+        best_len = -1
+
+        for order_idx, (_code, variants) in enumerate(RANK_ORDER):
+            for prefix in variants:
+                p = unicodedata.normalize("NFKC", str(prefix).strip())
+                if not p:
+                    continue
+                p_lower = p.lower()
+
+                # Match at the very start. Allow whitespace or '.' after the prefix.
+                if s_lower == p_lower or s_lower.startswith(p_lower + " ") or s_lower.startswith(p_lower + "."):
+                    if len(p_lower) > best_len:
+                        best_len = len(p_lower)
+                        best_order = order_idx
+
+        return best_order if best_order is not None else 10_000
 
     def _strip_unicode_noise(self, text: str) -> str:
         # Remove combining marks (Mn/Me) and formatting chars (Cf) that often appear in styled nicknames.
@@ -465,7 +516,9 @@ class ReactionReader(commands.Cog):
         return embeds
 
     async def _build_results(self, message: discord.Message) -> dict[str, list[str]]:
-        results: dict[str, list[str]] = {"I": [], "A": [], "R": []}
+        # Build as (rank_idx, line) so we can sort by rank.
+        results_ranked: dict[str, list[tuple[int, str]]] = {"I": [], "A": [], "R": []}
+        seen_lines: dict[str, set[str]] = {"I": set(), "A": set(), "R": set()}
         http_lookups_done = 0
 
         for reaction in message.reactions:
@@ -492,8 +545,21 @@ class ReactionReader(commands.Cog):
                     http_lookups_done += used
 
                 line = self._format_user_line(user, member, player_id)
-                if line not in results[key]:
-                    results[key].append(line)
+                if line in seen_lines[key]:
+                    continue
+
+                # Rank detection is based on the member's display name when available.
+                rank_source = member.display_name if member else (getattr(user, "global_name", None) or user.name)
+                rank_idx = self._rank_index_from_display_name(rank_source)
+
+                results_ranked[key].append((rank_idx, line))
+                seen_lines[key].add(line)
+
+        # Sort each reaction list by rank (highest->lowest), then by line for stable ordering.
+        results: dict[str, list[str]] = {"I": [], "A": [], "R": []}
+        for key in ["I", "A", "R"]:
+            ranked = sorted(results_ranked[key], key=lambda t: (t[0], t[1].lower()))
+            results[key] = [line for _, line in ranked]
 
         return results
 
