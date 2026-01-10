@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 import time
 import urllib.parse
 from datetime import datetime, timezone
@@ -19,8 +20,9 @@ UPDATE_DEBOUNCE_SECONDS = 2.0
 CRCON_PANEL_URL = "https://7dr.hlladmin.com/api/"
 CRCON_API_KEY = os.getenv("CRCON_API_KEY")
 PLAYER_LOOKUP_ENABLED = True
-PLAYER_LOOKUP_MAX_PER_UPDATE = 40
+PLAYER_LOOKUP_MAX_PER_UPDATE = 120
 PLAYER_LOOKUP_CACHE_TTL_SECONDS = 3600
+PLAYER_LOOKUP_NEGATIVE_CACHE_TTL_SECONDS = 120
 VALID_REACTIONS = {
     "I": "I",
     "🇮": "I",
@@ -39,7 +41,7 @@ class ReactionReader(commands.Cog):
         self._update_task: asyncio.Task | None = None
         self._update_lock = asyncio.Lock()
         self._state = self._load_state()
-        # cache: normalized_username -> (player_id_or_none, timestamp)
+        # cache: normalized_name (lower) -> (player_id_or_none, timestamp)
         self._player_id_cache: dict[str, tuple[str | None, float]] = {}
 
     def _load_state(self) -> dict:
@@ -75,9 +77,14 @@ class ReactionReader(commands.Cog):
         return emoji_str in VALID_REACTIONS
 
     def _normalize_discord_username(self, name: str) -> str:
-        # Minimal "trimming as needed": strip and collapse internal whitespace.
+        # "Trimming as needed":
+        # - strip leading/trailing whitespace
+        # - collapse internal whitespace
+        # - strip old-style Discord discriminator suffixes like "#1579" / "#0"
         name = (name or "").strip()
         name = " ".join(name.split())
+        # Remove trailing discriminator (optional preceding space), but leave other '#' intact.
+        name = re.sub(r"\s*#\d{1,6}$", "", name).strip()
         return name
 
     async def _rcon_get(self, endpoint: str) -> dict:
@@ -116,33 +123,79 @@ class ReactionReader(commands.Cog):
                     return found
         return None
 
-    async def fetch_player_id_by_discord_username(self, discord_username: str) -> str | None:
-        """Fetch player_id using CRCON get_players_history by player_name.
-
-        Uses Bearer token from CRCON_API_KEY env var.
-        """
-
-        normalized = self._normalize_discord_username(discord_username)
+    async def _fetch_player_id_cached(self, player_name: str) -> tuple[str | None, bool]:
+        """Return (player_id, did_http_request)."""
+        normalized = self._normalize_discord_username(player_name)
         if not normalized:
-            return None
+            return None, False
 
+        key = normalized.lower()
         now = time.time()
-        cached = self._player_id_cache.get(normalized.lower())
+
+        cached = self._player_id_cache.get(key)
         if cached:
             cached_id, cached_ts = cached
-            if now - cached_ts <= PLAYER_LOOKUP_CACHE_TTL_SECONDS:
-                return cached_id
+            ttl = PLAYER_LOOKUP_CACHE_TTL_SECONDS if cached_id is not None else PLAYER_LOOKUP_NEGATIVE_CACHE_TTL_SECONDS
+            if now - cached_ts <= ttl:
+                return cached_id, False
 
         player_name_q = urllib.parse.quote(normalized, safe="")
         endpoint = f"get_players_history?player_name={player_name_q}&page_size=1"
         data = await self._rcon_get(endpoint)
         if not data or data.get("failed") or data.get("error"):
-            self._player_id_cache[normalized.lower()] = (None, now)
-            return None
+            # Don't lock in errors for too long.
+            self._player_id_cache[key] = (None, now)
+            return None, True
 
         player_id = self._extract_first_player_id(data.get("result", data))
-        self._player_id_cache[normalized.lower()] = (player_id, now)
-        return player_id
+        self._player_id_cache[key] = (player_id, now)
+        return player_id, True
+
+    async def fetch_player_id_for_user(
+        self,
+        user: discord.abc.User,
+        member: discord.Member | None,
+        http_budget_remaining: int,
+    ) -> tuple[str | None, int]:
+        """Try to resolve a CRCON player_id by searching likely Discord name variants.
+
+        Prefers server nickname/display name first (matches DISCORDNICKNAME usage), then falls back to raw username.
+        """
+
+        candidates: list[str] = []
+        if member is not None and member.display_name:
+            candidates.append(member.display_name)
+        # raw username (no discriminator)
+        candidates.append(user.name)
+        # global name can differ from username
+        gn = getattr(user, "global_name", None)
+        if gn:
+            candidates.append(gn)
+
+        # Deduplicate after normalization
+        seen: set[str] = set()
+        unique: list[str] = []
+        for c in candidates:
+            norm = self._normalize_discord_username(c)
+            if not norm:
+                continue
+            k = norm.lower()
+            if k in seen:
+                continue
+            seen.add(k)
+            unique.append(norm)
+
+        http_used = 0
+        for c in unique:
+            if http_used >= http_budget_remaining:
+                break
+            pid, did_http = await self._fetch_player_id_cached(c)
+            if did_http:
+                http_used += 1
+            if pid:
+                return pid, http_used
+
+        return None, http_used
 
     async def _resolve_channel(self, channel_id: int) -> discord.abc.Messageable | None:
         ch = self.bot.get_channel(channel_id)
@@ -194,8 +247,8 @@ class ReactionReader(commands.Cog):
         nickname = member.display_name if member else (getattr(user, "global_name", None) or user.name)
         username = self._normalize_discord_username(user.name)
         if player_id:
-            return f"- {nickname} ({username}) — {player_id}"
-        return f"- {nickname} ({username})"
+            return f"{nickname} ({username}) [{player_id}]"
+        return f"{nickname} ({username})"
 
     def _chunk_embed_descriptions(self, text: str, max_len: int = 3900) -> list[str]:
         # Embed description max is 4096; keep some slack.
@@ -218,7 +271,7 @@ class ReactionReader(commands.Cog):
 
     async def _build_results(self, message: discord.Message) -> dict[str, list[str]]:
         results: dict[str, list[str]] = {"I": [], "A": [], "R": []}
-        lookups_done = 0
+        http_lookups_done = 0
 
         for reaction in message.reactions:
             key = VALID_REACTIONS.get(str(reaction.emoji))
@@ -237,9 +290,11 @@ class ReactionReader(commands.Cog):
                         member = None
 
                 player_id: str | None = None
-                if PLAYER_LOOKUP_ENABLED and lookups_done < PLAYER_LOOKUP_MAX_PER_UPDATE:
-                    player_id = await self.fetch_player_id_by_discord_username(user.name)
-                    lookups_done += 1
+                if PLAYER_LOOKUP_ENABLED and http_lookups_done < PLAYER_LOOKUP_MAX_PER_UPDATE:
+                    remaining = PLAYER_LOOKUP_MAX_PER_UPDATE - http_lookups_done
+                    pid, used = await self.fetch_player_id_for_user(user, member, remaining)
+                    player_id = pid
+                    http_lookups_done += used
 
                 line = self._format_user_line(user, member, player_id)
                 if line not in results[key]:
