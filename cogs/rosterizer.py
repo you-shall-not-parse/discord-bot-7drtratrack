@@ -246,8 +246,14 @@ class ReactionReader(commands.Cog):
     ) -> str:
         nickname = member.display_name if member else (getattr(user, "global_name", None) or user.name)
         username = self._normalize_discord_username(user.name)
+
+        # Prevent Discord markdown (e.g. '_' italics) from affecting display.
+        nickname = discord.utils.escape_markdown(discord.utils.escape_mentions(nickname), as_needed=True)
+        username = discord.utils.escape_markdown(discord.utils.escape_mentions(username), as_needed=True)
         if player_id:
-            return f"{nickname} ({username}) [{player_id}]"
+            pid = urllib.parse.quote(str(player_id), safe="")
+            url = f"https://www.hllrecords.com/profiles/{pid}"
+            return f"[{nickname}]({url}) ({username}) [{player_id}]"
         return f"{nickname} ({username})"
 
     def _chunk_embed_descriptions(self, text: str, max_len: int = 3900) -> list[str]:
@@ -268,6 +274,38 @@ class ReactionReader(commands.Cog):
         if buf:
             parts.append(buf)
         return parts
+
+    def _build_reaction_embed(
+        self,
+        guild: discord.Guild,
+        key: str,
+        entries: list[str],
+        now: datetime,
+    ) -> discord.Embed:
+        title = f"{key} reactions"
+        header = f"**{key} ({len(entries)})**\n\n"
+
+        if not entries:
+            description = header + "- None"
+        else:
+            # Extra spacing between names for readability.
+            body = "\n\n".join(entries)
+            description = header + body
+
+        # Keep within the 4096 embed description limit.
+        max_desc = 3900
+        if len(description) > max_desc:
+            truncated = description[: max_desc - 20].rstrip()
+            description = truncated + "\n\n…(truncated)"
+
+        e = discord.Embed(
+            title=title,
+            description=description,
+            color=discord.Color.blurple(),
+            timestamp=now,
+        )
+        e.set_footer(text=f"Updated • {guild.name}")
+        return e
 
     async def _build_results(self, message: discord.Message) -> dict[str, list[str]]:
         results: dict[str, list[str]] = {"I": [], "A": [], "R": []}
@@ -303,32 +341,11 @@ class ReactionReader(commands.Cog):
         return results
 
     def _build_embeds(self, guild: discord.Guild, results: dict[str, list[str]]) -> list[discord.Embed]:
-        blocks: list[str] = []
-        for key in ["I", "A", "R"]:
-            blocks.append(f"**{key} ({len(results[key])})**")
-            if results[key]:
-                blocks.extend(results[key])
-            else:
-                blocks.append("- None")
-            blocks.append("")
-
-        body = "\n".join(blocks).strip()
-        pages = self._chunk_embed_descriptions(body)
-
-        embeds: list[discord.Embed] = []
         now = datetime.now(timezone.utc)
-        for i, page in enumerate(pages):
-            e = discord.Embed(
-                title="Roster reactions" if i == 0 else None,
-                description=page,
-                color=discord.Color.blurple(),
-                timestamp=now,
-            )
-            if i == 0:
-                e.set_footer(text=f"Updated • {guild.name}")
-            embeds.append(e)
-
-        return embeds[:10]  # Discord allows up to 10 embeds per message
+        embeds: list[discord.Embed] = []
+        for key in ["I", "A", "R"]:
+            embeds.append(self._build_reaction_embed(guild, key, results.get(key, []), now))
+        return embeds
 
     async def _update_from_message(self, message: discord.Message) -> None:
         async with self._update_lock:
