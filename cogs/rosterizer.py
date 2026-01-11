@@ -139,6 +139,47 @@ class ReactionReader(commands.Cog):
         except discord.HTTPException as e:
             print(f"Failed to assign role {ROLE_ID} to user {user_id}: {e}")
 
+    async def _try_remove_roster_role(self, guild: discord.Guild, user_id: int, *, reason: str) -> None:
+        if ROLE_ID is None:
+            return
+
+        role = guild.get_role(ROLE_ID)
+        if role is None:
+            return
+
+        member = guild.get_member(user_id)
+        if member is None:
+            try:
+                member = await guild.fetch_member(user_id)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                return
+
+        if member is None or member.bot:
+            return
+
+        if role not in member.roles:
+            return
+
+        try:
+            await member.remove_roles(role, reason=reason)
+        except discord.Forbidden:
+            print(f"Missing permission to remove role {ROLE_ID} from user {user_id}")
+        except discord.HTTPException as e:
+            print(f"Failed to remove role {ROLE_ID} from user {user_id}: {e}")
+
+    async def _user_still_has_any_valid_reaction(self, message: discord.Message, user_id: int) -> bool:
+        for reaction in message.reactions:
+            if not self._is_valid_reaction_emoji(str(reaction.emoji)):
+                continue
+            try:
+                async for user in reaction.users():
+                    if user.id == user_id:
+                        return True
+            except (discord.Forbidden, discord.HTTPException):
+                # If we can't verify, do not remove roles.
+                return True
+        return False
+
     async def _backfill_roles_from_message(self, message: discord.Message) -> None:
         """One-time scan: assign ROLE_ID to anyone who has already reacted."""
 
@@ -610,6 +651,23 @@ class ReactionReader(commands.Cog):
             return
         if payload.guild_id is None:
             return
+
+        # Remove role if configured and the user no longer has ANY valid roster reaction.
+        if ROLE_ID is not None:
+            try:
+                guild = self.bot.get_guild(payload.guild_id)
+                channel = await self._resolve_channel(payload.channel_id)
+                fetch_message = getattr(channel, "fetch_message", None) if channel is not None else None
+                if guild is not None and fetch_message is not None:
+                    msg = await fetch_message(TARGET_MESSAGE_ID)
+                    still_has = await self._user_still_has_any_valid_reaction(msg, payload.user_id)
+                    if not still_has:
+                        await self._try_remove_roster_role(guild, payload.user_id, reason="Removed roster reaction")
+            except discord.Forbidden:
+                print("Forbidden while checking reactions for role removal")
+            except (discord.NotFound, discord.HTTPException) as e:
+                print(f"Failed to fetch/check message for role removal: {e}")
+
         self._schedule_update(payload.guild_id, payload.channel_id)
 
     @commands.Cog.listener()
