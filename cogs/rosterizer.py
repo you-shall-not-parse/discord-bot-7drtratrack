@@ -8,15 +8,27 @@ from datetime import datetime, timezone
 
 import discord
 from discord.ext import commands
+from discord import app_commands
 import requests
 
 # ========= CONFIG =========
+# Guild-scoped commands (add your guild/server IDs here)
+GUILD_IDS: list[int] = [1097913605082579024]
+
+# Only members with ANY of these roles can use /lockroster and /unlockroster
+ROSTER_LOCK_ADMIN_ROLE_IDS: list[int] = [1213495462632361994, 1098342675389890670, 1098342769468125214]  # e.g. [123..., 456...]
+
 TARGET_MESSAGE_ID = 1458515177438838979
 OUTPUT_CHANNEL_ID = 1459904650831724806  # set to None to post in same channel
 ROLE_ID = 1364639604564688917  # Set to role ID to auto-assign when users react (e.g., 1234567890123456789)
 STATE_FILE = "data/rosterizer_state.json"  # stores output message id for editing
 UPDATE_DEBOUNCE_SECONDS = 2.0
 INCLUDE_HLLRECORDS_LINK = False  # If True, hyperlink names to hllrecords.com when player_id is available
+
+LOCKED_DM_MESSAGE = (
+    "The roster is currently locked. Please contact the ICs to unlock the roster so you can click an emoji/reaction and be added."
+)
+LOCKED_DM_COOLDOWN_SECONDS = 60
 
 # CRCON API (Bearer token) — same pattern as mapvote.py
 CRCON_PANEL_URL = "https://7dr.hlladmin.com/api/"
@@ -69,6 +81,16 @@ VALID_REACTIONS = {
 # ==========================
 
 
+def _can_manage_roster_lock(interaction: discord.Interaction) -> bool:
+    user = interaction.user
+    if not isinstance(user, discord.Member):
+        return False
+    if not ROSTER_LOCK_ADMIN_ROLE_IDS:
+        return False
+    return any(r.id in ROSTER_LOCK_ADMIN_ROLE_IDS for r in getattr(user, "roles", []))
+
+
+@app_commands.guilds(*[discord.Object(id=g) for g in GUILD_IDS])
 class ReactionReader(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -78,6 +100,7 @@ class ReactionReader(commands.Cog):
         self._state = self._load_state()
         # cache: normalized_name (lower) -> (player_id_or_none, timestamp)
         self._player_id_cache: dict[str, tuple[str | None, float]] = {}
+        self._dm_last_sent: dict[int, float] = {}
 
     def _load_state(self) -> dict:
         try:
@@ -94,22 +117,172 @@ class ReactionReader(commands.Cog):
     def _get_state_bucket(self, guild_id: int) -> dict:
         return self._state.setdefault(str(guild_id), {})
 
-    def _get_output_message_id(self, guild_id: int) -> int | None:
+    def _get_target_state(self, guild_id: int) -> dict:
         bucket = self._get_state_bucket(guild_id)
-        item = bucket.get(str(TARGET_MESSAGE_ID), {})
+        return bucket.setdefault(str(TARGET_MESSAGE_ID), {})
+
+    def _get_output_message_id(self, guild_id: int) -> int | None:
+        item = self._get_target_state(guild_id)
         msg_id = item.get("output_message_id")
         return int(msg_id) if isinstance(msg_id, int) else None
 
     def _set_output_message_id(self, guild_id: int, message_id: int) -> None:
-        bucket = self._get_state_bucket(guild_id)
-        bucket[str(TARGET_MESSAGE_ID)] = {
-            "output_message_id": message_id,
-            "output_channel_id": OUTPUT_CHANNEL_ID,
-        }
+        item = self._get_target_state(guild_id)
+        item["output_message_id"] = message_id
+        item["output_channel_id"] = OUTPUT_CHANNEL_ID
+        self._save_state()
+
+    def _is_roster_locked(self, guild_id: int) -> bool:
+        item = self._get_target_state(guild_id)
+        return bool(item.get("roster_locked", False))
+
+    def _set_roster_locked(self, guild_id: int, locked: bool) -> None:
+        item = self._get_target_state(guild_id)
+        item["roster_locked"] = bool(locked)
         self._save_state()
 
     def _is_valid_reaction_emoji(self, emoji_str: str) -> bool:
         return emoji_str in VALID_REACTIONS
+
+    async def _maybe_dm_locked_notice(self, user_id: int) -> None:
+        if not LOCKED_DM_MESSAGE:
+            return
+
+        now = time.time()
+        last = self._dm_last_sent.get(user_id, 0.0)
+        if now - last < LOCKED_DM_COOLDOWN_SECONDS:
+            return
+
+        user = self.bot.get_user(user_id)
+        if user is None:
+            try:
+                user = await self.bot.fetch_user(user_id)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                return
+
+        try:
+            await user.send(LOCKED_DM_MESSAGE)
+            self._dm_last_sent[user_id] = now
+        except (discord.Forbidden, discord.HTTPException):
+            return
+
+    async def _try_remove_user_reaction(
+        self,
+        *,
+        channel_id: int,
+        message_id: int,
+        emoji: discord.PartialEmoji | discord.Emoji | str,
+        user_id: int,
+    ) -> None:
+        channel = await self._resolve_channel(channel_id)
+        if channel is None:
+            return
+
+        fetch_message = getattr(channel, "fetch_message", None)
+        if fetch_message is None:
+            return
+
+        try:
+            msg = await fetch_message(message_id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            return
+
+        user = self.bot.get_user(user_id)
+        if user is None:
+            try:
+                user = await self.bot.fetch_user(user_id)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                return
+
+        try:
+            await msg.remove_reaction(emoji, user)
+        except (discord.Forbidden, discord.HTTPException):
+            return
+
+    async def _sync_app_commands_for_guilds(self) -> None:
+        # Ensure guild-scoped commands appear immediately.
+        if not GUILD_IDS:
+            return
+        for gid in GUILD_IDS:
+            try:
+                await self.bot.tree.sync(guild=discord.Object(id=gid))
+            except Exception:
+                pass
+
+    async def _find_target_message(self) -> discord.Message | None:
+        # Find the message in all guilds/channels the bot can see
+        for guild in self.bot.guilds:
+            for channel in guild.text_channels:
+                try:
+                    message = await channel.fetch_message(TARGET_MESSAGE_ID)
+                    if message:
+                        return message
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    continue
+        return None
+
+    async def _find_target_message_in_guild(self, guild: discord.Guild) -> discord.Message | None:
+        for channel in guild.text_channels:
+            try:
+                message = await channel.fetch_message(TARGET_MESSAGE_ID)
+                if message:
+                    return message
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                continue
+        return None
+
+    @app_commands.command(name="lockroster", description="Lock the roster (disable reaction signups).")
+    @app_commands.check(_can_manage_roster_lock)
+    async def lockroster(self, interaction: discord.Interaction):
+        if interaction.guild_id is None:
+            await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        self._set_roster_locked(interaction.guild_id, True)
+
+        guild = self.bot.get_guild(interaction.guild_id)
+        if guild is not None:
+            msg = await self._find_target_message_in_guild(guild)
+            if msg is not None:
+                await self._update_from_message(msg)
+
+        await interaction.followup.send("Roster locked. New reactions will not be accepted.", ephemeral=True)
+
+    @lockroster.error
+    async def lockroster_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        if isinstance(error, app_commands.CheckFailure):
+            await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
+            return
+        await interaction.response.send_message(f"Failed to lock roster: {error}", ephemeral=True)
+
+    @app_commands.command(name="unlockroster", description="Unlock the roster (enable reaction signups).")
+    @app_commands.check(_can_manage_roster_lock)
+    async def unlockroster(self, interaction: discord.Interaction):
+        if interaction.guild_id is None:
+            await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        self._set_roster_locked(interaction.guild_id, False)
+
+        guild = self.bot.get_guild(interaction.guild_id)
+        if guild is not None:
+            msg = await self._find_target_message_in_guild(guild)
+            if msg is not None:
+                # Backfill: if someone reacted while locked and their reaction remains,
+                # they will now receive the role.
+                await self._backfill_roles_from_message(msg)
+                await self._update_from_message(msg)
+
+        await interaction.followup.send("Roster unlocked. Reactions are now accepted.", ephemeral=True)
+
+    @unlockroster.error
+    async def unlockroster_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        if isinstance(error, app_commands.CheckFailure):
+            await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
+            return
+        await interaction.response.send_message(f"Failed to unlock roster: {error}", ephemeral=True)
 
     async def _try_assign_roster_role(self, guild: discord.Guild, user_id: int, *, reason: str) -> None:
         if ROLE_ID is None:
@@ -520,6 +693,8 @@ class ReactionReader(commands.Cog):
         results_ranked: dict[str, list[tuple[int, str]]] = {"I": [], "A": [], "R": []}
         seen_lines: dict[str, set[str]] = {"I": set(), "A": set(), "R": set()}
         http_lookups_done = 0
+        locked = self._is_roster_locked(message.guild.id)
+        roster_role = message.guild.get_role(ROLE_ID) if ROLE_ID is not None else None
 
         for reaction in message.reactions:
             key = VALID_REACTIONS.get(str(reaction.emoji))
@@ -536,6 +711,11 @@ class ReactionReader(commands.Cog):
                         member = await message.guild.fetch_member(user.id)
                     except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                         member = None
+
+                # If roster is locked, only show users who already have the roster role.
+                if locked and roster_role is not None:
+                    if member is None or roster_role not in getattr(member, "roles", []):
+                        continue
 
                 player_id: str | None = None
                 if PLAYER_LOOKUP_ENABLED and http_lookups_done < PLAYER_LOOKUP_MAX_PER_UPDATE:
@@ -596,6 +776,7 @@ class ReactionReader(commands.Cog):
             return
         self._ran_once = True
 
+        await self._sync_app_commands_for_guilds()
         print("ReactionReader loaded — running one-time scan")
         await self.run_once()
 
@@ -635,6 +816,18 @@ class ReactionReader(commands.Cog):
         if not self._is_valid_reaction_emoji(str(payload.emoji)):
             return
         if payload.guild_id is None:
+            return
+
+        if self._is_roster_locked(payload.guild_id):
+            await self._maybe_dm_locked_notice(payload.user_id)
+            # Best-effort: remove the reaction so it doesn't appear on the roster message.
+            await self._try_remove_user_reaction(
+                channel_id=payload.channel_id,
+                message_id=payload.message_id,
+                emoji=payload.emoji,
+                user_id=payload.user_id,
+            )
+            self._schedule_update(payload.guild_id, payload.channel_id)
             return
 
         guild = self.bot.get_guild(payload.guild_id)
@@ -687,19 +880,7 @@ class ReactionReader(commands.Cog):
         self._schedule_update(payload.guild_id, payload.channel_id)
 
     async def run_once(self):
-        message = None
-
-        # Find the message in all guilds/channels the bot can see
-        for guild in self.bot.guilds:
-            for channel in guild.text_channels:
-                try:
-                    message = await channel.fetch_message(TARGET_MESSAGE_ID)
-                    if message:
-                        break
-                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                    continue
-            if message:
-                break
+        message = await self._find_target_message()
 
         if not message:
             print("Target message not found")
@@ -713,3 +894,4 @@ class ReactionReader(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ReactionReader(bot))
+
