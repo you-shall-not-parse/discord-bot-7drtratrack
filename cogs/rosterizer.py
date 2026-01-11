@@ -12,7 +12,7 @@ import requests
 
 # ========= CONFIG =========
 TARGET_MESSAGE_ID = 1458515177438838979
-OUTPUT_CHANNEL_ID = 1099806153170489485  # set to None to post in same channel
+OUTPUT_CHANNEL_ID = 1459904650831724806  # set to None to post in same channel
 STATE_FILE = "data/rosterizer_state.json"  # stores output message id for editing
 UPDATE_DEBOUNCE_SECONDS = 2.0
 INCLUDE_HLLRECORDS_LINK = False  # If True, hyperlink names to hllrecords.com when player_id is available
