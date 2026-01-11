@@ -5,15 +5,14 @@ import re
 import time
 import urllib.parse
 from datetime import datetime, timezone
-
 import discord
 from discord.ext import commands
 from discord import app_commands
 import requests
 
 # ========= CONFIG =========
-# Guild-scoped commands (add your guild/server IDs here)
-GUILD_IDS: list[int] = [1097913605082579024]
+
+GUILD_ID = 1097913605082579024
 
 # Only members with ANY of these roles can use /lockroster and /unlockroster
 ROSTER_LOCK_ADMIN_ROLE_IDS: list[int] = [1213495462632361994, 1098342675389890670, 1098342769468125214]  # e.g. [123..., 456...]
@@ -90,7 +89,6 @@ def _can_manage_roster_lock(interaction: discord.Interaction) -> bool:
     return any(r.id in ROSTER_LOCK_ADMIN_ROLE_IDS for r in getattr(user, "roles", []))
 
 
-@app_commands.guilds(*[discord.Object(id=g) for g in GUILD_IDS])
 class ReactionReader(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -201,13 +199,10 @@ class ReactionReader(commands.Cog):
 
     async def _sync_app_commands_for_guilds(self) -> None:
         # Ensure guild-scoped commands appear immediately.
-        if not GUILD_IDS:
-            return
-        for gid in GUILD_IDS:
-            try:
-                await self.bot.tree.sync(guild=discord.Object(id=gid))
-            except Exception:
-                pass
+        try:
+            await self.bot.tree.sync(guild=discord.Object(id=GUILD_ID))
+        except Exception:
+            pass
 
     async def _find_target_message(self) -> discord.Message | None:
         # Find the message in all guilds/channels the bot can see
@@ -232,6 +227,7 @@ class ReactionReader(commands.Cog):
         return None
 
     @app_commands.command(name="lockroster", description="Lock the roster (disable reaction signups).")
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.check(_can_manage_roster_lock)
     async def lockroster(self, interaction: discord.Interaction):
         if interaction.guild_id is None:
@@ -257,6 +253,7 @@ class ReactionReader(commands.Cog):
         await interaction.response.send_message(f"Failed to lock roster: {error}", ephemeral=True)
 
     @app_commands.command(name="unlockroster", description="Unlock the roster (enable reaction signups).")
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.check(_can_manage_roster_lock)
     async def unlockroster(self, interaction: discord.Interaction):
         if interaction.guild_id is None:
