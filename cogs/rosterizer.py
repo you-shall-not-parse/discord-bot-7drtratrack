@@ -13,6 +13,7 @@ import requests
 # ========= CONFIG =========
 TARGET_MESSAGE_ID = 1458515177438838979
 OUTPUT_CHANNEL_ID = 1459904650831724806  # set to None to post in same channel
+ROLE_ID = 1364639604564688917  # Set to role ID to auto-assign when users react (e.g., 1234567890123456789)
 STATE_FILE = "data/rosterizer_state.json"  # stores output message id for editing
 UPDATE_DEBOUNCE_SECONDS = 2.0
 INCLUDE_HLLRECORDS_LINK = False  # If True, hyperlink names to hllrecords.com when player_id is available
@@ -109,6 +110,67 @@ class ReactionReader(commands.Cog):
 
     def _is_valid_reaction_emoji(self, emoji_str: str) -> bool:
         return emoji_str in VALID_REACTIONS
+
+    async def _try_assign_roster_role(self, guild: discord.Guild, user_id: int, *, reason: str) -> None:
+        if ROLE_ID is None:
+            return
+
+        role = guild.get_role(ROLE_ID)
+        if role is None:
+            return
+
+        member = guild.get_member(user_id)
+        if member is None:
+            try:
+                member = await guild.fetch_member(user_id)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                return
+
+        if member is None or member.bot:
+            return
+
+        if role in member.roles:
+            return
+
+        try:
+            await member.add_roles(role, reason=reason)
+        except discord.Forbidden:
+            print(f"Missing permission to assign role {ROLE_ID} to user {user_id}")
+        except discord.HTTPException as e:
+            print(f"Failed to assign role {ROLE_ID} to user {user_id}: {e}")
+
+    async def _backfill_roles_from_message(self, message: discord.Message) -> None:
+        """One-time scan: assign ROLE_ID to anyone who has already reacted."""
+
+        if ROLE_ID is None:
+            return
+
+        guild = message.guild
+        role = guild.get_role(ROLE_ID)
+        if role is None:
+            print(f"ROLE_ID {ROLE_ID} not found in guild {guild.id}")
+            return
+
+        seen_user_ids: set[int] = set()
+
+        for reaction in message.reactions:
+            if not self._is_valid_reaction_emoji(str(reaction.emoji)):
+                continue
+
+            try:
+                async for user in reaction.users():
+                    if getattr(user, "bot", False):
+                        continue
+                    if user.id in seen_user_ids:
+                        continue
+                    seen_user_ids.add(user.id)
+                    await self._try_assign_roster_role(guild, user.id, reason="Has roster reaction")
+            except discord.Forbidden:
+                print("Forbidden while scanning reactions for role backfill (missing view/history perms)")
+                return
+            except discord.HTTPException as e:
+                print(f"Failed while scanning reactions for role backfill: {e}")
+                return
 
     def _rank_index_from_display_name(self, display_name: str) -> int:
         """Return rank order index for sorting (lower is higher rank).
@@ -533,6 +595,11 @@ class ReactionReader(commands.Cog):
             return
         if payload.guild_id is None:
             return
+
+        guild = self.bot.get_guild(payload.guild_id)
+        if guild is not None:
+            await self._try_assign_roster_role(guild, payload.user_id, reason="Reacted to roster message")
+
         self._schedule_update(payload.guild_id, payload.channel_id)
 
     @commands.Cog.listener()
@@ -581,6 +648,7 @@ class ReactionReader(commands.Cog):
             return
 
         await self._update_from_message(message)
+        await self._backfill_roles_from_message(message)
 
         print("ReactionReader complete — unload when ready")
 
