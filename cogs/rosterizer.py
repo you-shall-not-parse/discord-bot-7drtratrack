@@ -30,7 +30,7 @@ AUDITLOG_LOOKBACK_SECONDS = 15
 BLOCK_MANUAL_ROLE_ADDS_WHEN_LOCKED = True
 
 LOCKED_DM_MESSAGE = (
-    "The roster is currently locked. Please contact the ICs to unlock the roster so you can click an emoji/reaction and be added."
+    "The roster is currently locked. Please contact the ICs to unlock the roster so you can click an emoji/reaction or add the role."
 )
 LOCKED_DM_COOLDOWN_SECONDS = 60
 
