@@ -24,6 +24,11 @@ STATE_FILE = "data/rosterizer_state.json"  # stores output message id for editin
 UPDATE_DEBOUNCE_SECONDS = 2.0
 INCLUDE_HLLRECORDS_LINK = False  # If True, hyperlink names to hllrecords.com when player_id is available
 
+# Additional output message: members who have ROLE_ID but have NOT reacted to TARGET_MESSAGE_ID.
+MANUAL_ROLE_OUTPUT_TITLE = "Role Manually Added"
+AUDITLOG_LOOKBACK_SECONDS = 15
+BLOCK_MANUAL_ROLE_ADDS_WHEN_LOCKED = True
+
 LOCKED_DM_MESSAGE = (
     "The roster is currently locked. Please contact the ICs to unlock the roster so you can click an emoji/reaction and be added."
 )
@@ -124,10 +129,21 @@ class ReactionReader(commands.Cog):
         msg_id = item.get("output_message_id")
         return int(msg_id) if isinstance(msg_id, int) else None
 
+    def _get_manual_role_output_message_id(self, guild_id: int) -> int | None:
+        item = self._get_target_state(guild_id)
+        msg_id = item.get("manual_role_output_message_id")
+        return int(msg_id) if isinstance(msg_id, int) else None
+
     def _set_output_message_id(self, guild_id: int, message_id: int) -> None:
         item = self._get_target_state(guild_id)
         item["output_message_id"] = message_id
         item["output_channel_id"] = OUTPUT_CHANNEL_ID
+        self._save_state()
+
+    def _set_manual_role_output_message_id(self, guild_id: int, message_id: int) -> None:
+        item = self._get_target_state(guild_id)
+        item["manual_role_output_message_id"] = message_id
+        item["manual_role_output_channel_id"] = OUTPUT_CHANNEL_ID
         self._save_state()
 
     def _is_roster_locked(self, guild_id: int) -> bool:
@@ -615,6 +631,38 @@ class ReactionReader(commands.Cog):
         self._set_output_message_id(source_message.guild.id, sent.id)
         return output_channel, sent
 
+    async def _ensure_manual_role_output_message(
+        self, source_message: discord.Message
+    ) -> tuple[discord.abc.Messageable, discord.Message]:
+        output_channel: discord.abc.Messageable | None
+        if OUTPUT_CHANNEL_ID is None:
+            output_channel = source_message.channel
+        else:
+            output_channel = await self._resolve_channel(OUTPUT_CHANNEL_ID)
+            if output_channel is None:
+                output_channel = source_message.channel
+
+        existing_id = self._get_manual_role_output_message_id(source_message.guild.id)
+        if existing_id is not None:
+            try:
+                existing = await output_channel.fetch_message(existing_id)  # type: ignore[attr-defined]
+                return output_channel, existing
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException, AttributeError):
+                pass
+
+        placeholder = discord.Embed(
+            title=MANUAL_ROLE_OUTPUT_TITLE,
+            description="Preparing list…",
+            color=discord.Color.orange(),
+            timestamp=datetime.now(timezone.utc),
+        )
+        sent = await output_channel.send(
+            embeds=[placeholder],
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+        self._set_manual_role_output_message_id(source_message.guild.id, sent.id)
+        return output_channel, sent
+
     def _format_user_line(
         self,
         user: discord.abc.User,
@@ -747,11 +795,83 @@ class ReactionReader(commands.Cog):
             embeds.extend(self._build_reaction_embeds(guild, key, results.get(key, []), now))
         return embeds
 
+    async def _collect_reacted_user_ids(self, message: discord.Message) -> set[int]:
+        reacted: set[int] = set()
+        for reaction in message.reactions:
+            if not self._is_valid_reaction_emoji(str(reaction.emoji)):
+                continue
+            try:
+                async for user in reaction.users():
+                    reacted.add(user.id)
+            except (discord.Forbidden, discord.HTTPException):
+                # If we can't enumerate, return what we have.
+                return reacted
+        return reacted
+
+    def _build_manual_role_embeds(self, guild: discord.Guild, entries: list[str]) -> list[discord.Embed]:
+        now = datetime.now(timezone.utc)
+        header = f"**{MANUAL_ROLE_OUTPUT_TITLE} ({len(entries)})**\n\n"
+
+        if not entries:
+            pages = [header + "- None"]
+        else:
+            body = "\n\n".join(entries)
+            pages = self._chunk_embed_descriptions(header + body)
+
+        embeds: list[discord.Embed] = []
+        total = len(pages)
+        for idx, page in enumerate(pages, start=1):
+            title = MANUAL_ROLE_OUTPUT_TITLE if total == 1 else f"{MANUAL_ROLE_OUTPUT_TITLE} ({idx}/{total})"
+            e = discord.Embed(
+                title=title,
+                description=page,
+                color=discord.Color.orange(),
+                timestamp=now,
+            )
+            e.set_footer(text=f"Updated • {guild.name}")
+            embeds.append(e)
+        return embeds
+
+    async def _build_manual_role_entries(self, message: discord.Message) -> list[str]:
+        if ROLE_ID is None:
+            return []
+
+        role = message.guild.get_role(ROLE_ID)
+        if role is None:
+            return []
+
+        reacted_ids = await self._collect_reacted_user_ids(message)
+        ranked_entries: list[tuple[int, str]] = []
+        seen: set[str] = set()
+
+        # role.members uses cache; if your bot has Members intent, it should be accurate.
+        for member in getattr(role, "members", []) or []:
+            if member.bot:
+                continue
+            if member.id in reacted_ids:
+                continue
+
+            user = member
+            line = self._format_user_line(user, member, player_id=None)
+            if line in seen:
+                continue
+            seen.add(line)
+
+            rank_idx = self._rank_index_from_display_name(member.display_name)
+            ranked_entries.append((rank_idx, line))
+
+        ranked_entries.sort(key=lambda t: (t[0], t[1].lower()))
+        return [line for _, line in ranked_entries]
+
     async def _update_from_message(self, message: discord.Message) -> None:
         async with self._update_lock:
             output_channel, output_message = await self._ensure_output_message(message)
             results = await self._build_results(message)
             embeds = self._build_embeds(message.guild, results)
+
+            manual_output_channel, manual_output_message = await self._ensure_manual_role_output_message(message)
+            manual_entries = await self._build_manual_role_entries(message)
+            manual_embeds = self._build_manual_role_embeds(message.guild, manual_entries)
 
             try:
                 await output_message.edit(
@@ -766,6 +886,78 @@ class ReactionReader(commands.Cog):
                 )
             except discord.HTTPException as e:
                 print(f"Failed to update roster embed due to HTTPException: {e}")
+
+            try:
+                await manual_output_message.edit(
+                    content=None,
+                    embeds=manual_embeds,
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
+            except discord.Forbidden:
+                print(
+                    f"Missing permission to edit/send in channel {getattr(manual_output_channel, 'id', None)}. "
+                    f"Check the bot's permissions and channel overrides."
+                )
+            except discord.HTTPException as e:
+                print(f"Failed to update manual-role embed due to HTTPException: {e}")
+
+    async def _dm_executor_if_manual_role_add_while_locked(
+        self,
+        guild: discord.Guild,
+        target_member: discord.Member,
+        *,
+        role_id: int,
+    ) -> None:
+        if not self._is_roster_locked(guild.id):
+            return
+
+        # We need audit log access to know who added the role.
+        me = guild.me
+        if me is None or not getattr(me.guild_permissions, "view_audit_log", False):
+            return
+
+        try:
+            cutoff = datetime.now(timezone.utc).timestamp() - AUDITLOG_LOOKBACK_SECONDS
+            async for entry in guild.audit_logs(limit=10, action=discord.AuditLogAction.member_role_update):
+                created = getattr(entry, "created_at", None)
+                if created is not None and created.replace(tzinfo=timezone.utc).timestamp() < cutoff:
+                    break
+
+                if getattr(entry, "target", None) is None or getattr(entry.target, "id", None) != target_member.id:
+                    continue
+
+                before_roles = getattr(getattr(entry, "before", None), "roles", None)
+                after_roles = getattr(getattr(entry, "after", None), "roles", None)
+                if before_roles is None or after_roles is None:
+                    continue
+
+                before_ids = {r.id for r in before_roles}
+                after_ids = {r.id for r in after_roles}
+                if role_id in after_ids and role_id not in before_ids:
+                    executor = getattr(entry, "user", None)
+                    if executor is not None:
+                        await self._maybe_dm_locked_notice(executor.id)
+                    return
+        except (discord.Forbidden, discord.HTTPException):
+            return
+
+    async def _block_manual_role_add_if_locked(self, guild: discord.Guild, member: discord.Member) -> None:
+        if ROLE_ID is None:
+            return
+        if not BLOCK_MANUAL_ROLE_ADDS_WHEN_LOCKED:
+            return
+        if not self._is_roster_locked(guild.id):
+            return
+
+        # Notify whoever tried to add it (best effort).
+        await self._dm_executor_if_manual_role_add_while_locked(guild, member, role_id=ROLE_ID)
+
+        # Revert the role add.
+        try:
+            await self._try_remove_roster_role(guild, member.id, reason="Roster locked - manual role add blocked")
+        except Exception:
+            # _try_remove_roster_role already handles discord exceptions; keep this extra-safe.
+            return
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -875,6 +1067,29 @@ class ReactionReader(commands.Cog):
         if payload.guild_id is None:
             return
         self._schedule_update(payload.guild_id, payload.channel_id)
+
+    @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member):
+        if ROLE_ID is None:
+            return
+        if after.guild is None:
+            return
+
+        before_has = any(r.id == ROLE_ID for r in getattr(before, "roles", []))
+        after_has = any(r.id == ROLE_ID for r in getattr(after, "roles", []))
+        if before_has or not after_has:
+            return
+
+        # ROLE_ID was added.
+        await self._block_manual_role_add_if_locked(after.guild, after)
+
+        # Refresh embeds so the manual-role list captures this change.
+        try:
+            msg = await self._find_target_message_in_guild(after.guild)
+            if msg is not None:
+                await self._update_from_message(msg)
+        except Exception:
+            return
 
     async def run_once(self):
         message = await self._find_target_message()
