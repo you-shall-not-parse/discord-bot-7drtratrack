@@ -633,6 +633,16 @@ class ManualRoster(commands.Cog):
 
         self._schedule_update(after.guild.id)
 
+    @commands.Cog.listener()
+    async def on_member_remove(self, member: discord.Member):
+        # When someone leaves, they disappear from role.members; refresh roster promptly.
+        try:
+            if member.guild is None:
+                return
+            self._schedule_update(member.guild.id)
+        except Exception:
+            return
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ManualRoster(bot))

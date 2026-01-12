@@ -213,6 +213,22 @@ class ReactionReader(commands.Cog):
         except (discord.Forbidden, discord.HTTPException):
             return
 
+    async def _try_remove_all_valid_reactions_for_member(self, guild: discord.Guild, member: discord.Member) -> None:
+        """Best-effort: remove any valid roster reactions from TARGET_MESSAGE_ID for this member."""
+
+        msg = await self._find_target_message_in_guild(guild)
+        if msg is None:
+            return
+
+        for reaction in getattr(msg, "reactions", []) or []:
+            if not self._is_valid_reaction_emoji(str(reaction.emoji)):
+                continue
+            try:
+                await msg.remove_reaction(reaction.emoji, member)
+            except (discord.Forbidden, discord.HTTPException):
+                # Missing perms / already removed / transient failure.
+                continue
+
     async def _sync_app_commands_for_guilds(self) -> None:
         # Ensure guild-scoped commands appear immediately.
         try:
@@ -668,6 +684,7 @@ class ReactionReader(commands.Cog):
         user: discord.abc.User,
         member: discord.Member | None,
         player_id: str | None,
+        left_server: bool = False,
     ) -> str:
         nickname = member.display_name if member else (getattr(user, "global_name", None) or user.name)
         nickname = self._cut_at_hash(nickname)
@@ -675,13 +692,21 @@ class ReactionReader(commands.Cog):
 
         nickname = self._escape_for_embed(nickname)
         username = self._escape_for_embed(username)
+
         if player_id:
             if INCLUDE_HLLRECORDS_LINK:
                 pid = urllib.parse.quote(str(player_id), safe="")
                 url = f"https://www.hllrecords.com/profiles/{pid}"
-                return f"[{nickname}]({url}) ({username}) [{player_id}]"
-            return f"{nickname} ({username}) [{player_id}]"
-        return f"{nickname} ({username})"
+                line = f"[{nickname}]({url}) ({username}) [{player_id}]"
+            else:
+                line = f"{nickname} ({username}) [{player_id}]"
+        else:
+            line = f"{nickname} ({username})"
+
+        if left_server:
+            line += " *left the server*"
+
+        return line
 
     def _chunk_embed_descriptions(self, text: str, max_len: int = 3900) -> list[str]:
         # Embed description max is 4096; keep some slack.
@@ -713,7 +738,7 @@ class ReactionReader(commands.Cog):
         header = f"**{key} ({len(entries)})**\n\n"
 
         if not entries:
-            pages = [header + "- None"]
+            pages = [header + "None"]
         else:
             body = "\n\n".join(entries)
             pages = self._chunk_embed_descriptions(header + body)
@@ -750,17 +775,26 @@ class ReactionReader(commands.Cog):
                 if getattr(user, "bot", False):
                     continue
 
+                left_server = False
                 member = message.guild.get_member(user.id)
                 if member is None:
                     try:
                         member = await message.guild.fetch_member(user.id)
-                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    except discord.NotFound:
+                        member = None
+                        left_server = True
+                    except (discord.Forbidden, discord.HTTPException):
                         member = None
 
                 # If roster is locked, only show users who already have the roster role.
                 if locked and roster_role is not None:
-                    if member is None or roster_role not in getattr(member, "roles", []):
-                        continue
+                    if member is None:
+                        # Allow users who have left the server to remain visible for cleanup.
+                        if not left_server:
+                            continue
+                    else:
+                        if roster_role not in getattr(member, "roles", []):
+                            continue
 
                 player_id: str | None = None
                 if PLAYER_LOOKUP_ENABLED and http_lookups_done < PLAYER_LOOKUP_MAX_PER_UPDATE:
@@ -769,7 +803,7 @@ class ReactionReader(commands.Cog):
                     player_id = pid
                     http_lookups_done += used
 
-                line = self._format_user_line(user, member, player_id)
+                line = self._format_user_line(user, member, player_id, left_server=left_server)
                 if line in seen_lines[key]:
                     continue
 
@@ -844,6 +878,8 @@ class ReactionReader(commands.Cog):
         ranked_entries: list[tuple[int, str]] = []
         seen: set[str] = set()
 
+        http_lookups_done = 0
+
         # role.members uses cache; if your bot has Members intent, it should be accurate.
         for member in getattr(role, "members", []) or []:
             if member.bot:
@@ -851,8 +887,14 @@ class ReactionReader(commands.Cog):
             if member.id in reacted_ids:
                 continue
 
-            user = member
-            line = self._format_user_line(user, member, player_id=None)
+            player_id: str | None = None
+            if PLAYER_LOOKUP_ENABLED and http_lookups_done < PLAYER_LOOKUP_MAX_PER_UPDATE:
+                remaining = PLAYER_LOOKUP_MAX_PER_UPDATE - http_lookups_done
+                pid, used = await self.fetch_player_id_for_user(member, member, remaining)
+                player_id = pid
+                http_lookups_done += used
+
+            line = self._format_user_line(member, member, player_id)
             if line in seen:
                 continue
             seen.add(line)
@@ -1077,15 +1119,35 @@ class ReactionReader(commands.Cog):
 
         before_has = any(r.id == ROLE_ID for r in getattr(before, "roles", []))
         after_has = any(r.id == ROLE_ID for r in getattr(after, "roles", []))
-        if before_has or not after_has:
+
+        # Only handle real changes.
+        if before_has == after_has:
             return
 
         # ROLE_ID was added.
-        await self._block_manual_role_add_if_locked(after.guild, after)
+        if not before_has and after_has:
+            await self._block_manual_role_add_if_locked(after.guild, after)
 
-        # Refresh embeds so the manual-role list captures this change.
+        # ROLE_ID was removed: remove their roster reactions so they disappear from I/A/R.
+        if before_has and not after_has:
+            try:
+                await self._try_remove_all_valid_reactions_for_member(after.guild, after)
+            except Exception:
+                pass
+
+        # Refresh embeds so changes are reflected immediately.
         try:
             msg = await self._find_target_message_in_guild(after.guild)
+            if msg is not None:
+                await self._update_from_message(msg)
+        except Exception:
+            return
+
+    @commands.Cog.listener()
+    async def on_member_remove(self, member: discord.Member):
+        # When someone leaves, their reactions may remain; refresh to show '*left the server*'.
+        try:
+            msg = await self._find_target_message_in_guild(member.guild)
             if msg is not None:
                 await self._update_from_message(msg)
         except Exception:
