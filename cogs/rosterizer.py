@@ -22,7 +22,7 @@ OUTPUT_CHANNEL_ID = 1459904650831724806  # set to None to post in same channel
 ROLE_ID = 1364639604564688917  # Set to role ID to auto-assign when users react (e.g., 1234567890123456789)
 STATE_FILE = "data/rosterizer_state.json"  # stores output message id for editing
 UPDATE_DEBOUNCE_SECONDS = 2.0
-INCLUDE_HLLRECORDS_LINK = True # If True, hyperlink names to hllrecords.com when player_id is available
+INCLUDE_HLLRECORDS_LINK = False # If True, hyperlink names to hllrecords.com when player_id is available
 
 # Additional output message: members who have ROLE_ID but have NOT reacted to TARGET_MESSAGE_ID.
 MANUAL_ROLE_OUTPUT_TITLE = "Role Manually Added"
