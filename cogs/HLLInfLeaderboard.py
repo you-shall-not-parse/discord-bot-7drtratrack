@@ -7,6 +7,8 @@ import random
 import datetime
 import math
 
+from data_paths import data_path
+
 # ---------------- Config ----------------
 GUILD_ID = 1097913605082579024  # replace with your guild ID
 LEADERBOARD_CHANNEL_ID = 1419010804832800859  # replace with your leaderboard channel
@@ -19,7 +21,7 @@ ADMIN_ROLE_IDS = {
     1097946543065137183,
 }
 
-DB_FILE = "leaderboard.db"
+DB_FILE = data_path("leaderboard.db")
 
 # Minutes allowed to provide a screenshot when one is required
 PROOF_TIMEOUT_MINUTES = 5

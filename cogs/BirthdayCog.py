@@ -6,12 +6,14 @@ from datetime import datetime, time
 import pytz
 import random
 
+from data_paths import data_path
+
 # ---------------- Config ----------------
 BIRTHDAY_CHANNEL_ID = 1098333222540152944
 SUMMARY_CHANNEL_ID = 1098333222540152944
 GUILD_ID = 1097913605082579024
 TIMEZONE = "Europe/London"
-DB_FILE = "birthdays.db"
+DB_FILE = data_path("birthdays.db")
 # Static GIFs for birthday greetings
 BIRTHDAY_GIF_URLS = [
     "https://media.tenor.com/X185VU8GGAUAAAAC/everybody-dance-now-speaker.gif",

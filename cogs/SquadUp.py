@@ -7,9 +7,11 @@ from typing import Optional, Dict, List, Union
 import asyncio
 import time
 
-DATA_FOLDER = "data"
-POSTS_FILE = os.path.join(DATA_FOLDER, "squadup_posts.json")
-CONFIG_FILE = os.path.join(DATA_FOLDER, "squadup_config.json")
+from data_paths import data_path
+
+DATA_FOLDER = data_path()
+POSTS_FILE = data_path("squadup_posts.json")
+CONFIG_FILE = data_path("squadup_config.json")
 
 # Cache to reduce file I/O
 POST_CACHE = {}

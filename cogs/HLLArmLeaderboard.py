@@ -8,6 +8,8 @@ import datetime
 import math
 from typing import Optional
 
+from data_paths import data_path
+
 # ---------------- Config ----------------
 GUILD_ID = 1097913605082579024  # replace with your guild ID
 
@@ -22,7 +24,7 @@ ADMIN_ROLE_IDS = {
     1097946543065137183,
 }
 
-DB_FILE = "armleaderboard.db"
+DB_FILE = data_path("armleaderboard.db")
 
 # Minutes allowed to provide a screenshot when one is required
 PROOF_TIMEOUT_MINUTES = 5

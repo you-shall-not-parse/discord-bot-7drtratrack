@@ -2,7 +2,13 @@
 __pycache__/
 *.py[cod]
 *$py.class
-cogs/quotes.db
+data/quotes.db
+data/*.db
+data/*.db-journal
+data/*.sql
+data/*_state.json
+data/yt_*.json
+data/squadup_posts.json
 
 # C extensions
 *.so

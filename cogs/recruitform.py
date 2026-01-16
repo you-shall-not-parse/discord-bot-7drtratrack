@@ -6,6 +6,8 @@ import os
 import json
 import time
 
+from data_paths import data_path
+
 # === CONFIGURATION ===
 FORM_CHANNEL_ID = 1401634001248190515   # Channel where the form embed/button is posted
 ANSWER_POST_CHANNEL_ID = 1098331019364552845  # Channel where form responses are posted
@@ -19,7 +21,7 @@ QUESTIONS = [
     "**Q6 What do you enjoy about HLL, particular role and/or play style (offensive/defensive etc)?**",
 ]
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "nickname.db")
+DB_PATH = data_path("nickname.db")
 
 
 class RecruitFormCog(commands.Cog):

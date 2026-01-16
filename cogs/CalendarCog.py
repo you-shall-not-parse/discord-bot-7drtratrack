@@ -8,9 +8,11 @@ from typing import Optional, List, Dict, Any
 from discord import app_commands
 from discord.ext import commands, tasks
 
+from data_paths import data_path
+
 # ---------------- Config ----------------
-EVENTS_FILE = "events.json"
-STATE_FILE = "calendar_state.json"  # stores message_id
+EVENTS_FILE = data_path("events.json")
+STATE_FILE = data_path("calendar_state.json")  # stores message_id
 TIMEZONE = pytz.timezone("Europe/London")  # Still needed for internal date calculations
 CALENDAR_MANAGER_ROLES = ["Administration", "Admin Core", "7DR-SNCO", "Fight arrangeer", "Event Admin", "7DR-NCO"]
 

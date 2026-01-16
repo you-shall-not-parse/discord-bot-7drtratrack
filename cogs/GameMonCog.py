@@ -6,6 +6,8 @@ import datetime
 import asyncio
 import logging
 
+from data_paths import data_path
+
 # Set up logging (always minimal)
 # Removed VERBOSE_LOGGING, enforce ERROR level
 logging_level = logging.ERROR
@@ -22,8 +24,8 @@ logging.getLogger('discord.http').setLevel(logging.ERROR)
 GUILD_ID = 1097913605082579024   # Replace with your guild/server ID
 THREAD_ID = 1412934277133369494  # replace with your thread ID
 IGNORED_GAMES = ["Spotify", "Discord", "Pornhub", "Netflix", "Disney", "Sky TV", "Youtube"]
-PREFS_FILE = "game_prefs.json"
-STATE_FILE = "game_state.json"
+PREFS_FILE = data_path("game_prefs.json")
+STATE_FILE = data_path("game_state.json")
 INACTIVE_CHECK_MINUTES = 60  # how often to check for inactive users
 MAX_INACTIVE_HOURS = 12  # maximum time a user can be inactive before removal
 DEFAULT_PREFERENCE = "opt_in"  # Default preference for users (opt_in or opt_out)

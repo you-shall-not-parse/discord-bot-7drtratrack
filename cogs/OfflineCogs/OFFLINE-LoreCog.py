@@ -6,7 +6,10 @@ import requests
 from bs4 import BeautifulSoup
 import sqlite3
 
-conn = sqlite3.connect('cogs/quotes.db')
+from data_paths import data_path
+
+DB_FILE = data_path("quotes.db")
+conn = sqlite3.connect(DB_FILE)
 c = conn.cursor()
 c.execute('''
 CREATE TABLE IF NOT EXISTS quotes (
@@ -19,14 +22,14 @@ conn.commit()
 conn.close()
 
 def add_quote(quote, author=None):
-    conn = sqlite3.connect("cogs/quotes.db")
+    conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute('INSERT INTO quotes (quote, author) VALUES (?, ?)', (quote, author))
     conn.commit()
     conn.close()
 
 def get_random_quote():
-    conn = sqlite3.connect("cogs/quotes.db")
+    conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute('SELECT quote, author FROM quotes ORDER BY RANDOM() LIMIT 1')
     row = c.fetchone()

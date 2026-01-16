@@ -10,6 +10,8 @@ from discord.ext import commands
 from discord import app_commands
 import requests
 
+from data_paths import data_path
+
 # ========= CONFIG =========
 
 GUILD_ID = 1097913605082579024
@@ -20,7 +22,7 @@ ROSTER_LOCK_ADMIN_ROLE_IDS: list[int] = [1213495462632361994, 109834267538989067
 TARGET_MESSAGE_ID = 1458515177438838979
 OUTPUT_CHANNEL_ID = 1459904650831724806  # set to None to post in same channel
 ROLE_ID = 1364639604564688917  # Set to role ID to auto-assign when users react (e.g., 1234567890123456789)
-STATE_FILE = "data/rosterizer_state.json"  # stores output message id for editing
+STATE_FILE = data_path("rosterizer_state.json")  # stores output message id for editing
 UPDATE_DEBOUNCE_SECONDS = 2.0
 INCLUDE_HLLRECORDS_LINK = False # If True, hyperlink names to hllrecords.com when player_id is available
 

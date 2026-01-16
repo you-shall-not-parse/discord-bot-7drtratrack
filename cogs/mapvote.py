@@ -9,6 +9,8 @@ import requests
 from dotenv import load_dotenv
 from datetime import datetime, timezone, timedelta
 
+from data_paths import data_path
+
 load_dotenv()
 
 # --------------------------------------------------
@@ -32,7 +34,7 @@ EMBED_UPDATE_INTERVAL = 2
 OPTIONS_PER_VOTE = 20
 
 # Persistent state file (message id, enabled flag, etc.)
-MAPVOTE_STATE_FILE = "mapvote_state.json"
+MAPVOTE_STATE_FILE = data_path("mapvote_state.json")
 
 # Pretty name → CRCON ID
 MAPS = {
