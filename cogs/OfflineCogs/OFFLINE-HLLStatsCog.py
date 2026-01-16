@@ -20,6 +20,8 @@ from typing import Any, Dict, List, Optional, Tuple, Iterable, Set
 import discord
 from discord import app_commands
 from discord.ext import commands
+
+from data_paths import data_path
 import aiosqlite
 
 # =========================
@@ -30,7 +32,7 @@ LEADERBOARD_CHANNEL_ID: int = 1424415360840372435
 ADMIN_ROLE_IDS = [1213495462632361994, 1097915860322091090]
 
 DEFAULT_ROLLING_WINDOW_GAMES: int = 3  # default for new guild settings rows
-DB_PATH: str = "hll_stats.sqlite3"
+DB_PATH: str = data_path("hll_stats.sqlite3")
 
 # Metrics where we append top weapon info
 TOP_WEAPON_METRICS = ["kills", "kpm", "kdr"]
