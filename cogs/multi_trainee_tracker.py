@@ -35,10 +35,11 @@ BACKSTOP_REFRESH_HOURS = 24
 STATE_PATH = data_path("multi_trainee_tracker_state.json")
 
 # Optional: emojis to show next to names in the embed when a trainee has a role.
-# You can use standard emojis ("🛠️") or custom server emoji strings ("<:name:id>").
+# You can use standard emojis ("🛠️"), custom server emoji strings ("<:name:id>"),
+# or short-name tags (":support:") which will be resolved to a real server emoji if it exists.
 ROLE_EMOJIS: dict[str, str] = {
     # Infantry
-    "Support Role": ":support:",
+    "Support Role": ":Support:",
     "Engineer Role": ":engineer:",
     # Recon
     "Spotter Role": ":Spotter:",
@@ -311,6 +312,28 @@ class MultiTraineeTracker(commands.Cog):
     async def _post_embed(self, channel: discord.TextChannel, cfg: TrackConfig, rows: list[dict], html_url: Optional[str], *, reason: str) -> None:
         state = self._track_state(cfg.key)
 
+        def _resolve_custom_emoji_tag(emoji_tag: str) -> str:
+            """Resolve ':name:' to '<:name:id>' using this channel's guild emojis when possible."""
+
+            if not emoji_tag:
+                return emoji_tag
+            # Already a custom emoji markup or something else (unicode)
+            if emoji_tag.startswith("<") and emoji_tag.endswith(">"):
+                return emoji_tag
+            if not (emoji_tag.startswith(":") and emoji_tag.endswith(":") and len(emoji_tag) > 2):
+                return emoji_tag
+
+            guild = getattr(channel, "guild", None)
+            if not guild:
+                return emoji_tag
+
+            emoji_name = emoji_tag.strip(":")
+            for e in getattr(guild, "emojis", []):
+                if getattr(e, "name", None) == emoji_name:
+                    return str(e)
+            # Not found: return original (will display as text)
+            return emoji_tag
+
         now = datetime.utcnow().replace(tzinfo=None)
         behind_cutoff = now - timedelta(days=BEHIND_AFTER_DAYS)
 
@@ -329,7 +352,8 @@ class MultiTraineeTracker(commands.Cog):
             checks = r.get("checks") or {}
             for label, _role_id in cfg.check_roles:
                 if checks.get(label):
-                    emojis.append(ROLE_EMOJIS.get(label, "✅"))
+                    tag = ROLE_EMOJIS.get(label, "✅")
+                    emojis.append(_resolve_custom_emoji_tag(tag))
             suffix = (" " + "".join(emojis)) if emojis else ""
             return f"{r['display_name']}{suffix}"
 
