@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 
 from data_paths import data_path
 
@@ -20,8 +20,12 @@ logger = logging.getLogger(__name__)
 # =============================
 GUILD_ID = 1097913605082579024
 
-# How often to refresh the tables (minutes)
-REFRESH_INTERVAL_MINUTES = 15
+# Trainees are considered "Behind" once they've been in the server longer than this.
+BEHIND_AFTER_DAYS = 14
+
+# Backstop refresh so "Behind" updates even if nobody's roles change.
+# Set to 0 to disable.
+BACKSTOP_REFRESH_HOURS = 24
 
 # Where we store message IDs + last HTML link so we can edit across restarts
 STATE_PATH = data_path("multi_trainee_tracker_state.json")
@@ -76,11 +80,14 @@ class MultiTraineeTracker(commands.Cog):
         self.bot = bot
         self._lock = asyncio.Lock()
         self._debounce_task: Optional[asyncio.Task] = None
+        self._backstop_task: Optional[asyncio.Task] = None
         self._state = self._load_state()
-        self.refresh_all.start()
+        if BACKSTOP_REFRESH_HOURS and BACKSTOP_REFRESH_HOURS > 0:
+            self._backstop_task = asyncio.create_task(self._backstop_refresh_loop())
 
     def cog_unload(self):
-        self.refresh_all.cancel()
+        if self._backstop_task and not self._backstop_task.done():
+            self._backstop_task.cancel()
         if self._debounce_task and not self._debounce_task.done():
             self._debounce_task.cancel()
 
@@ -118,17 +125,14 @@ class MultiTraineeTracker(commands.Cog):
         state.setdefault("html_url", None)
         return state
 
-    # -----------------
-    # Refresh loop + debounce
-    # -----------------
-    @tasks.loop(minutes=REFRESH_INTERVAL_MINUTES)
-    async def refresh_all(self):
-        await self._refresh_all(reason="interval")
-
-    @refresh_all.before_loop
-    async def _before_refresh_all(self):
+    async def _backstop_refresh_loop(self) -> None:
         await self.bot.wait_until_ready()
+        # Initial refresh on startup
         await self._refresh_all(reason="startup")
+        # Periodic refresh for time-based "Behind" changes
+        while True:
+            await asyncio.sleep(float(BACKSTOP_REFRESH_HOURS) * 3600.0)
+            await self._refresh_all(reason="backstop")
 
     def _debounced_refresh(self, delay_seconds: float = 3.0) -> None:
         if self._debounce_task and not self._debounce_task.done():
@@ -147,18 +151,32 @@ class MultiTraineeTracker(commands.Cog):
     # -----------------
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
-        # Any role change could affect any of the tables.
-        if before.roles != after.roles:
+        # Refresh only when relevant roles change (trainee role or tracked roles)
+        before_ids = {r.id for r in before.roles}
+        after_ids = {r.id for r in after.roles}
+        changed = before_ids ^ after_ids
+        if not changed:
+            return
+
+        watched: set[int] = set()
+        for cfg in TRACKS:
+            watched.add(cfg.trainee_role_id)
+            watched.update(role_id for _, role_id in cfg.check_roles)
+
+        if changed & watched:
             self._debounced_refresh()
 
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member):
-        self._debounced_refresh()
+        # If someone leaves while being tracked, the list should update.
+        if any(any(r.id == cfg.trainee_role_id for r in member.roles) for cfg in TRACKS):
+            self._debounced_refresh()
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
-        # join date impacts the tables
-        self._debounced_refresh()
+        # join date impacts the lists, but they'll typically get a role later.
+        # We can skip refreshing here to reduce noise.
+        return
 
     # -----------------
     # Core logic
@@ -246,6 +264,12 @@ class MultiTraineeTracker(commands.Cog):
     async def _post_embed(self, channel: discord.TextChannel, cfg: TrackConfig, rows: list[dict], html_url: Optional[str], *, reason: str) -> None:
         state = self._track_state(cfg.key)
 
+        now = datetime.utcnow().replace(tzinfo=None)
+        behind_cutoff = now - timedelta(days=BEHIND_AFTER_DAYS)
+
+        behind_rows = [r for r in rows if r["join_date"].replace(tzinfo=None) < behind_cutoff]
+        current_rows = [r for r in rows if r["join_date"].replace(tzinfo=None) >= behind_cutoff]
+
         embed = discord.Embed(
             title=cfg.title,
             color=discord.Color.blurple(),
@@ -253,20 +277,40 @@ class MultiTraineeTracker(commands.Cog):
             url=html_url if html_url else discord.Embed.Empty,
         )
 
-        trainee_role = channel.guild.get_role(cfg.trainee_role_id)
-        embed.description = (
-            (f"[Open full table (HTML)]({html_url})\n\n" if html_url else "")
-            + f"**Trainee Role:** {trainee_role.mention if trainee_role else cfg.trainee_role_id}\n"
-            + f"**Count:** {len(rows)}"
-        )
+        def fmt_user(r: dict) -> str:
+            # Markdown link to the user's profile
+            return f"[{r['display_name']}](https://discord.com/users/{r['member_id']})"
 
-        # Show which roles are tracked
-        role_lines = []
-        for label, role_id in cfg.check_roles:
-            role = channel.guild.get_role(role_id)
-            role_lines.append(f"- {label}: {role.mention if role else role_id}")
-        if role_lines:
-            embed.add_field(name="Tracked Roles", value="\n".join(role_lines), inline=False)
+        def build_list(items: list[dict], *, max_chars: int = 1024) -> str:
+            if not items:
+                return "None"
+            lines: list[str] = []
+            used = 0
+            remaining = len(items)
+            for r in items:
+                line = fmt_user(r)
+                # +1 for newline
+                if used + len(line) + (1 if lines else 0) > max_chars:
+                    break
+                lines.append(line)
+                used += len(line) + (1 if lines else 0)
+                remaining -= 1
+            if remaining > 0:
+                suffix = f"\n… and {remaining} more (see HTML)" if html_url else f"\n… and {remaining} more"
+                if used + len(suffix) <= max_chars:
+                    lines.append(suffix.strip("\n"))
+            return "\n".join(lines)
+
+        embed.description = (
+            f"**Total:** {len(rows)}\n"
+            f"**Behind (> {BEHIND_AFTER_DAYS} days):** {len(behind_rows)}\n"
+            f"**Current (≤ {BEHIND_AFTER_DAYS} days):** {len(current_rows)}"
+        )
+        if html_url:
+            embed.description += f"\n\n[Open full table (HTML)]({html_url})"
+
+        embed.add_field(name=f"Behind (> {BEHIND_AFTER_DAYS} days)", value=build_list(behind_rows), inline=False)
+        embed.add_field(name=f"Current (≤ {BEHIND_AFTER_DAYS} days)", value=build_list(current_rows), inline=False)
 
         embed.set_footer(text=f"Updated ({reason})")
 
