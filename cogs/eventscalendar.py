@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 # CONFIG (EDIT THIS)
 # =============================
 # Channel ID where events will be posted
-EVENT_DISPLAY_CHANNEL_ID = 1099806153170489485  # Replace with your channel ID
+EVENT_DISPLAY_CHANNEL_ID = 1192922522673500190  # Replace with your channel ID
 
 # How often to update the events display (in minutes)
 UPDATE_INTERVAL_MINUTES = 30
