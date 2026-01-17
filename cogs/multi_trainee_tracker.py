@@ -310,8 +310,7 @@ class MultiTraineeTracker(commands.Cog):
         )
 
         def fmt_user(r: dict) -> str:
-            # Plain text name + mention (mention opens the per-server member card)
-            return f"{r['display_name']} <@{r['member_id']}>"
+            return f"{r['display_name']}"
 
         def chunk_lines(items: list[dict], *, max_chars: int = 1024) -> list[str]:
             """Split users into multiple field values (each <= 1024 chars)."""
