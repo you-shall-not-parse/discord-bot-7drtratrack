@@ -146,7 +146,7 @@ class EventDisplayCog(commands.Cog):
             pattern = re.compile(rf"(?<!\\w){re.escape(keyword)}(?!\\w)")
 
             def _repl(match: re.Match) -> str:
-                return f"{match.group(0)}{emoji_str}"  # append right after keyword
+                return f"{match.group(0)} {emoji_str}"  # append with a space before emoji
 
             formatted = pattern.sub(_repl, formatted)
 
