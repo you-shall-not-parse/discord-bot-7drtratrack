@@ -287,28 +287,50 @@ class MultiTraineeTracker(commands.Cog):
         )
 
         def fmt_user(r: dict) -> str:
-            # Markdown link to the user's profile
-            return f"[{r['display_name']}](https://discord.com/users/{r['member_id']})"
+            # Plain text name + mention (mention opens the per-server member card)
+            return f"{r['display_name']} <@{r['member_id']}>"
 
-        def build_list(items: list[dict], *, max_chars: int = 1024) -> str:
+        def chunk_lines(items: list[dict], *, max_chars: int = 1024) -> list[str]:
+            """Split users into multiple field values (each <= 1024 chars)."""
             if not items:
-                return "None"
-            lines: list[str] = []
+                return ["None"]
+
+            chunks: list[str] = []
+            buf: list[str] = []
             used = 0
-            remaining = len(items)
+
             for r in items:
                 line = fmt_user(r)
-                # +1 for newline
-                if used + len(line) + (1 if lines else 0) > max_chars:
+                extra = len(line) + (1 if buf else 0)  # newline if not first
+
+                if buf and used + extra > max_chars:
+                    chunks.append("\n".join(buf))
+                    buf = [line]
+                    used = len(line)
+                    continue
+
+                if not buf and len(line) > max_chars:
+                    # Extremely long single line; hard cut (shouldn't happen in practice)
+                    chunks.append(line[: max_chars - 1] + "…")
+                    buf = []
+                    used = 0
+                    continue
+
+                buf.append(line)
+                used += extra
+
+            if buf:
+                chunks.append("\n".join(buf))
+
+            return chunks
+
+        def add_section_fields(title: str, items: list[dict]) -> None:
+            # Discord limits embeds to 25 fields total.
+            values = chunk_lines(items)
+            for i, value in enumerate(values):
+                if len(embed.fields) >= 25:
                     break
-                lines.append(line)
-                used += len(line) + (1 if lines else 0)
-                remaining -= 1
-            if remaining > 0:
-                suffix = f"\n… and {remaining} more (see HTML)" if html_url else f"\n… and {remaining} more"
-                if used + len(suffix) <= max_chars:
-                    lines.append(suffix.strip("\n"))
-            return "\n".join(lines)
+                embed.add_field(name=title if i == 0 else "\u200b", value=value, inline=False)
 
         embed.description = (
             f"**Total:** {len(rows)}\n"
@@ -318,8 +340,8 @@ class MultiTraineeTracker(commands.Cog):
         if html_url:
             embed.description += f"\n\n[Open full table (HTML)]({html_url})"
 
-        embed.add_field(name=f"Behind (> {BEHIND_AFTER_DAYS} days)", value=build_list(behind_rows), inline=False)
-        embed.add_field(name=f"Current (≤ {BEHIND_AFTER_DAYS} days)", value=build_list(current_rows), inline=False)
+        add_section_fields(f"Behind (> {BEHIND_AFTER_DAYS} days)", behind_rows)
+        add_section_fields(f"Current (≤ {BEHIND_AFTER_DAYS} days)", current_rows)
 
         embed.set_footer(text=f"Updated ({reason})")
 
