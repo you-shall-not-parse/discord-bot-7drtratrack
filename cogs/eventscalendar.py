@@ -281,12 +281,6 @@ class EventDisplayCog(commands.Cog):
                 elif getattr(event, "creator_id", None):
                     organiser_str = f"<@{event.creator_id}>"
 
-                # Event status
-                status_emoji = {
-                    discord.EventStatus.scheduled: "🕒",
-                    discord.EventStatus.active: "🟢",
-                }.get(event.status, "")
-
                 # Location information
                 location_str = ""
                 if event.location:
@@ -296,7 +290,6 @@ class EventDisplayCog(commands.Cog):
 
                 # Build the field value
                 field_value = (
-                    f"{status_emoji} **Status:** {event.status.name.capitalize()}\n"
                     f"**Date/Time:** {start_time_str}"
                     f"\n**Organiser:** {organiser_str}"
                     f"{location_str}"
@@ -315,7 +308,7 @@ class EventDisplayCog(commands.Cog):
                     if all_channel_ids:
                         # Use the first channel ID as sign-up channel
                         channel_id = int(all_channel_ids[0])
-                        field_value += f"\n📝 **Sign-up:** <#{channel_id}>"
+                        field_value += f"\n📝 **Sign-Up Channel:** <#{channel_id}>"
                         
                         # Show rest of description (excluding channel mentions and URLs)
                         description = re.sub(r'<#\d+>', '', event.description)
