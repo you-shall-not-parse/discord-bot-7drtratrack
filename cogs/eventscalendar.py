@@ -20,8 +20,8 @@ EVENT_DISPLAY_CHANNEL_ID = 1099806153170489485  # Replace with your channel ID
 # How often to update the events display (in minutes)
 UPDATE_INTERVAL_MINUTES = 30
 
-# Maximum number of events to display
-MAX_EVENTS_TO_DISPLAY = 20
+# Maximum number of events to display - 25 is the max allowed by Discord per embed
+MAX_EVENTS_TO_DISPLAY = 25
 
 # Color for the embed
 EMBED_COLOR = 0x5865F2  # Discord blurple
@@ -191,32 +191,31 @@ class EventDisplayCog(commands.Cog):
                     else "TBA"
                 )
 
-                # Get participant count
-                participant_info = ""
-                if event.user_count is not None:
-                    participant_info = f"\n👥 **Interested:** {event.user_count}"
+                organiser_str = "Unknown"
+                if getattr(event, "creator", None):
+                    organiser_str = event.creator.mention
+                elif getattr(event, "creator_id", None):
+                    organiser_str = f"<@{event.creator_id}>"
 
                 # Event status
                 status_emoji = {
                     discord.EventStatus.scheduled: "🕒",
                     discord.EventStatus.active: "🟢",
-                    discord.EventStatus.completed: "✅",
-                    discord.EventStatus.cancelled: "❌",
                 }.get(event.status, "")
 
                 # Location information
                 location_str = ""
                 if event.location:
-                    location_str = f"\n📍 **Location:** {event.location}"
+                    location_str = f"\n**Location:** {event.location}"
                 elif event.channel:
-                    location_str = f"\n📍 **Channel:** {event.channel.mention}"
+                    location_str = f"\n**Channel:** {event.channel.mention}"
 
                 # Build the field value
                 field_value = (
                     f"{status_emoji} **Status:** {event.status.name.capitalize()}\n"
-                    f"🕐 **Start:** {start_time_str}"
+                    f"**Date/Time:** {start_time_str}"
+                    f"\n**Organiser:** {organiser_str}"
                     f"{location_str}"
-                    f"{participant_info}"
                 )
 
                 if event.description:
@@ -241,17 +240,17 @@ class EventDisplayCog(commands.Cog):
                             description = description[:100]
                             if len(description) > 100:
                                 description += "..."
-                            field_value += f"\n{description}"
+                            field_value += f"\n**Description:** {description}"
                     else:
                         # No channel mention or URL, show description normally
                         description = event.description[:100]
                         if len(event.description) > 100:
                             description += "..."
-                        field_value += f"\n📝 {description}"
+                        field_value += f"\n**Description:** {description}"
 
                 embed.add_field(
-                    name=f"{event.name}",
-                    value=field_value,
+                    name="\u200b",
+                    value=f"📌 **{event.name}**\n{field_value}",
                     inline=False
                 )
 
