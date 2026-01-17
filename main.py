@@ -82,7 +82,7 @@ async def main():
         await bot.load_extension("cogs.recruitform")
         await bot.load_extension("cogs.EmbedManager")
         await bot.load_extension("cogs.SquadUp")
-        await bot.load_extension("cogs.CalendarCog")
+        await bot.load_extension("cogs.EventDisplayCog")
         await bot.load_extension("cogs.BirthdayCog")
         await bot.load_extension("cogs.contentfeed")
         await bot.load_extension("cogs.discordgreeting")
