@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 # CONFIG (EDIT THIS)
 # =============================
 # Channel ID where events will be posted
-EVENT_DISPLAY_CHANNEL_ID = 1192922522673500190  # Replace with your channel ID
+EVENT_DISPLAY_CHANNEL_ID = 1332736267485708419  # Replace with your channel ID
 
 # How often to update the events display (in minutes)
 UPDATE_INTERVAL_MINUTES = 30
@@ -32,6 +32,20 @@ EVENTS_JSON_PATH = data_path("events_history.json")
 
 # Path to persist the display message across restarts
 EVENTS_DISPLAY_STATE_PATH = data_path("events_display_state.json")
+
+# -----------------------------
+# EVENT THREADS (AUTO)
+# -----------------------------
+# When a new scheduled event is created, the bot will create a thread in this channel.
+# Default: use the same channel as the calendar embed.
+EVENT_THREADS_PARENT_CHANNEL_ID = 1192922522673500190
+
+# Auto-archive duration for the created threads (minutes).
+# Valid values depend on the server settings: 60, 1440, 4320, 10080.
+EVENT_THREAD_AUTO_ARCHIVE_MINUTES = 10080
+
+# Persist which events we've already handled so we don't create duplicate threads.
+EVENTS_THREAD_STATE_PATH = data_path("events_threads_state.json")
 
 # -----------------------------
 # EVENT TITLE EMOJI TAGGING
@@ -62,6 +76,7 @@ class EventDisplayCog(commands.Cog):
         self._target_guild_id: Optional[int] = None
         self._update_lock = asyncio.Lock()
         self._debounce_task: Optional[asyncio.Task] = None
+        self._thread_state = self._load_thread_state()
         self.update_events_display.start()
         logger.info("EventDisplayCog initialized")
 
@@ -82,6 +97,126 @@ class EventDisplayCog(commands.Cog):
         """Wait until the bot is ready before starting the loop."""
         await self.bot.wait_until_ready()
         logger.info("EventDisplayCog: Bot is ready, starting event display loop")
+
+        # On startup, establish the target guild and optionally create threads for any
+        # events that appeared while the bot was offline.
+        await self._startup_sync_threads()
+
+    def _load_thread_state(self) -> dict:
+        try:
+            if not os.path.exists(EVENTS_THREAD_STATE_PATH):
+                return {"initialized": False, "seen_event_ids": [], "threads": {}}
+            with open(EVENTS_THREAD_STATE_PATH, "r", encoding="utf-8") as f:
+                state = json.load(f)
+            if not isinstance(state, dict):
+                return {"initialized": False, "seen_event_ids": [], "threads": {}}
+            state.setdefault("initialized", False)
+            state.setdefault("seen_event_ids", [])
+            state.setdefault("threads", {})
+            return state
+        except Exception:
+            logger.warning("Could not read events thread state; will recreate it.", exc_info=True)
+            return {"initialized": False, "seen_event_ids": [], "threads": {}}
+
+    def _save_thread_state(self) -> None:
+        try:
+            self._thread_state["updated_at"] = datetime.utcnow().isoformat()
+            with open(EVENTS_THREAD_STATE_PATH, "w", encoding="utf-8") as f:
+                json.dump(self._thread_state, f, indent=2, ensure_ascii=False)
+        except Exception:
+            logger.warning("Failed to persist events thread state.", exc_info=True)
+
+    def _is_event_seen(self, event_id: int) -> bool:
+        return str(event_id) in set(map(str, self._thread_state.get("seen_event_ids", [])))
+
+    def _mark_event_seen(self, event_id: int) -> None:
+        seen = set(map(str, self._thread_state.get("seen_event_ids", [])))
+        seen.add(str(event_id))
+        self._thread_state["seen_event_ids"] = sorted(seen)
+
+    async def _startup_sync_threads(self) -> None:
+        """Initialize thread state and handle events created while offline."""
+
+        try:
+            channel = self.bot.get_channel(EVENT_DISPLAY_CHANNEL_ID)
+            if not isinstance(channel, discord.TextChannel):
+                return
+            guild = channel.guild
+            if not guild:
+                return
+
+            self._target_guild_id = guild.id
+
+            current_events = await guild.fetch_scheduled_events(with_counts=False)
+
+            # First ever run: mark all existing events as seen so we don't spam threads.
+            if not self._thread_state.get("initialized", False):
+                for ev in current_events:
+                    self._mark_event_seen(ev.id)
+                self._thread_state["initialized"] = True
+                self._save_thread_state()
+                logger.info("Initialized events thread state (existing events marked as seen)")
+                return
+
+            # Subsequent runs: create threads for any events we haven't seen yet.
+            for ev in current_events:
+                if not self._is_event_seen(ev.id):
+                    await self._create_event_thread(ev)
+                    self._mark_event_seen(ev.id)
+            self._save_thread_state()
+
+        except Exception:
+            logger.warning("Startup thread sync failed.", exc_info=True)
+
+    async def _create_event_thread(self, scheduled_event: discord.ScheduledEvent) -> None:
+        parent = self.bot.get_channel(EVENT_THREADS_PARENT_CHANNEL_ID)
+        if not isinstance(parent, discord.TextChannel):
+            logger.warning("Thread parent channel is missing or not a text channel")
+            return
+
+        # Build a starter message; threads are created from messages reliably.
+        start_time_str = (
+            f"<t:{int(scheduled_event.start_time.timestamp())}:F>"
+            if scheduled_event.start_time
+            else "TBA"
+        )
+
+        organiser = "Unknown"
+        if getattr(scheduled_event, "creator", None):
+            organiser = scheduled_event.creator.mention
+        elif getattr(scheduled_event, "creator_id", None):
+            organiser = f"<@{scheduled_event.creator_id}>"
+
+        title = self._format_event_title(parent.guild, scheduled_event.name)
+
+        starter_text = (
+            f"📅 New event created: **[{title}]({scheduled_event.url})**\n"
+            f"**Date/Time:** {start_time_str}\n"
+            f"**Organiser:** {organiser}"
+        )
+
+        try:
+            starter_msg = await parent.send(starter_text)
+            thread_name = scheduled_event.name
+            if len(thread_name) > 95:
+                thread_name = thread_name[:95] + "..."
+
+            thread = await starter_msg.create_thread(
+                name=thread_name,
+                auto_archive_duration=EVENT_THREAD_AUTO_ARCHIVE_MINUTES,
+            )
+
+            self._thread_state.setdefault("threads", {})[str(scheduled_event.id)] = {
+                "thread_id": thread.id,
+                "starter_message_id": starter_msg.id,
+                "created_at": datetime.utcnow().isoformat(),
+            }
+            logger.info(f"Created thread {thread.id} for event {scheduled_event.id}")
+
+        except discord.Forbidden:
+            logger.warning("Missing permissions to create event thread (send message / create thread)")
+        except Exception:
+            logger.warning("Failed to create event thread.", exc_info=True)
 
     def _load_display_message_id(self) -> Optional[int]:
         try:
@@ -240,6 +375,17 @@ class EventDisplayCog(commands.Cog):
     async def on_scheduled_event_create(self, scheduled_event: discord.ScheduledEvent):
         if self._target_guild_id and scheduled_event.guild_id != self._target_guild_id:
             return
+
+        # If we haven't initialized yet (race at startup), sync once.
+        if not self._thread_state.get("initialized", False):
+            await self._startup_sync_threads()
+
+        # Only create a thread once per event.
+        if not self._is_event_seen(scheduled_event.id):
+            await self._create_event_thread(scheduled_event)
+            self._mark_event_seen(scheduled_event.id)
+            self._save_thread_state()
+
         self._debounced_refresh()
 
     @commands.Cog.listener()
@@ -374,13 +520,13 @@ class EventDisplayCog(commands.Cog):
                             description = description[:100]
                             if len(description) > 100:
                                 description += "..."
-                            field_value += f"\n**Description:** {description}"
+                            field_value += f"\n**Details:** {description}"
                     else:
                         # No channel mention or URL, show description normally
                         description = event.description[:100]
                         if len(event.description) > 100:
                             description += "..."
-                        field_value += f"\n**Description:** {description}"
+                        field_value += f"\n**Details:** {description}"
 
                 embed.add_field(
                     name="\u200b",

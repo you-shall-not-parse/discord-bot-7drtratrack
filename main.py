@@ -34,6 +34,7 @@ intents.members = True
 intents.message_content = True  # Needed for on_message and message content in DMs
 intents.presences = True  # This is critical for tracking game activity
 intents.reactions = True  # Needed for raw reaction events
+intents.guild_scheduled_events = True  # Needed for scheduled event create/update/delete listeners
 # Command prefix (won't affect slash commands)
 bot = commands.Bot(command_prefix="!", intents=intents)
 
