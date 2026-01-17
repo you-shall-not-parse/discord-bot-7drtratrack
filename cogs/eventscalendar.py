@@ -42,12 +42,12 @@ EVENTS_DISPLAY_STATE_PATH = data_path("events_display_state.json")
 # Put the emoji name in Discord's short-name format (e.g. ":48th:") and make sure
 # the custom emoji exists in the same server as the event.
 KEYWORD_EMOJI_TAGS: dict[str, str] = {
-    "RDG": " :RDG:",
-    "RMC": " :RMC:",
-    "48th": " :48th:",
-    "HellEU": " :helleu:",
-    "7DR": " :7DR:",
-    "KRTS": " :KRTS:",
+    "RDG": ":RDG:",
+    "RMC": ":RMC:",
+    "48th": ":48th:",
+    "HellEU": ":helleu:",
+    "7DR": ":7DR:",
+    "KRTS": ":KRTS:",
 }
 
 
