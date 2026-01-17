@@ -256,8 +256,8 @@ class EventDisplayCog(commands.Cog):
 
         embed.set_footer(text="Last updated")
         
-        if guild.icon:
-            embed.set_thumbnail(url=guild.icon.url)
+        #if guild.icon:
+        #    embed.set_thumbnail(url=guild.icon.url)
 
         return embed
 
