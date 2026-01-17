@@ -62,6 +62,10 @@ KEYWORD_EMOJI_TAGS: dict[str, str] = {
     "HellEU": ":helleu:",
     "7DR": ":7DR:",
     "KRTS": ":KRTS:",
+    "50A": ":flag_es:",
+    "OFIN": ":flag_fi:",
+    "DLB": ":flag_nl:",
+    "PG60": ":flag_de:",
 }
 
 
