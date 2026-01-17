@@ -48,7 +48,7 @@ TRACKS: list[TrackConfig] = [
     TrackConfig(
         key="infantry",
         title="Infantry Trainee Tracker",
-        channel_id=1099806153170489485,
+        channel_id=1368543744193990676,
         trainee_role_id=1099596178141757542,
         check_roles=[
             ("Support Role", 1100005693546844242),
@@ -58,7 +58,7 @@ TRACKS: list[TrackConfig] = [
     TrackConfig(
         key="recon",
         title="Recon Trainee Tracker",
-        channel_id=1099806153170489485,
+        channel_id=1391119515609333880,
         trainee_role_id=1103626508645453975,
         check_roles=[
             ("Spotter Role", 1102199425654333522),
@@ -68,7 +68,7 @@ TRACKS: list[TrackConfig] = [
     TrackConfig(
         key="armour",
         title="Armour Trainee Tracker",
-        channel_id=1099806153170489485,
+        channel_id=1391119412047777974,
         trainee_role_id=1099615408518070313,
         check_roles=[
             ("BAC Role", 1182154521129009202),
@@ -299,8 +299,11 @@ class MultiTraineeTracker(commands.Cog):
         now = datetime.utcnow().replace(tzinfo=None)
         behind_cutoff = now - timedelta(days=BEHIND_AFTER_DAYS)
 
-        behind_rows = [r for r in rows if r["join_date"].replace(tzinfo=None) < behind_cutoff]
+        overdue_rows = [r for r in rows if r["join_date"].replace(tzinfo=None) < behind_cutoff]
         current_rows = [r for r in rows if r["join_date"].replace(tzinfo=None) >= behind_cutoff]
+
+        overdue_no_roles_rows = [r for r in overdue_rows if not any((r.get("checks") or {}).values())]
+        overdue_has_roles_rows = [r for r in overdue_rows if any((r.get("checks") or {}).values())]
 
         embed = discord.Embed(
             title=cfg.title,
@@ -356,14 +359,74 @@ class MultiTraineeTracker(commands.Cog):
 
         embed.description = (
             f"**Total:** {len(rows)}\n"
-            f"**Behind (> {BEHIND_AFTER_DAYS} days):** {len(behind_rows)}\n"
+            f"**> {BEHIND_AFTER_DAYS} days:** {len(overdue_rows)} (no roles: {len(overdue_no_roles_rows)})\n"
             f"**Current (≤ {BEHIND_AFTER_DAYS} days):** {len(current_rows)}"
         )
         if html_url:
             embed.description += f"\n\n[Open full table (HTML)]({html_url})"
 
-        add_section_fields(f"Behind (> {BEHIND_AFTER_DAYS} days)", behind_rows)
-        add_section_fields(f"Current (≤ {BEHIND_AFTER_DAYS} days)", current_rows)
+        add_section_fields(f"> {BEHIND_AFTER_DAYS} days — No tracked roles", overdue_no_roles_rows)
+
+        def has_check(r: dict, label: str) -> bool:
+            return bool(r.get("checks", {}).get(label))
+
+        def add_role_buckets(prefix: str, items: list[dict]) -> None:
+            """Put each member into exactly one bucket, based on track rules."""
+            remaining = list(items)
+
+            if cfg.key == "infantry":
+                ready = [r for r in remaining if has_check(r, "Support Role") and has_check(r, "Engineer Role")]
+                remaining = [r for r in remaining if r not in ready]
+                add_section_fields(f"{prefix} — Ready to graduate", ready)
+
+                has_support = [r for r in remaining if has_check(r, "Support Role")]
+                remaining = [r for r in remaining if r not in has_support]
+                add_section_fields(f"{prefix} — Has Support", has_support)
+
+                has_engineer = [r for r in remaining if has_check(r, "Engineer Role")]
+                remaining = [r for r in remaining if r not in has_engineer]
+                add_section_fields(f"{prefix} — Has Engineer", has_engineer)
+
+                add_section_fields(f"{prefix} — Has neither", remaining)
+                return
+
+            if cfg.key == "recon":
+                ready = [r for r in remaining if has_check(r, "Spotter Role")]
+                remaining = [r for r in remaining if r not in ready]
+                add_section_fields(f"{prefix} — Ready to graduate", ready)
+
+                has_sniper = [r for r in remaining if has_check(r, "Sniper Role")]
+                remaining = [r for r in remaining if r not in has_sniper]
+                add_section_fields(f"{prefix} — Has Sniper", has_sniper)
+
+                add_section_fields(f"{prefix} — Has neither", remaining)
+                return
+
+            if cfg.key == "armour":
+                has_bac = [r for r in remaining if has_check(r, "BAC Role")]
+                remaining = [r for r in remaining if r not in has_bac]
+                add_section_fields(f"{prefix} — Has BAC", has_bac)
+
+                has_driver = [r for r in remaining if has_check(r, "Driver Role")]
+                remaining = [r for r in remaining if r not in has_driver]
+                add_section_fields(f"{prefix} — Has Driver", has_driver)
+
+                has_gunner = [r for r in remaining if has_check(r, "Gunner Role")]
+                remaining = [r for r in remaining if r not in has_gunner]
+                add_section_fields(f"{prefix} — Has Gunner", has_gunner)
+
+                add_section_fields(f"{prefix} — Has neither", remaining)
+                return
+
+            add_section_fields(prefix, remaining)
+
+        # >14 days with roles: include in the same role buckets (instead of a separate catch-all).
+        if overdue_has_roles_rows:
+            add_role_buckets(f"> {BEHIND_AFTER_DAYS} days", overdue_has_roles_rows)
+
+        # Current: split into meaningful buckets per track.
+        current_prefix = f"Current (≤ {BEHIND_AFTER_DAYS} days)"
+        add_role_buckets(current_prefix, current_rows)
 
         embed.set_footer(text=f"Updated ({reason})")
 
