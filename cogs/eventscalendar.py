@@ -384,7 +384,7 @@ class EventDisplayCog(commands.Cog):
 
                 embed.add_field(
                     name="\u200b",
-                    value=f"📌 **{self._format_event_title(guild, event.name)}**\n{field_value}",
+                    value=f"📌 **[{self._format_event_title(guild, event.name)}]({event.url})**\n{field_value}",
                     inline=False
                 )
 
