@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 # =============================
 GUILD_ID = 1097913605082579024
 
+# All HTML table uploads go to this single channel (shared across tracks).
+# Embeds still post in each track's configured channel.
+HTML_CHANNEL_ID = 1098525492631572567
+
 # Trainees are considered "Behind" once they've been in the server longer than this.
 BEHIND_AFTER_DAYS = 14
 
@@ -197,14 +201,19 @@ class MultiTraineeTracker(commands.Cog):
             self._save_state()
 
     async def _refresh_track(self, guild: discord.Guild, cfg: TrackConfig, *, reason: str) -> None:
-        channel = self.bot.get_channel(cfg.channel_id)
-        if not isinstance(channel, discord.TextChannel):
+        embed_channel = self.bot.get_channel(cfg.channel_id)
+        if not isinstance(embed_channel, discord.TextChannel):
             logger.warning("Track %s: channel not found or not a text channel", cfg.key)
             return
 
+        html_channel = self.bot.get_channel(HTML_CHANNEL_ID) if HTML_CHANNEL_ID else None
+        if HTML_CHANNEL_ID and not isinstance(html_channel, discord.TextChannel):
+            logger.warning("Track %s: HTML channel not found or not a text channel", cfg.key)
+            html_channel = None
+
         rows = self._collect_rows(guild, cfg)
-        html_url = await self._post_html(channel, cfg, rows)
-        await self._post_embed(channel, cfg, rows, html_url, reason=reason)
+        html_url = await self._post_html(html_channel, cfg, rows) if html_channel else None
+        await self._post_embed(embed_channel, cfg, rows, html_url, reason=reason)
 
     def _collect_rows(self, guild: discord.Guild, cfg: TrackConfig) -> list[dict]:
         now = datetime.utcnow()
