@@ -116,8 +116,11 @@ class MultiTraineeTracker(commands.Cog):
     def _save_state(self) -> None:
         try:
             self._state["updated_at"] = datetime.utcnow().isoformat()
-            with open(STATE_PATH, "w", encoding="utf-8") as f:
+            os.makedirs(os.path.dirname(STATE_PATH) or ".", exist_ok=True)
+            tmp_path = f"{STATE_PATH}.tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(self._state, f, indent=2, ensure_ascii=False)
+            os.replace(tmp_path, STATE_PATH)
         except Exception:
             logger.warning("Failed to save multi trainee tracker state.", exc_info=True)
 
@@ -125,9 +128,21 @@ class MultiTraineeTracker(commands.Cog):
         tracks = self._state.setdefault("tracks", {})
         state = tracks.setdefault(key, {})
         state.setdefault("embed_message_id", None)
+        state.setdefault("embed_channel_id", None)
         state.setdefault("html_message_id", None)
+        state.setdefault("html_channel_id", None)
         state.setdefault("html_url", None)
         return state
+
+    async def _get_text_channel(self, channel_id: int) -> Optional[discord.TextChannel]:
+        ch = self.bot.get_channel(channel_id)
+        if isinstance(ch, discord.TextChannel):
+            return ch
+        try:
+            fetched = await self.bot.fetch_channel(channel_id)
+            return fetched if isinstance(fetched, discord.TextChannel) else None
+        except Exception:
+            return None
 
     async def _backstop_refresh_loop(self) -> None:
         await self.bot.wait_until_ready()
@@ -201,13 +216,13 @@ class MultiTraineeTracker(commands.Cog):
             self._save_state()
 
     async def _refresh_track(self, guild: discord.Guild, cfg: TrackConfig, *, reason: str) -> None:
-        embed_channel = self.bot.get_channel(cfg.channel_id)
-        if not isinstance(embed_channel, discord.TextChannel):
+        embed_channel = await self._get_text_channel(cfg.channel_id)
+        if not embed_channel:
             logger.warning("Track %s: channel not found or not a text channel", cfg.key)
             return
 
-        html_channel = self.bot.get_channel(HTML_CHANNEL_ID) if HTML_CHANNEL_ID else None
-        if HTML_CHANNEL_ID and not isinstance(html_channel, discord.TextChannel):
+        html_channel = await self._get_text_channel(HTML_CHANNEL_ID) if HTML_CHANNEL_ID else None
+        if HTML_CHANNEL_ID and not html_channel:
             logger.warning("Track %s: HTML channel not found or not a text channel", cfg.key)
             html_channel = None
 
@@ -251,7 +266,14 @@ class MultiTraineeTracker(commands.Cog):
         old_html_message_id = state.get("html_message_id")
         if isinstance(old_html_message_id, int):
             try:
-                old_msg = await channel.fetch_message(old_html_message_id)
+                old_channel = channel
+                old_channel_id = state.get("html_channel_id")
+                if isinstance(old_channel_id, int) and old_channel_id != channel.id:
+                    fetched_old = await self._get_text_channel(old_channel_id)
+                    if fetched_old:
+                        old_channel = fetched_old
+
+                old_msg = await old_channel.fetch_message(old_html_message_id)
                 await old_msg.delete()
             except discord.NotFound:
                 pass
@@ -267,6 +289,7 @@ class MultiTraineeTracker(commands.Cog):
 
         msg = await channel.send(content=f"{cfg.title} (HTML table)", file=file)
         state["html_message_id"] = msg.id
+        state["html_channel_id"] = channel.id
         state["html_url"] = msg.attachments[0].url if msg.attachments else None
         return state["html_url"]
 
@@ -346,6 +369,10 @@ class MultiTraineeTracker(commands.Cog):
         embed.set_footer(text=f"Updated ({reason})")
 
         existing_id = state.get("embed_message_id")
+        existing_channel_id = state.get("embed_channel_id")
+        if isinstance(existing_channel_id, int) and existing_channel_id != channel.id:
+            existing_id = None
+
         if isinstance(existing_id, int):
             try:
                 msg = await channel.fetch_message(existing_id)
@@ -360,6 +387,7 @@ class MultiTraineeTracker(commands.Cog):
 
         msg = await channel.send(embed=embed)
         state["embed_message_id"] = msg.id
+        state["embed_channel_id"] = channel.id
 
     def _render_html(self, cfg: TrackConfig, rows: list[dict]) -> str:
         headers = [
