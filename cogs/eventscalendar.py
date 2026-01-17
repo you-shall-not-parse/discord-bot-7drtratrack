@@ -189,17 +189,23 @@ class EventDisplayCog(commands.Cog):
 
         title = self._format_event_title(parent.guild, scheduled_event.name)
 
+        # No URLs in the starter text to avoid link embeds.
         starter_text = (
-            f"📅 New event created: **[{title}]({scheduled_event.url})**\n"
+            f"📅 New event created: **{title}**\n"
             f"**Date/Time:** {start_time_str}\n"
             f"**Organiser:** {organiser}"
         )
 
         try:
             starter_msg = await parent.send(starter_text)
-            thread_name = scheduled_event.name
-            if len(thread_name) > 95:
-                thread_name = thread_name[:95] + "..."
+
+            date_prefix = "TBA"
+            if scheduled_event.start_time:
+                date_prefix = scheduled_event.start_time.strftime("%Y-%m-%d")
+
+            thread_name = f"{date_prefix} {scheduled_event.name}".strip()
+            if len(thread_name) > 100:
+                thread_name = thread_name[:97] + "..."
 
             thread = await starter_msg.create_thread(
                 name=thread_name,
@@ -471,6 +477,13 @@ class EventDisplayCog(commands.Cog):
             embed.description = "No upcoming events scheduled."
         else:
             for event in events:
+                thread_url: Optional[str] = None
+                thread_info = self._thread_state.get("threads", {}).get(str(event.id))
+                if isinstance(thread_info, dict):
+                    thread_id = thread_info.get("thread_id")
+                    if isinstance(thread_id, int):
+                        thread_url = f"https://discord.com/channels/{guild.id}/{thread_id}"
+
                 # Format the event time
                 start_time_str = (
                     f"<t:{int(event.start_time.timestamp())}:F>"
@@ -520,13 +533,23 @@ class EventDisplayCog(commands.Cog):
                             description = description[:100]
                             if len(description) > 100:
                                 description += "..."
-                            field_value += f"\n**Details:** {description}"
+                            if thread_url:
+                                field_value += f"\n**[Details]({thread_url})**: {description}"
+                            else:
+                                field_value += f"\n**Details:** {description}"
                     else:
                         # No channel mention or URL, show description normally
                         description = event.description[:100]
                         if len(event.description) > 100:
                             description += "..."
-                        field_value += f"\n**Details:** {description}"
+                        if thread_url:
+                            field_value += f"\n**[Details]({thread_url})**: {description}"
+                        else:
+                            field_value += f"\n**Details:** {description}"
+
+                elif thread_url:
+                    # No description, but still provide a link to the event thread.
+                    field_value += f"\n**[Details]({thread_url})**"
 
                 embed.add_field(
                     name="\u200b",
