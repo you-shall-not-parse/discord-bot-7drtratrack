@@ -199,11 +199,11 @@ class EventDisplayCog(commands.Cog):
         try:
             starter_msg = await parent.send(starter_text)
 
-            date_prefix = "TBA"
+            date_suffix = "TBA"
             if scheduled_event.start_time:
-                date_prefix = scheduled_event.start_time.strftime("%Y-%m-%d")
+                date_suffix = scheduled_event.start_time.strftime("%d/%m/%Y")
 
-            thread_name = f"{date_prefix} {scheduled_event.name}".strip()
+            thread_name = f"{scheduled_event.name} - {date_suffix}".strip()
             if len(thread_name) > 100:
                 thread_name = thread_name[:97] + "..."
 
