@@ -33,6 +33,23 @@ EVENTS_JSON_PATH = data_path("events_history.json")
 # Path to persist the display message across restarts
 EVENTS_DISPLAY_STATE_PATH = data_path("events_display_state.json")
 
+# -----------------------------
+# EVENT TITLE EMOJI TAGGING
+# -----------------------------
+# If an event name contains one of these keywords, the bot will append the
+# corresponding custom server emoji *after* that keyword in the displayed title.
+#
+# Put the emoji name in Discord's short-name format (e.g. ":48th:") and make sure
+# the emoji exists in the same server as the event.
+KEYWORD_EMOJI_TAGS: dict[str, str] = {
+    "RDG": ":RDG:",
+    "RMC": ":RMC:",
+    "48th": ":48th:",
+    "HellEU": ":helleu:",
+    "7DR": ":7DR:",
+    "KRTS": ":KRTS:",
+}
+
 
 class EventDisplayCog(commands.Cog):
     """
@@ -94,6 +111,46 @@ class EventDisplayCog(commands.Cog):
                 json.dump(state, f, indent=2, ensure_ascii=False)
         except Exception:
             logger.warning("Failed to persist events display state.", exc_info=True)
+
+    def _resolve_custom_emoji(self, guild: discord.Guild, emoji_tag: str) -> str:
+        """Resolve a tag like ':name:' to '<:name:id>' if possible."""
+
+        emoji_name = emoji_tag.strip(":")
+        if not emoji_name:
+            return emoji_tag
+
+        for emoji in getattr(guild, "emojis", []):
+            if emoji.name == emoji_name:
+                return str(emoji)
+
+        # Not found; return the original tag (will display as text)
+        return emoji_tag
+
+    def _format_event_title(self, guild: discord.Guild, title: str) -> str:
+        """Append configured emojis after matching keywords in the title."""
+
+        if not title or not KEYWORD_EMOJI_TAGS:
+            return title
+
+        formatted = title
+
+        # Longer keys first to avoid partial matches.
+        for keyword in sorted(KEYWORD_EMOJI_TAGS.keys(), key=len, reverse=True):
+            emoji_tag = KEYWORD_EMOJI_TAGS.get(keyword)
+            if not emoji_tag:
+                continue
+
+            emoji_str = self._resolve_custom_emoji(guild, emoji_tag)
+
+            # Match keyword as a standalone token (not inside another word).
+            pattern = re.compile(rf"(?<!\\w){re.escape(keyword)}(?!\\w)")
+
+            def _repl(match: re.Match) -> str:
+                return f"{match.group(0)}{emoji_str}"  # append right after keyword
+
+            formatted = pattern.sub(_repl, formatted)
+
+        return formatted
 
     async def _update_once(self, *, reason: str) -> None:
         async with self._update_lock:
@@ -327,7 +384,7 @@ class EventDisplayCog(commands.Cog):
 
                 embed.add_field(
                     name="\u200b",
-                    value=f"📌 **{event.name}**\n{field_value}",
+                    value=f"📌 **{self._format_event_title(guild, event.name)}**\n{field_value}",
                     inline=False
                 )
 
