@@ -74,7 +74,6 @@ FORCE_ROLLCALL_ROLE_ID = 1213495462632361994
 # Fill these with your server's role IDs.
 HOMEGUARD_ROLE_ID: Optional[int] = 1103762811491975218
 AWOL_ROLE_ID: Optional[int] = 1439416251687637044
-BLUEBERRY_ROLE_ID: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -124,8 +123,6 @@ class RollCallCog(commands.Cog):
 			pairs.append((int(HOMEGUARD_ROLE_ID), "HG"))
 		if AWOL_ROLE_ID:
 			pairs.append((int(AWOL_ROLE_ID), "AWOL"))
-		if BLUEBERRY_ROLE_ID:
-			pairs.append((int(BLUEBERRY_ROLE_ID), "BB"))
 		return pairs
 
 	def _member_exclusion_markers(self, member: discord.Member) -> list[str]:
@@ -896,11 +893,7 @@ class RollCallCog(commands.Cog):
 			m = guild.get_member(uid_int)
 			if not m:
 				return ["LEFT"]
-			flags = self._member_exclusion_markers(m)
-			# If this sheet has a tracked role, users without it are effectively "not tracked" here.
-			if cfg.tracked_role_id and not any(r.id == cfg.tracked_role_id for r in m.roles):
-				flags.append("NOT-IN-ROLE")
-			return flags
+			return self._member_exclusion_markers(m)
 
 		main_rows: list[str] = []
 		excluded_rows: list[str] = []
@@ -926,9 +919,7 @@ class RollCallCog(commands.Cog):
 			is_excluded = False
 			if "LEFT" in flags:
 				is_excluded = True
-			if any(f in ("HG", "AWOL", "BB") for f in flags):
-				is_excluded = True
-			if "NOT-IN-ROLE" in flags:
+			if any(f in ("HG", "AWOL") for f in flags):
 				is_excluded = True
 
 			if is_excluded:
@@ -966,7 +957,7 @@ class RollCallCog(commands.Cog):
 </head>
 <body>
   <h1>{html.escape(cfg.title)}</h1>
-	  <p><strong>Flags:</strong> HG = Homeguard, AWOL = AWOL, BB = Blueberry, LEFT = left server</p>
+	  <p><strong>Flags:</strong> HG = Homeguard, AWOL = AWOL, LEFT = left server</p>
   <p>Last updated: {datetime.utcnow().strftime('%d/%m/%Y %H:%M UTC')}</p>
 	  <h2>Roll call</h2>
 	  <table>
