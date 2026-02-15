@@ -50,15 +50,12 @@ IMPORT_LEGACY_XLS_PATH: Optional[str] = None
 # If None, HTML is posted to each rollcall channel.
 HTML_CHANNEL_ID: Optional[int] = None
 
+# Optional: where to upload the rollcall.xlsx file so users can download it.
+# If None, falls back to HTML_CHANNEL_ID (if set) or the first configured rollcall channel.
+WORKBOOK_UPLOAD_CHANNEL_ID: Optional[int] = None
+
 # Backstop refresh for embeds/html in case of missed reaction events
 BACKSTOP_REFRESH_MINUTES = 30
-
-# If True, HTML tables will refresh when reactions are added/removed.
-# This re-posts the HTML attachment message, so keep it debounced.
-UPDATE_HTML_ON_REACTION = True
-
-# Debounce (seconds) for reaction-driven refreshes.
-REACTION_REFRESH_DEBOUNCE_SECONDS = 10.0
 
 # State file: message IDs + last posted week so we can edit across restarts
 STATE_PATH = data_path("rollcall_state.json")
@@ -147,17 +144,18 @@ class RollCallCog(commands.Cog):
 	def _load_state(self) -> dict:
 		try:
 			if not os.path.exists(STATE_PATH):
-				return {"version": 1, "rollcalls": {}}
+				return {"version": 1, "rollcalls": {}, "workbook": {}}
 			with open(STATE_PATH, "r", encoding="utf-8") as f:
 				data = json.load(f)
 			if not isinstance(data, dict):
-				return {"version": 1, "rollcalls": {}}
+				return {"version": 1, "rollcalls": {}, "workbook": {}}
 			data.setdefault("version", 1)
 			data.setdefault("rollcalls", {})
+			data.setdefault("workbook", {})
 			return data
 		except Exception:
 			logger.warning("Failed to load rollcall state; starting fresh.", exc_info=True)
-			return {"version": 1, "rollcalls": {}}
+			return {"version": 1, "rollcalls": {}, "workbook": {}}
 
 	def _save_state(self) -> None:
 		try:
@@ -180,6 +178,65 @@ class RollCallCog(commands.Cog):
 		rc.setdefault("html_url", None)
 		rc.setdefault("last_sent_at", None)
 		return rc
+
+	def _workbook_state(self) -> dict:
+		wb = self._state.setdefault("workbook", {})
+		wb.setdefault("message_id", None)
+		wb.setdefault("channel_id", None)
+		wb.setdefault("url", None)
+		wb.setdefault("updated_at", None)
+		return wb
+
+	def _workbook_upload_channel_id(self) -> Optional[int]:
+		if WORKBOOK_UPLOAD_CHANNEL_ID:
+			return int(WORKBOOK_UPLOAD_CHANNEL_ID)
+		if HTML_CHANNEL_ID:
+			return int(HTML_CHANNEL_ID)
+		if ROLLCALLS:
+			return int(ROLLCALLS[0].channel_id)
+		return None
+
+	async def _post_workbook(self) -> Optional[str]:
+		"""Upload the current rollcall workbook and return the attachment URL."""
+		state = self._workbook_state()
+		channel_id = self._workbook_upload_channel_id()
+		if not channel_id:
+			return state.get("url")
+		channel = await self._get_text_channel(channel_id)
+		if not channel:
+			return state.get("url")
+		if not os.path.exists(WORKBOOK_PATH):
+			return state.get("url")
+
+		old_id = state.get("message_id")
+		old_channel_id = state.get("channel_id")
+		if isinstance(old_id, int):
+			try:
+				old_channel = channel
+				if isinstance(old_channel_id, int) and old_channel_id != channel.id:
+					fetched_old = await self._get_text_channel(old_channel_id)
+					if fetched_old:
+						old_channel = fetched_old
+				old_msg = await old_channel.fetch_message(old_id)
+				await old_msg.delete()
+			except discord.NotFound:
+				pass
+			except discord.Forbidden:
+				logger.warning("RollCall: missing permission to delete old workbook message")
+			except Exception:
+				logger.warning("RollCall: failed deleting old workbook message", exc_info=True)
+
+		try:
+			file = discord.File(fp=WORKBOOK_PATH, filename="rollcall.xlsx")
+			msg = await channel.send(content="Rollcall workbook (XLSX)", file=file)
+			state["message_id"] = msg.id
+			state["channel_id"] = channel.id
+			state["url"] = msg.attachments[0].url if msg.attachments else None
+			state["updated_at"] = datetime.utcnow().isoformat()
+			return state["url"]
+		except Exception:
+			logger.warning("RollCall: failed uploading workbook", exc_info=True)
+			return state.get("url")
 
 	# -----------------
 	# Scheduler
@@ -359,14 +416,55 @@ class RollCallCog(commands.Cog):
 	def _sheet_headers(self, ws) -> list[str]:
 		headers: list[str] = []
 		for cell in ws[1]:
-			headers.append(str(cell.value) if cell.value is not None else "")
+			v = cell.value
+			if v is None:
+				headers.append("")
+			elif isinstance(v, str):
+				headers.append(v.strip())
+			else:
+				headers.append(str(v))
 		return headers
+
+	def _parse_week_header(self, header: str) -> Optional[tuple[int, date]]:
+		"""Parse 'Wxx DD/MM/YYYY' or legacy 'Wxx YYYY-MM-DD' into (week, date)."""
+		if not header:
+			return None
+		h = header.strip()
+		m = re.match(r"^W(\d{2})\s+(\d{2})/(\d{2})/(\d{4})$", h)
+		if m:
+			week = int(m.group(1))
+			dd = int(m.group(2))
+			mm = int(m.group(3))
+			yy = int(m.group(4))
+			return (week, date(yy, mm, dd))
+		m = re.match(r"^W(\d{2})\s+(\d{4})-(\d{2})-(\d{2})$", h)
+		if m:
+			week = int(m.group(1))
+			yy = int(m.group(2))
+			mm = int(m.group(3))
+			dd = int(m.group(4))
+			return (week, date(yy, mm, dd))
+		return None
 
 	def _ensure_week_column(self, ws, week_label: str) -> int:
 		headers = self._sheet_headers(ws)
-		if week_label in headers:
-			return headers.index(week_label) + 1
-		ws.cell(row=1, column=len(headers) + 1, value=week_label)
+		canonical = week_label.strip() if isinstance(week_label, str) else str(week_label)
+		if canonical in headers:
+			return headers.index(canonical) + 1
+
+		# Match by normalized (week, date) to avoid duplicate columns when formats differ.
+		wanted = self._parse_week_header(canonical)
+		if wanted:
+			for idx, h in enumerate(headers):
+				parsed = self._parse_week_header(h)
+				if parsed and parsed == wanted:
+					col = idx + 1
+					# Rename header to canonical to prevent future duplicates
+					ws.cell(row=1, column=col, value=canonical)
+					return col
+
+		# No match: create new column
+		ws.cell(row=1, column=len(headers) + 1, value=canonical)
 		return len(headers) + 1
 
 	def _index_user_rows(self, ws) -> dict[str, int]:
@@ -424,6 +522,21 @@ class RollCallCog(commands.Cog):
 					logger.exception("RollCall: failed sending for %s", cfg.key)
 
 			self._save_workbook(wb)
+			# Upload workbook for download link, then refresh embeds to include latest URL.
+			workbook_url = await self._post_workbook()
+			if workbook_url:
+				for cfg in ROLLCALLS:
+					try:
+						await self._update_outputs_for_cfg(
+							guild,
+							wb,
+							cfg,
+							week_label=week_label,
+							reason="workbook_link",
+							update_html=False,
+						)
+					except Exception:
+						logger.exception("RollCall: failed workbook embed refresh for %s", cfg.key)
 			self._save_state()
 
 	async def _refresh_all(self, *, reason: str) -> None:
@@ -433,7 +546,8 @@ class RollCallCog(commands.Cog):
 				return
 			week_label = self._week_label(self._rollcall_date_for_now())
 			wb = self._load_or_create_workbook()
-			update_html = (reason != "reaction") or bool(UPDATE_HTML_ON_REACTION)
+			prev_workbook_url = self._workbook_state().get("url")
+			update_html = reason != "reaction"
 			for cfg in ROLLCALLS:
 				try:
 					await self._update_outputs_for_cfg(
@@ -447,6 +561,20 @@ class RollCallCog(commands.Cog):
 				except Exception:
 					logger.exception("RollCall: failed refresh for %s", cfg.key)
 			self._save_workbook(wb)
+			new_workbook_url = await self._post_workbook()
+			if new_workbook_url and new_workbook_url != prev_workbook_url:
+				for cfg in ROLLCALLS:
+					try:
+						await self._update_outputs_for_cfg(
+							guild,
+							wb,
+							cfg,
+							week_label=week_label,
+							reason="workbook_link",
+							update_html=False,
+						)
+					except Exception:
+						logger.exception("RollCall: failed workbook embed refresh for %s", cfg.key)
 			self._save_state()
 
 	async def _send_rollcall_for_cfg(
@@ -479,7 +607,16 @@ class RollCallCog(commands.Cog):
 			self._set_cell(ws, row, week_col, "❌")
 
 		ping = f"<@&{cfg.ping_role_id}> " if cfg.ping_role_id else ""
-		embed = await self._build_status_embed(guild, ws, cfg, week_label=week_label, rollcall_d=rollcall_d, html_url=state.get("html_url"))
+		workbook_url = self._workbook_state().get("url")
+		embed = await self._build_status_embed(
+			guild,
+			ws,
+			cfg,
+			week_label=week_label,
+			rollcall_d=rollcall_d,
+			html_url=state.get("html_url"),
+			workbook_url=workbook_url,
+		)
 
 		msg = await channel.send(content=f"{ping}Weekly roll call: react with {ROLLCALL_EMOJI}", embed=embed)
 		try:
@@ -529,7 +666,16 @@ class RollCallCog(commands.Cog):
 			await self._post_html_for_cfg(guild, ws, cfg, week_label=week_label)
 		html_url = self._rc_state(cfg.key).get("html_url")
 
-		embed = await self._build_status_embed(guild, ws, cfg, week_label=week_label, rollcall_d=rollcall_d, html_url=html_url)
+		workbook_url = self._workbook_state().get("url")
+		embed = await self._build_status_embed(
+			guild,
+			ws,
+			cfg,
+			week_label=week_label,
+			rollcall_d=rollcall_d,
+			html_url=html_url,
+			workbook_url=workbook_url,
+		)
 		msg_id = state.get("rollcall_message_id")
 		if isinstance(msg_id, int):
 			try:
@@ -567,6 +713,7 @@ class RollCallCog(commands.Cog):
 		week_label: str,
 		rollcall_d: date,
 		html_url: Optional[str],
+		workbook_url: Optional[str],
 	) -> discord.Embed:
 		expected = self._expected_members(guild, cfg)
 		expected_ids = {m.id for m in expected}
@@ -596,6 +743,8 @@ class RollCallCog(commands.Cog):
 
 		if html_url:
 			embed.description += f"\n\n[Open full table (HTML)]({html_url})"
+		if workbook_url:
+			embed.description += f"\n[Download rollcall workbook (XLSX)]({workbook_url})"
 
 		embed.add_field(name="Ticked", value=self._chunk_list(ticked_names), inline=False)
 		if expected_ids:
@@ -769,18 +918,43 @@ class RollCallCog(commands.Cog):
 		if not match_cfg or not week_label:
 			return
 
-		async with self._lock:
-			guild = self.bot.get_guild(GUILD_ID)
-			if not guild:
+		guild = self.bot.get_guild(GUILD_ID)
+		if not guild:
+			return
+
+		member = guild.get_member(payload.user_id)
+		if not member:
+			try:
+				member = await guild.fetch_member(payload.user_id)
+			except Exception:
+				member = None
+
+		# Enforce role gating on reaction ADDs.
+		# If tracked_role_id is set, only those members can tick this roll call.
+		if marked and match_cfg.tracked_role_id:
+			if not isinstance(member, discord.Member):
+				return
+			if not any(r.id == match_cfg.tracked_role_id for r in member.roles):
+				# Best-effort: remove the reaction they added.
+				try:
+					ch = await self._get_text_channel(payload.channel_id) if payload.channel_id else None
+					if ch:
+						msg = await ch.fetch_message(payload.message_id)
+						await msg.remove_reaction(payload.emoji, member)
+				except Exception:
+					# Not fatal (requires Manage Messages to remove others' reactions)
+					pass
+
+				# DM user
+				try:
+					await member.send(
+						"You have reacted to the wrong roll call and don't have that role :( please contact an admin"
+					)
+				except Exception:
+					pass
 				return
 
-			member = guild.get_member(payload.user_id)
-			if not member:
-				try:
-					member = await guild.fetch_member(payload.user_id)
-				except Exception:
-					member = None
-
+		async with self._lock:
 			wb = self._load_or_create_workbook()
 			ws = self._get_or_create_sheet(wb, match_cfg)
 			col = self._ensure_week_column(ws, week_label)
@@ -790,7 +964,7 @@ class RollCallCog(commands.Cog):
 			self._save_state()
 
 		# Outside lock: update outputs (debounced). HTML refresh is skipped for reaction updates.
-		self._debounced_refresh(reason="reaction", delay_seconds=float(REACTION_REFRESH_DEBOUNCE_SECONDS))
+		self._debounced_refresh(reason="reaction", delay_seconds=2.0)
 
 	@commands.Cog.listener()
 	async def on_member_update(self, before: discord.Member, after: discord.Member):
