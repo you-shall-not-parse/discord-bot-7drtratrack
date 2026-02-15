@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from typing import Optional
@@ -51,6 +52,13 @@ HTML_CHANNEL_ID: Optional[int] = None
 
 # Backstop refresh for embeds/html in case of missed reaction events
 BACKSTOP_REFRESH_MINUTES = 30
+
+# If True, HTML tables will refresh when reactions are added/removed.
+# This re-posts the HTML attachment message, so keep it debounced.
+UPDATE_HTML_ON_REACTION = True
+
+# Debounce (seconds) for reaction-driven refreshes.
+REACTION_REFRESH_DEBOUNCE_SECONDS = 10.0
 
 # State file: message IDs + last posted week so we can edit across restarts
 STATE_PATH = data_path("rollcall_state.json")
@@ -241,7 +249,26 @@ class RollCallCog(commands.Cog):
 	def _week_label(self, d: date) -> str:
 		# Columns are week numbers with the date rollcall was sent.
 		week = d.isocalendar().week
-		return f"W{week:02d} {d.isoformat()}"
+		return f"W{week:02d} {d.strftime('%d/%m/%Y')}"
+
+	def _migrate_week_headers_to_ddmmyyyy(self, ws) -> None:
+		"""Convert legacy 'Wxx YYYY-MM-DD' headers to 'Wxx DD/MM/YYYY' in-place."""
+		try:
+			for col in range(3, ws.max_column + 1):
+				cell = ws.cell(row=1, column=col)
+				val = cell.value
+				if not isinstance(val, str):
+					continue
+				m = re.match(r"^W(\d{2})\s+(\d{4})-(\d{2})-(\d{2})$", val.strip())
+				if not m:
+					continue
+				week = m.group(1)
+				yy = m.group(2)
+				mm = m.group(3)
+				dd = m.group(4)
+				cell.value = f"W{week} {dd}/{mm}/{yy}"
+		except Exception:
+			logger.warning("Failed migrating week headers to DD/MM/YYYY", exc_info=True)
 
 	def _rollcall_date_for_now(self) -> date:
 		"""Return the rollcall date corresponding to the most recent scheduled send."""
@@ -326,6 +353,7 @@ class RollCallCog(commands.Cog):
 		else:
 			ws = wb.create_sheet(title=name)
 			ws.append(["User ID", "Nickname"])
+		self._migrate_week_headers_to_ddmmyyyy(ws)
 		return ws
 
 	def _sheet_headers(self, ws) -> list[str]:
@@ -405,7 +433,7 @@ class RollCallCog(commands.Cog):
 				return
 			week_label = self._week_label(self._rollcall_date_for_now())
 			wb = self._load_or_create_workbook()
-			update_html = reason != "reaction"
+			update_html = (reason != "reaction") or bool(UPDATE_HTML_ON_REACTION)
 			for cfg in ROLLCALLS:
 				try:
 					await self._update_outputs_for_cfg(
@@ -515,11 +543,17 @@ class RollCallCog(commands.Cog):
 				logger.warning("RollCall %s: failed editing message", cfg.key, exc_info=True)
 
 	def _parse_week_label_date(self, week_label: str) -> Optional[date]:
-		# format: 'W07 2026-02-16'
+		# formats:
+		# - 'W07 16/02/2026'
+		# - legacy 'W07 2026-02-16'
 		try:
 			parts = str(week_label).split()
 			if len(parts) >= 2:
-				return date.fromisoformat(parts[1])
+				v = parts[1]
+				try:
+					return datetime.strptime(v, "%d/%m/%Y").date()
+				except Exception:
+					return date.fromisoformat(v)
 			return None
 		except Exception:
 			return None
@@ -554,7 +588,7 @@ class RollCallCog(commands.Cog):
 			timestamp=datetime.utcnow(),
 			description=(
 				f"**Week:** {week_label}\n"
-				f"**Roll call date:** {rollcall_d.isoformat()}\n"
+				f"**Roll call date:** {rollcall_d.strftime('%d/%m/%Y')}\n"
 				f"**React with:** {ROLLCALL_EMOJI}"
 			),
 			url=(html_url or None),
@@ -756,7 +790,7 @@ class RollCallCog(commands.Cog):
 			self._save_state()
 
 		# Outside lock: update outputs (debounced). HTML refresh is skipped for reaction updates.
-		self._debounced_refresh(reason="reaction", delay_seconds=2.0)
+		self._debounced_refresh(reason="reaction", delay_seconds=float(REACTION_REFRESH_DEBOUNCE_SECONDS))
 
 	@commands.Cog.listener()
 	async def on_member_update(self, before: discord.Member, after: discord.Member):
