@@ -197,7 +197,7 @@ class EventDisplayCog(commands.Cog):
         starter_text = (
             f"📅 New event created: **{title}**\n"
             f"**Date/Time:** {start_time_str}\n"
-            f"**Organiser:** {organiser}"
+            f"**Added By:** {organiser}"
         )
 
         try:
@@ -511,7 +511,7 @@ class EventDisplayCog(commands.Cog):
                 # Build the field value
                 field_value = (
                     f"**Date/Time:** {start_time_str}"
-                    f"\n**Organiser:** {organiser_str}"
+                    f"\n**Added By:** {organiser_str}"
                     f"{location_str}"
                 )
 
