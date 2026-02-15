@@ -50,6 +50,13 @@ IMPORT_LEGACY_XLS_PATH: Optional[str] = None
 # If None, HTML is posted to each rollcall channel.
 HTML_CHANNEL_ID: Optional[int] = None
 
+# Whether to regenerate HTML on reaction add/remove.
+# If False, HTML will still update on the backstop refresh (BACKSTOP_REFRESH_MINUTES) and on non-reaction refreshes.
+UPDATE_HTML_ON_REACTION = True
+
+# Debounce delay for reaction-driven refreshes (seconds).
+REACTION_REFRESH_DEBOUNCE_SECONDS = 15.0
+
 # Optional: where to upload the rollcall.xlsx file so users can download it.
 # If None, falls back to HTML_CHANNEL_ID (if set) or the first configured rollcall channel.
 WORKBOOK_UPLOAD_CHANNEL_ID: Optional[int] = None
@@ -67,7 +74,7 @@ FORCE_ROLLCALL_ROLE_ID = 1213495462632361994
 # Fill these with your server's role IDs.
 HOMEGUARD_ROLE_ID: Optional[int] = 1103762811491975218
 AWOL_ROLE_ID: Optional[int] = 1439416251687637044
-BLUEBERRY_ROLE_ID: Optional[int] = 1440120995171012699
+BLUEBERRY_ROLE_ID: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -584,7 +591,7 @@ class RollCallCog(commands.Cog):
 			week_label = self._week_label(self._rollcall_date_for_now())
 			wb = self._load_or_create_workbook()
 			prev_workbook_url = self._workbook_state().get("url")
-			update_html = reason != "reaction"
+			update_html = (reason != "reaction") or UPDATE_HTML_ON_REACTION
 			for cfg in ROLLCALLS:
 				try:
 					await self._update_outputs_for_cfg(
@@ -1060,8 +1067,8 @@ class RollCallCog(commands.Cog):
 			self._save_workbook(wb)
 			self._save_state()
 
-		# Outside lock: update outputs (debounced). HTML refresh is skipped for reaction updates.
-		self._debounced_refresh(reason="reaction", delay_seconds=2.0)
+		# Outside lock: update outputs (debounced).
+		self._debounced_refresh(reason="reaction", delay_seconds=REACTION_REFRESH_DEBOUNCE_SECONDS)
 
 	@commands.Cog.listener()
 	async def on_member_update(self, before: discord.Member, after: discord.Member):
