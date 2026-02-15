@@ -63,6 +63,12 @@ STATE_PATH = data_path("rollcall_state.json")
 # Role allowed to use /forcerollcall
 FORCE_ROLLCALL_ROLE_ID = 1213495462632361994
 
+# Excluded statuses (shown at bottom of HTML, and excluded from "expected" list)
+# Fill these with your server's role IDs.
+HOMEGUARD_ROLE_ID: Optional[int] = 1103762811491975218
+AWOL_ROLE_ID: Optional[int] = 1439416251687637044
+BLUEBERRY_ROLE_ID: Optional[int] = 1440120995171012699
+
 
 @dataclass(frozen=True)
 class RollCallConfig:
@@ -104,6 +110,37 @@ class RollCallCog(commands.Cog):
 		if isinstance(user, discord.Member):
 			return any(r.id == FORCE_ROLLCALL_ROLE_ID for r in user.roles)
 		return False
+
+	def _excluded_role_markers(self) -> list[tuple[int, str]]:
+		pairs: list[tuple[int, str]] = []
+		if HOMEGUARD_ROLE_ID:
+			pairs.append((int(HOMEGUARD_ROLE_ID), "HG"))
+		if AWOL_ROLE_ID:
+			pairs.append((int(AWOL_ROLE_ID), "AWOL"))
+		if BLUEBERRY_ROLE_ID:
+			pairs.append((int(BLUEBERRY_ROLE_ID), "BB"))
+		return pairs
+
+	def _member_exclusion_markers(self, member: discord.Member) -> list[str]:
+		role_ids = {r.id for r in member.roles}
+		markers: list[str] = []
+		for rid, marker in self._excluded_role_markers():
+			if rid in role_ids:
+				markers.append(marker)
+		return markers
+
+	def _is_member_excluded(self, member: discord.Member) -> bool:
+		return bool(self._member_exclusion_markers(member))
+
+	def _excluded_members(self, guild: discord.Guild) -> list[discord.Member]:
+		members: dict[int, discord.Member] = {}
+		for rid, _marker in self._excluded_role_markers():
+			role = guild.get_role(rid)
+			if not role:
+				continue
+			for m in role.members:
+				members[m.id] = m
+		return sorted(members.values(), key=lambda m: (m.display_name or "").lower())
 
 	@app_commands.command(name="forcerollcall", description="Force-run all configured roll calls now.")
 	@app_commands.guilds(discord.Object(id=GUILD_ID))
@@ -606,6 +643,10 @@ class RollCallCog(commands.Cog):
 			row = self._upsert_member_row(ws, m.id, m.display_name)
 			self._set_cell(ws, row, week_col, "❌")
 
+		# Keep excluded members visible in the table (bottom section), but don't mark them ❌.
+		for m in self._excluded_members(guild):
+			self._upsert_member_row(ws, m.id, m.display_name)
+
 		ping = f"<@&{cfg.ping_role_id}> " if cfg.ping_role_id else ""
 		workbook_url = self._workbook_state().get("url")
 		embed = await self._build_status_embed(
@@ -636,7 +677,8 @@ class RollCallCog(commands.Cog):
 		if cfg.tracked_role_id:
 			role = guild.get_role(cfg.tracked_role_id)
 			if role:
-				return sorted(role.members, key=lambda m: (m.display_name or "").lower())
+				filtered = [m for m in role.members if not self._is_member_excluded(m)]
+				return sorted(filtered, key=lambda m: (m.display_name or "").lower())
 		# fallback: nobody "expected" (we'll still record reactions)
 		return []
 
@@ -660,6 +702,8 @@ class RollCallCog(commands.Cog):
 
 		# Ensure member nicknames stay up to date in the sheet.
 		for m in self._expected_members(guild, cfg):
+			self._upsert_member_row(ws, m.id, m.display_name)
+		for m in self._excluded_members(guild):
 			self._upsert_member_row(ws, m.id, m.display_name)
 
 		if update_html:
@@ -812,7 +856,7 @@ class RollCallCog(commands.Cog):
 			except Exception:
 				logger.warning("RollCall %s: failed deleting old HTML message", cfg.key, exc_info=True)
 
-		html_text = self._render_html(ws, cfg, highlight_week=week_label)
+		html_text = self._render_html(guild, ws, cfg, highlight_week=week_label)
 		file_bytes = html_text.encode("utf-8")
 		file = discord.File(fp=io.BytesIO(file_bytes), filename=f"{cfg.key}_rollcall.html")
 
@@ -821,33 +865,78 @@ class RollCallCog(commands.Cog):
 		state["html_channel_id"] = channel.id
 		state["html_url"] = msg.attachments[0].url if msg.attachments else None
 
-	def _render_html(self, ws, cfg: RollCallConfig, *, highlight_week: Optional[str]) -> str:
+	def _render_html(self, guild: discord.Guild, ws, cfg: RollCallConfig, *, highlight_week: Optional[str]) -> str:
 		headers = self._sheet_headers(ws)
 		if not headers or headers[0] != "User ID":
 			headers = ["User ID", "Nickname"] + headers[2:]
 
-		col_headers = headers[1:]  # hide User ID
-		head_html = "".join(f"<th>{html.escape(str(h))}</th>" for h in col_headers)
+		# Display headers: hide User ID, add Flags column after Nickname
+		week_headers = headers[2:]
+		head_cells = ["Nickname", "Flags"] + [str(h) for h in week_headers]
+		head_html = "".join(f"<th>{html.escape(h)}</th>" for h in head_cells)
 
-		# Collect rows
-		body_rows = []
+		def parse_uid(v) -> Optional[int]:
+			try:
+				if v is None:
+					return None
+				return int(str(v).strip())
+			except Exception:
+				return None
+
+		def row_flags(uid_int: Optional[int]) -> list[str]:
+			if uid_int is None:
+				return ["LEFT"]
+			m = guild.get_member(uid_int)
+			if not m:
+				return ["LEFT"]
+			flags = self._member_exclusion_markers(m)
+			# If this sheet has a tracked role, users without it are effectively "not tracked" here.
+			if cfg.tracked_role_id and not any(r.id == cfg.tracked_role_id for r in m.roles):
+				flags.append("NOT-IN-ROLE")
+			return flags
+
+		main_rows: list[str] = []
+		excluded_rows: list[str] = []
+
 		for r in range(2, ws.max_row + 1):
-			uid = ws.cell(row=r, column=1).value
-			nick = ws.cell(row=r, column=2).value
-			if uid is None and nick is None:
+			uid_val = ws.cell(row=r, column=1).value
+			nick_val = ws.cell(row=r, column=2).value
+			if uid_val is None and nick_val is None:
 				continue
-			cols = [html.escape(str(nick or ""))]
+			uid_int = parse_uid(uid_val)
+			flags = row_flags(uid_int)
+			flags_str = ", ".join(flags) if flags else ""
+
+			# Use stored nickname (keeps history) but it should be kept up-to-date by refresh.
+			nick = str(nick_val or "")
+			cells = [html.escape(nick), html.escape(flags_str)]
 			for c in range(3, len(headers) + 1):
 				v = ws.cell(row=r, column=c).value
-				cols.append(html.escape(str(v or "")))
-			body_rows.append("<tr>" + "".join(f"<td>{v}</td>" for v in cols) + "</tr>")
+				cells.append(html.escape(str(v or "")))
+			row_html = "<tr>" + "".join(f"<td>{v}</td>" for v in cells) + "</tr>"
 
-		table_html = "".join(body_rows) if body_rows else '<tr><td colspan="100">No data.</td></tr>'
+			# Decide which table
+			is_excluded = False
+			if "LEFT" in flags:
+				is_excluded = True
+			if any(f in ("HG", "AWOL", "BB") for f in flags):
+				is_excluded = True
+			if "NOT-IN-ROLE" in flags:
+				is_excluded = True
+
+			if is_excluded:
+				excluded_rows.append(row_html)
+			else:
+				main_rows.append(row_html)
+
+		main_table = "".join(main_rows) if main_rows else '<tr><td colspan="100">No active members.</td></tr>'
+		excluded_table = "".join(excluded_rows) if excluded_rows else '<tr><td colspan="100">None.</td></tr>'
+
 		highlight_css = ""
 		if highlight_week and highlight_week in headers:
 			idx = headers.index(highlight_week)  # 0-based in headers
-			# We removed User ID from display, so display index shifts by -1.
-			display_col = idx - 1  # since col_headers starts at headers[1]
+			# Display columns are: Nickname(1), Flags(2), then week columns starting at headers[2]
+			display_col = (idx - 2) + 3
 			# nth-child is 1-based; td/th
 			nth = display_col + 1
 			highlight_css = f"th:nth-child({nth}), td:nth-child({nth}) {{ background: #fff7cc; }}"
@@ -870,11 +959,19 @@ class RollCallCog(commands.Cog):
 </head>
 <body>
   <h1>{html.escape(cfg.title)}</h1>
+	  <p><strong>Flags:</strong> HG = Homeguard, AWOL = AWOL, BB = Blueberry, LEFT = left server</p>
   <p>Last updated: {datetime.utcnow().strftime('%d/%m/%Y %H:%M UTC')}</p>
-  <table>
-	<thead><tr>{head_html}</tr></thead>
-	<tbody>{table_html}</tbody>
-  </table>
+	  <h2>Roll call</h2>
+	  <table>
+	    <thead><tr>{head_html}</tr></thead>
+	    <tbody>{main_table}</tbody>
+	  </table>
+
+	  <h2 style="margin-top: 24px;">Excluded / Inactive</h2>
+	  <table>
+	    <thead><tr>{head_html}</tr></thead>
+	    <tbody>{excluded_table}</tbody>
+	  </table>
 </body>
 </html>"""
 
