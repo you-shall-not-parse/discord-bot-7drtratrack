@@ -54,6 +54,10 @@ HTML_CHANNEL_ID: Optional[int] = 1098525492631572567
 # If False, HTML will still update on the backstop refresh (BACKSTOP_REFRESH_MINUTES) and on non-reaction refreshes.
 UPDATE_HTML_ON_REACTION = True
 
+# Whether to upload/replace the rollcall workbook message on reaction-driven refreshes.
+# This can be very noisy because it deletes and re-posts the XLSX message each time.
+UPLOAD_WORKBOOK_ON_REACTION = False
+
 # Debounce delay for reaction-driven refreshes (seconds).
 REACTION_REFRESH_DEBOUNCE_SECONDS = 15.0
 
@@ -83,26 +87,27 @@ class RollCallConfig:
 	channel_id: int
 	tracked_role_id: Optional[int] = None  # legacy: single tracked role
 	tracked_role_ids: Optional[tuple[int, ...]] = None  # optional: one or more tracked roles (use up to 2)
-	ping_role_id: Optional[int] = None  # optional role mention in the post
+	ping_role_id: Optional[int] = None  # legacy: single ping role
+	ping_role_ids: Optional[tuple[int, ...]] = None  # optional: one or more roles to mention when posting
 	embed_image_url: Optional[str] = None  # optional CDN image URL to display on the embed
 
 
 # Configure one entry per rollcall channel.
 ROLLCALLS: list[RollCallConfig] = [
-	 RollCallConfig(
+	    RollCallConfig(
 	 	key="22nd",
 	 	title="22nd Weekly Roll Call",
 	 	channel_id=1099591160017719329,  # set the roll call channel ID
 	 	tracked_role_ids=(1098347242202611732, 1099615408518070313),  # set the TWO role IDs allowed/expected to tick
-	 	ping_role_id=None,  # optional: role to mention when posting
+	 	ping_role_ids=(1098347242202611732, 1099615408518070313),  # optional: role(s) to mention when posting
 	 	embed_image_url="https://cdn.discordapp.com/attachments/1098976074852999261/1449441912770662491/file_000000002214722fa789165cdd45bc9b.png?ex=69934979&is=6991f7f9&hm=d67c84035d6f0685c2b7f9993167e81dec599e0be364ae927a04061c0b1a5119",
 	 ),
-	 	 RollCallConfig(
+	 	RollCallConfig(
 	 	key="1-5th",
 	 	title="1-5th Weekly Roll Call",
 	 	channel_id=1472727556523425952,  # set the roll call channel ID
 		 	tracked_role_ids=(1259814883248177196,),  # role(s) allowed/expected to tick
-	 	ping_role_id=None,  # optional: role to mention when posting
+	 	ping_role_ids=(1259814883248177196,),  # optional: role(s) to mention when posting
 	 	embed_image_url="https://cdn.discordapp.com/attachments/1098976074852999261/1444515451727253544/file_00000000e5f871f488f94dd458b30c09.png?ex=69932999&is=6991d819&hm=ba814b4a530031279073ec3fd49f4a4c1e34276586553afaa33839b5fb0ff81d",
 	 ),
 	 	RollCallConfig(
@@ -110,7 +115,7 @@ ROLLCALLS: list[RollCallConfig] = [
 	 	title="Infantry School Weekly Roll Call",
 	 	channel_id=1098331677224345660,  # set the roll call channel ID
 		 	tracked_role_ids=(1099596178141757542,),  # role(s) allowed/expected to tick
-	 	ping_role_id=None,  # optional: role to mention when posting
+	 	ping_role_ids=(1099596178141757542,),  # optional: role(s) to mention when posting
 	 	embed_image_url="https://cdn.discordapp.com/attachments/1237437502248452227/1472736090094960801/IMG_2754.png?ex=6993a7dd&is=6992565d&hm=fd843d3d077addff34b6575655415a31f2f191c4f8684c71370adf5c9a400d9e",
 	 ),
 	 	RollCallConfig(
@@ -118,7 +123,7 @@ ROLLCALLS: list[RollCallConfig] = [
 	 	title="8th Weekly Roll Call",
 	 	channel_id=1098701359022346341,  # set the roll call channel ID
 	 	tracked_role_ids=(1099105947932168212, 1103626508645453975),  # set the TWO role IDs allowed/expected to tick
-	 	ping_role_id=None,  # optional: role to mention when posting
+	 	ping_role_ids=(1099105947932168212, 1103626508645453975),  # optional: role(s) to mention when posting
 	 	embed_image_url="https://cdn.discordapp.com/attachments/1098976074852999261/1444676650653450411/file_000000005384720e8f124201b4e379a9.png?ex=699316fa&is=6991c57a&hm=8a80e05652ea88fa5150df80f0b08cbbb71a0b89db034be287eec6c7813472f3",
 	 ),
 ]
@@ -393,6 +398,43 @@ class RollCallCog(commands.Cog):
 				seen.add(rid)
 				out.append(rid)
 		return out
+
+	def _ping_role_ids(self, cfg: RollCallConfig) -> list[int]:
+		ids: list[int] = []
+		pri = cfg.ping_role_ids
+		if pri is not None:
+			if isinstance(pri, int):
+				candidates = [pri]
+			elif isinstance(pri, str):
+				candidates = []
+			else:
+				try:
+					candidates = list(pri)
+				except TypeError:
+					candidates = []
+			for rid in candidates:
+				try:
+					ids.append(int(rid))
+				except Exception:
+					continue
+		if cfg.ping_role_id:
+			try:
+				ids.append(int(cfg.ping_role_id))
+			except Exception:
+				pass
+		seen: set[int] = set()
+		out: list[int] = []
+		for rid in ids:
+			if rid not in seen:
+				seen.add(rid)
+				out.append(rid)
+		return out
+
+	def _ping_mentions(self, cfg: RollCallConfig) -> str:
+		ids = self._ping_role_ids(cfg)
+		if not ids:
+			return ""
+		return "".join(f"<@&{rid}> " for rid in ids)
 
 	def _apply_partial_tick_markers(self, guild: discord.Guild, wb: Workbook, *, week_label: str) -> None:
 		"""If a member ticks at least one roll call this week, mark 🅾️ on other roll calls they missed."""
@@ -707,20 +749,25 @@ class RollCallCog(commands.Cog):
 				except Exception:
 					logger.exception("RollCall: failed refresh for %s", cfg.key)
 			self._save_workbook(wb)
-			new_workbook_url = await self._post_workbook()
-			if new_workbook_url and new_workbook_url != prev_workbook_url:
-				for cfg in ROLLCALLS:
-					try:
-						await self._update_outputs_for_cfg(
-							guild,
-							wb,
-							cfg,
-							week_label=week_label,
-							reason="workbook_link",
-							update_html=False,
-						)
-					except Exception:
-						logger.exception("RollCall: failed workbook embed refresh for %s", cfg.key)
+
+			should_upload_workbook = True
+			if reason == "reaction" and not UPLOAD_WORKBOOK_ON_REACTION:
+				should_upload_workbook = False
+			if should_upload_workbook:
+				new_workbook_url = await self._post_workbook()
+				if new_workbook_url and new_workbook_url != prev_workbook_url:
+					for cfg in ROLLCALLS:
+						try:
+							await self._update_outputs_for_cfg(
+								guild,
+								wb,
+								cfg,
+								week_label=week_label,
+								reason="workbook_link",
+								update_html=False,
+							)
+						except Exception:
+							logger.exception("RollCall: failed workbook embed refresh for %s", cfg.key)
 			self._save_state()
 
 	async def _send_rollcall_for_cfg(
@@ -766,7 +813,7 @@ class RollCallCog(commands.Cog):
 		for m in self._excluded_members(guild):
 			self._upsert_member_row(ws, m.id, m.display_name)
 
-		ping = f"<@&{cfg.ping_role_id}> " if cfg.ping_role_id else ""
+		ping = self._ping_mentions(cfg)
 		workbook_url = self._workbook_state().get("url")
 		embed = await self._build_status_embed(
 			guild,
