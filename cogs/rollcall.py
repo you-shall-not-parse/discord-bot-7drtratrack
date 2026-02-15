@@ -48,7 +48,7 @@ IMPORT_LEGACY_XLS_PATH: Optional[str] = None
 
 # Optional: post HTML table uploads to a single channel.
 # If None, HTML is posted to each rollcall channel.
-HTML_CHANNEL_ID: Optional[int] = None
+HTML_CHANNEL_ID: Optional[int] = 1098525492631572567
 
 # Whether to regenerate HTML on reaction add/remove.
 # If False, HTML will still update on the backstop refresh (BACKSTOP_REFRESH_MINUTES) and on non-reaction refreshes.
@@ -59,7 +59,7 @@ REACTION_REFRESH_DEBOUNCE_SECONDS = 15.0
 
 # Optional: where to upload the rollcall.xlsx file so users can download it.
 # If None, falls back to HTML_CHANNEL_ID (if set) or the first configured rollcall channel.
-WORKBOOK_UPLOAD_CHANNEL_ID: Optional[int] = None
+WORKBOOK_UPLOAD_CHANNEL_ID: Optional[int] = 1098525492631572567
 
 # Backstop refresh for embeds/html in case of missed reaction events
 BACKSTOP_REFRESH_MINUTES = 30
@@ -81,8 +81,10 @@ class RollCallConfig:
 	key: str
 	title: str
 	channel_id: int
-	tracked_role_id: Optional[int] = None  # if set, only these members are expected to respond
+	tracked_role_id: Optional[int] = None  # legacy: single tracked role
+	tracked_role_ids: Optional[tuple[int, ...]] = None  # optional: one or more tracked roles (use up to 2)
 	ping_role_id: Optional[int] = None  # optional role mention in the post
+	embed_image_url: Optional[str] = None  # optional CDN image URL to display on the embed
 
 
 # Configure one entry per rollcall channel.
@@ -92,7 +94,15 @@ ROLLCALLS: list[RollCallConfig] = [
 	     title="Admin Weekly Roll Call",
 	     channel_id=1099806153170489485,
 	     tracked_role_id=1213495462632361994,
-	     ping_role_id=1213495462632361994,
+	     ping_role_id=None,
+	 ),
+	 RollCallConfig(
+	 	key="22nd",
+	 	title="22nd Weekly Roll Call",
+	 	channel_id=1099806153170489485,  # set the roll call channel ID
+	 	tracked_role_ids=(1098347242202611732, 1099615408518070313),  # set the TWO role IDs allowed/expected to tick
+	 	ping_role_id=None,  # optional: role to mention when posting
+	 	embed_image_url="https://cdn.discordapp.com/attachments/1098976074852999261/1449441912770662491/file_000000002214722fa789165cdd45bc9b.png?ex=69934979&is=6991f7f9&hm=d67c84035d6f0685c2b7f9993167e81dec599e0be364ae927a04061c0b1a5119",
 	 ),
 ]
 
@@ -334,6 +344,72 @@ class RollCallCog(commands.Cog):
 	# -----------------
 	# Helpers
 	# -----------------
+	def _tracked_role_ids(self, cfg: RollCallConfig) -> list[int]:
+		ids: list[int] = []
+		if cfg.tracked_role_ids:
+			for rid in cfg.tracked_role_ids:
+				try:
+					ids.append(int(rid))
+				except Exception:
+					continue
+		if cfg.tracked_role_id:
+			try:
+				ids.append(int(cfg.tracked_role_id))
+			except Exception:
+				pass
+		# de-dupe while keeping order
+		seen: set[int] = set()
+		out: list[int] = []
+		for rid in ids:
+			if rid not in seen:
+				seen.add(rid)
+				out.append(rid)
+		return out
+
+	def _apply_partial_tick_markers(self, guild: discord.Guild, wb: Workbook, *, week_label: str) -> None:
+		"""If a member ticks at least one roll call this week, mark 🅾️ on other roll calls they missed."""
+		PARTIAL = "🅾️"
+
+		active_cfgs: list[RollCallConfig] = []
+		for cfg in ROLLCALLS:
+			st = self._rc_state(cfg.key)
+			if st.get("current_week") == week_label:
+				active_cfgs.append(cfg)
+
+		# Only meaningful when multiple roll calls are active for the same week.
+		if len(active_cfgs) < 2:
+			return
+
+		# Who has ticked *any* roll call this week?
+		ticked_anywhere: set[int] = set()
+		for cfg in active_cfgs:
+			ws = self._get_or_create_sheet(wb, cfg)
+			status = self._get_week_status(ws, week_label)
+			for uid, v in status.items():
+				if v == "✅":
+					ticked_anywhere.add(uid)
+
+		for cfg in active_cfgs:
+			ws = self._get_or_create_sheet(wb, cfg)
+			headers = self._sheet_headers(ws)
+			if week_label not in headers:
+				continue
+			week_col = headers.index(week_label) + 1
+
+			expected = self._expected_members(guild, cfg)
+			if not expected:
+				continue
+
+			for m in expected:
+				row = self._upsert_member_row(ws, m.id, m.display_name)
+				cur = ws.cell(row=row, column=week_col).value
+				cur_s = str(cur) if cur is not None else ""
+
+				# Only replace explicit misses (❌) with partial marker.
+				if cur_s == "❌" and m.id in ticked_anywhere:
+					ws.cell(row=row, column=week_col, value=PARTIAL)
+				elif cur_s == PARTIAL and m.id not in ticked_anywhere:
+					ws.cell(row=row, column=week_col, value="❌")
 	async def _get_text_channel(self, channel_id: int) -> Optional[discord.TextChannel]:
 		ch = self.bot.get_channel(channel_id)
 		if isinstance(ch, discord.TextChannel):
@@ -587,6 +663,7 @@ class RollCallCog(commands.Cog):
 				return
 			week_label = self._week_label(self._rollcall_date_for_now())
 			wb = self._load_or_create_workbook()
+			self._apply_partial_tick_markers(guild, wb, week_label=week_label)
 			prev_workbook_url = self._workbook_state().get("url")
 			update_html = (reason != "reaction") or UPDATE_HTML_ON_REACTION
 			for cfg in ROLLCALLS:
@@ -678,11 +755,18 @@ class RollCallCog(commands.Cog):
 		await self._update_outputs_for_cfg(guild, wb, cfg, week_label=week_label, reason=reason, update_html=True)
 
 	def _expected_members(self, guild: discord.Guild, cfg: RollCallConfig) -> list[discord.Member]:
-		if cfg.tracked_role_id:
-			role = guild.get_role(cfg.tracked_role_id)
-			if role:
-				filtered = [m for m in role.members if not self._is_member_excluded(m)]
-				return sorted(filtered, key=lambda m: (m.display_name or "").lower())
+		role_ids = self._tracked_role_ids(cfg)
+		if role_ids:
+			members: dict[int, discord.Member] = {}
+			for rid in role_ids:
+				role = guild.get_role(rid)
+				if not role:
+					continue
+				for m in role.members:
+					if self._is_member_excluded(m):
+						continue
+					members[m.id] = m
+			return sorted(members.values(), key=lambda m: (m.display_name or "").lower())
 		# fallback: nobody "expected" (we'll still record reactions)
 		return []
 
@@ -793,6 +877,11 @@ class RollCallCog(commands.Cog):
 			embed.description += f"\n\n[Open full table (HTML)]({html_url})"
 		if workbook_url:
 			embed.description += f"\n[Download rollcall workbook (XLSX)]({workbook_url})"
+
+		if cfg.embed_image_url:
+			url = str(cfg.embed_image_url).strip()
+			if url.startswith("http://") or url.startswith("https://"):
+				embed.set_image(url=url)
 
 		embed.add_field(name="Ticked", value=self._chunk_list(ticked_names), inline=False)
 		if expected_ids:
@@ -1025,11 +1114,12 @@ class RollCallCog(commands.Cog):
 				member = None
 
 		# Enforce role gating on reaction ADDs.
-		# If tracked_role_id is set, only those members can tick this roll call.
-		if marked and match_cfg.tracked_role_id:
+		# If tracked roles are set, only members with any of those roles can tick this roll call.
+		required_role_ids = set(self._tracked_role_ids(match_cfg))
+		if marked and required_role_ids:
 			if not isinstance(member, discord.Member):
 				return
-			if not any(r.id == match_cfg.tracked_role_id for r in member.roles):
+			if not any(r.id in required_role_ids for r in member.roles):
 				# Best-effort: remove the reaction they added.
 				try:
 					ch = await self._get_text_channel(payload.channel_id) if payload.channel_id else None
