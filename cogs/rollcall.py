@@ -108,7 +108,7 @@ ROLLCALLS: list[RollCallConfig] = [
 	 	RollCallConfig(
 	 	key="InfantrySchool",
 	 	title="Infantry School Weekly Roll Call",
-	 	channel_id=1099806153170489485,  # set the roll call channel ID
+	 	channel_id=1098331677224345660,  # set the roll call channel ID
 		 	tracked_role_ids=(1099596178141757542,),  # role(s) allowed/expected to tick
 	 	ping_role_id=None,  # optional: role to mention when posting
 	 	embed_image_url="https://cdn.discordapp.com/attachments/1098331677224345660/1470325947562463367/10572156654_b6d4781f64_b.jpg?ex=699374ff&is=6992237f&hm=7330e9b5fcac56c81e3922840709865653e2b687f35747c65810ed4565c61af9",
