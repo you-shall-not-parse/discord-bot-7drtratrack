@@ -111,7 +111,7 @@ ROLLCALLS: list[RollCallConfig] = [
 	 	channel_id=1098331677224345660,  # set the roll call channel ID
 		 	tracked_role_ids=(1099596178141757542,),  # role(s) allowed/expected to tick
 	 	ping_role_id=None,  # optional: role to mention when posting
-	 	embed_image_url="https://cdn.discordapp.com/attachments/1098331677224345660/1470325947562463367/10572156654_b6d4781f64_b.jpg?ex=699374ff&is=6992237f&hm=7330e9b5fcac56c81e3922840709865653e2b687f35747c65810ed4565c61af9",
+	 	embed_image_url="https://cdn.discordapp.com/attachments/1237437502248452227/1472736090094960801/IMG_2754.png?ex=6993a7dd&is=6992565d&hm=fd843d3d077addff34b6575655415a31f2f191c4f8684c71370adf5c9a400d9e",
 	 ),
 	 	RollCallConfig(
 	 	key="8th",
@@ -119,7 +119,7 @@ ROLLCALLS: list[RollCallConfig] = [
 	 	channel_id=1098701359022346341,  # set the roll call channel ID
 	 	tracked_role_ids=(1099105947932168212, 1103626508645453975),  # set the TWO role IDs allowed/expected to tick
 	 	ping_role_id=None,  # optional: role to mention when posting
-	 	embed_image_url="https://cdn.discordapp.com/attachments/1098331677224345660/1470325947562463367/10572156654_b6d4781f64_b.jpg?ex=699374ff&is=6992237f&hm=7330e9b5fcac56c81e3922840709865653e2b687f35747c65810ed4565c61af9",
+	 	embed_image_url="https://cdn.discordapp.com/attachments/1098976074852999261/1444676650653450411/file_000000005384720e8f124201b4e379a9.png?ex=699316fa&is=6991c57a&hm=8a80e05652ea88fa5150df80f0b08cbbb71a0b89db034be287eec6c7813472f3",
 	 ),
 ]
 
@@ -914,7 +914,7 @@ class RollCallCog(commands.Cog):
 		if html_url:
 			embed.description += f"\n\n[Open full table (HTML)]({html_url})"
 		if workbook_url:
-			embed.description += f"\n[Download rollcall workbook (XLSX)]({workbook_url})"
+			embed.description += "\nRollcall workbook (XLSX) is posted in the admin channel — ask an admin if you need it."
 
 		if cfg.embed_image_url:
 			url = str(cfg.embed_image_url).strip()
@@ -1133,9 +1133,45 @@ class RollCallCog(commands.Cog):
 			return
 		if payload.user_id == getattr(self.bot.user, "id", None):
 			return
-		if str(payload.emoji) != str(ROLLCALL_EMOJI):
+
+		# Only enforce reactions on *our* roll call post(s).
+		is_rollcall_message = False
+		for cfg in ROLLCALLS:
+			st = self._rc_state(cfg.key)
+			if st.get("rollcall_message_id") == payload.message_id:
+				is_rollcall_message = True
+				break
+		if not is_rollcall_message:
 			return
-		await self._handle_reaction_change(payload, marked=True)
+
+		# Allow only the configured tick emoji.
+		if str(payload.emoji) == str(ROLLCALL_EMOJI):
+			await self._handle_reaction_change(payload, marked=True)
+			return
+
+		guild = self.bot.get_guild(GUILD_ID)
+		member = guild.get_member(payload.user_id) if guild else None
+		if not member and guild:
+			try:
+				member = await guild.fetch_member(payload.user_id)
+			except Exception:
+				member = None
+
+		# Best-effort: remove the invalid reaction.
+		try:
+			ch = await self._get_text_channel(payload.channel_id) if payload.channel_id else None
+			if ch and isinstance(member, discord.Member):
+				msg = await ch.fetch_message(payload.message_id)
+				await msg.remove_reaction(payload.emoji, member)
+		except Exception:
+			pass
+
+		# DM user
+		if isinstance(member, discord.Member):
+			try:
+				await member.send("you must tick only :( reaction removed")
+			except Exception:
+				pass
 
 	@commands.Cog.listener()
 	async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent):
