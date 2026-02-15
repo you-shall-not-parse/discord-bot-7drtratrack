@@ -104,6 +104,14 @@ ROLLCALLS: list[RollCallConfig] = [
 	 	ping_role_id=None,  # optional: role to mention when posting
 	 	embed_image_url="https://cdn.discordapp.com/attachments/1098976074852999261/1449441912770662491/file_000000002214722fa789165cdd45bc9b.png?ex=69934979&is=6991f7f9&hm=d67c84035d6f0685c2b7f9993167e81dec599e0be364ae927a04061c0b1a5119",
 	 ),
+	 	 RollCallConfig(
+	 	key="1-5",
+	 	title="1-5th Weekly Roll Call",
+	 	channel_id=1099806153170489485,  # set the roll call channel ID
+	 	tracked_role_ids=1259814883248177196,  # set the TWO role IDs allowed/expected to tick
+	 	ping_role_id=None,  # optional: role to mention when posting
+	 	embed_image_url="https://cdn.discordapp.com/attachments/1098976074852999261/1444515451727253544/file_00000000e5f871f488f94dd458b30c09.png?ex=69932999&is=6991d819&hm=ba814b4a530031279073ec3fd49f4a4c1e34276586553afaa33839b5fb0ff81d",
+	 ),
 ]
 
 
