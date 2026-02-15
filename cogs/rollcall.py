@@ -713,8 +713,18 @@ class RollCallCog(commands.Cog):
 		state = self._rc_state(cfg.key)
 		# If we already sent this week, don't re-post; just refresh embed/html.
 		if state.get("current_week") == week_label and isinstance(state.get("rollcall_message_id"), int):
-			await self._update_outputs_for_cfg(guild, wb, cfg, week_label=week_label, reason="already_sent", update_html=True)
-			return
+			# If the message was deleted manually, clear state so we can re-post.
+			try:
+				await channel.fetch_message(int(state["rollcall_message_id"]))
+			except discord.NotFound:
+				state["rollcall_message_id"] = None
+				state["rollcall_channel_id"] = None
+				state["html_message_id"] = None
+				state["html_channel_id"] = None
+				state["html_url"] = None
+			else:
+				await self._update_outputs_for_cfg(guild, wb, cfg, week_label=week_label, reason="already_sent", update_html=True)
+				return
 
 		ws = self._get_or_create_sheet(wb, cfg)
 		week_col = self._ensure_week_column(ws, week_label)
@@ -1113,30 +1123,33 @@ class RollCallCog(commands.Cog):
 			except Exception:
 				member = None
 
-		# Enforce role gating on reaction ADDs.
-		# If tracked roles are set, only members with any of those roles can tick this roll call.
+		# Enforce role gating.
+		# If tracked roles are set, only members with any of those roles can tick/un-tick this roll call.
+		# This MUST apply to reaction removes too, because when we remove an invalid reaction we will also
+		# receive the corresponding raw_reaction_remove event.
 		required_role_ids = set(self._tracked_role_ids(match_cfg))
-		if marked and required_role_ids:
+		if required_role_ids:
 			if not isinstance(member, discord.Member):
 				return
 			if not any(r.id in required_role_ids for r in member.roles):
-				# Best-effort: remove the reaction they added.
-				try:
-					ch = await self._get_text_channel(payload.channel_id) if payload.channel_id else None
-					if ch:
-						msg = await ch.fetch_message(payload.message_id)
-						await msg.remove_reaction(payload.emoji, member)
-				except Exception:
-					# Not fatal (requires Manage Messages to remove others' reactions)
-					pass
+				if marked:
+					# Best-effort: remove the reaction they added.
+					try:
+						ch = await self._get_text_channel(payload.channel_id) if payload.channel_id else None
+						if ch:
+							msg = await ch.fetch_message(payload.message_id)
+							await msg.remove_reaction(payload.emoji, member)
+					except Exception:
+						# Not fatal (requires Manage Messages to remove others' reactions)
+						pass
 
-				# DM user
-				try:
-					await member.send(
-						"You have reacted to the wrong roll call and don't have that role :( please contact an admin"
-					)
-				except Exception:
-					pass
+					# DM user
+					try:
+						await member.send(
+							"You have reacted to the wrong roll call and don't have that role :( please contact an admin"
+						)
+					except Exception:
+						pass
 				return
 
 		async with self._lock:
