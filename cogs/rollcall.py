@@ -9,6 +9,7 @@ from datetime import date, datetime, time, timedelta
 from typing import Optional
 
 import discord
+from discord import app_commands
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from discord.ext import commands
@@ -54,6 +55,9 @@ BACKSTOP_REFRESH_MINUTES = 30
 # State file: message IDs + last posted week so we can edit across restarts
 STATE_PATH = data_path("rollcall_state.json")
 
+# Role allowed to use /forcerollcall
+FORCE_ROLLCALL_ROLE_ID = 1213495462632361994
+
 
 @dataclass(frozen=True)
 class RollCallConfig:
@@ -89,6 +93,32 @@ class RollCallCog(commands.Cog):
 		self._start_scheduler()
 		if BACKSTOP_REFRESH_MINUTES and BACKSTOP_REFRESH_MINUTES > 0:
 			self._backstop_task = asyncio.create_task(self._backstop_loop())
+
+	def _user_can_force(self, interaction: discord.Interaction) -> bool:
+		user = interaction.user
+		if isinstance(user, discord.Member):
+			return any(r.id == FORCE_ROLLCALL_ROLE_ID for r in user.roles)
+		return False
+
+	@app_commands.command(name="forcerollcall", description="Force-run all configured roll calls now.")
+	@app_commands.guilds(discord.Object(id=GUILD_ID))
+	@app_commands.guild_only()
+	async def forcerollcall(self, interaction: discord.Interaction) -> None:
+		if interaction.guild_id != GUILD_ID:
+			await interaction.response.send_message("This command can only be used in the main guild.", ephemeral=True)
+			return
+		if not self._user_can_force(interaction):
+			await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
+			return
+
+		await interaction.response.defer(ephemeral=True, thinking=True)
+		try:
+			await self._send_rollcalls(reason="forced_command")
+			week_label = self._week_label(self._rollcall_date_for_now())
+			await interaction.followup.send(f"Forced roll call run complete for **{week_label}**.", ephemeral=True)
+		except Exception:
+			logger.exception("/forcerollcall failed")
+			await interaction.followup.send("Force roll call failed; check logs.", ephemeral=True)
 
 	def cog_unload(self):
 		if self._scheduler:
@@ -527,7 +557,7 @@ class RollCallCog(commands.Cog):
 				f"**Roll call date:** {rollcall_d.isoformat()}\n"
 				f"**React with:** {ROLLCALL_EMOJI}"
 			),
-			url=html_url if html_url else discord.Embed.Empty,
+			url=(html_url or None),
 		)
 
 		if html_url:

@@ -44,6 +44,14 @@ async def on_ready():
     try:
         synced = await bot.tree.sync()
         logging.info(f"Synced {len(synced)} command(s)")
+
+        # Also sync guild-scoped commands (they won't show up from global sync alone).
+        try:
+            main_guild = discord.Object(id=1097913605082579024)
+            guild_synced = await bot.tree.sync(guild=main_guild)
+            logging.info(f"Synced {len(guild_synced)} guild command(s) to {main_guild.id}")
+        except Exception as e:
+            logging.error(f"Failed to sync guild commands: {e}")
     except Exception as e:
         logging.error(f"Failed to sync commands: {e}")
     logging.info("------")
