@@ -101,7 +101,7 @@ ROLLCALLS: list[RollCallConfig] = [
 	 	key="1-5th",
 	 	title="1-5th Weekly Roll Call",
 	 	channel_id=1099806153170489485,  # set the roll call channel ID
-	 	tracked_role_ids=1259814883248177196,  # set the TWO role IDs allowed/expected to tick
+		 	tracked_role_ids=(1259814883248177196,),  # role(s) allowed/expected to tick
 	 	ping_role_id=None,  # optional: role to mention when posting
 	 	embed_image_url="https://cdn.discordapp.com/attachments/1098976074852999261/1444515451727253544/file_00000000e5f871f488f94dd458b30c09.png?ex=69932999&is=6991d819&hm=ba814b4a530031279073ec3fd49f4a4c1e34276586553afaa33839b5fb0ff81d",
 	 ),
@@ -109,7 +109,7 @@ ROLLCALLS: list[RollCallConfig] = [
 	 	key="InfantrySchool",
 	 	title="Infantry School Weekly Roll Call",
 	 	channel_id=1099806153170489485,  # set the roll call channel ID
-	 	tracked_role_ids=1099596178141757542,  # set the TWO role IDs allowed/expected to tick
+		 	tracked_role_ids=(1099596178141757542,),  # role(s) allowed/expected to tick
 	 	ping_role_id=None,  # optional: role to mention when posting
 	 	embed_image_url="https://cdn.discordapp.com/attachments/1098331677224345660/1470325947562463367/10572156654_b6d4781f64_b.jpg?ex=699374ff&is=6992237f&hm=7330e9b5fcac56c81e3922840709865653e2b687f35747c65810ed4565c61af9",
 	 ),
@@ -363,8 +363,19 @@ class RollCallCog(commands.Cog):
 	# -----------------
 	def _tracked_role_ids(self, cfg: RollCallConfig) -> list[int]:
 		ids: list[int] = []
-		if cfg.tracked_role_ids:
-			for rid in cfg.tracked_role_ids:
+		tri = cfg.tracked_role_ids
+		if tri is not None:
+			# Allow configs to accidentally pass a single int, and normalize it.
+			if isinstance(tri, int):
+				candidates = [tri]
+			elif isinstance(tri, str):
+				candidates = []
+			else:
+				try:
+					candidates = list(tri)
+				except TypeError:
+					candidates = []
+			for rid in candidates:
 				try:
 					ids.append(int(rid))
 				except Exception:
