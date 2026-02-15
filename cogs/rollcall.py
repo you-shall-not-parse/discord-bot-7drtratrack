@@ -90,13 +90,6 @@ class RollCallConfig:
 # Configure one entry per rollcall channel.
 ROLLCALLS: list[RollCallConfig] = [
 	 RollCallConfig(
-	     key="admin",
-	     title="Admin Weekly Roll Call",
-	     channel_id=1099806153170489485,
-	     tracked_role_id=1213495462632361994,
-	     ping_role_id=None,
-	 ),
-	 RollCallConfig(
 	 	key="22nd",
 	 	title="22nd Weekly Roll Call",
 	 	channel_id=1099806153170489485,  # set the roll call channel ID
@@ -105,12 +98,28 @@ ROLLCALLS: list[RollCallConfig] = [
 	 	embed_image_url="https://cdn.discordapp.com/attachments/1098976074852999261/1449441912770662491/file_000000002214722fa789165cdd45bc9b.png?ex=69934979&is=6991f7f9&hm=d67c84035d6f0685c2b7f9993167e81dec599e0be364ae927a04061c0b1a5119",
 	 ),
 	 	 RollCallConfig(
-	 	key="1-5",
+	 	key="1-5th",
 	 	title="1-5th Weekly Roll Call",
 	 	channel_id=1099806153170489485,  # set the roll call channel ID
 	 	tracked_role_ids=1259814883248177196,  # set the TWO role IDs allowed/expected to tick
 	 	ping_role_id=None,  # optional: role to mention when posting
 	 	embed_image_url="https://cdn.discordapp.com/attachments/1098976074852999261/1444515451727253544/file_00000000e5f871f488f94dd458b30c09.png?ex=69932999&is=6991d819&hm=ba814b4a530031279073ec3fd49f4a4c1e34276586553afaa33839b5fb0ff81d",
+	 ),
+	 	RollCallConfig(
+	 	key="InfantrySchool",
+	 	title="Infantry School Weekly Roll Call",
+	 	channel_id=1099806153170489485,  # set the roll call channel ID
+	 	tracked_role_ids=1099596178141757542,  # set the TWO role IDs allowed/expected to tick
+	 	ping_role_id=None,  # optional: role to mention when posting
+	 	embed_image_url="https://cdn.discordapp.com/attachments/1098331677224345660/1470325947562463367/10572156654_b6d4781f64_b.jpg?ex=699374ff&is=6992237f&hm=7330e9b5fcac56c81e3922840709865653e2b687f35747c65810ed4565c61af9",
+	 ),
+	 	RollCallConfig(
+	 	key="8th",
+	 	title="8th Weekly Roll Call",
+	 	channel_id=1099806153170489485,  # set the roll call channel ID
+	 	tracked_role_ids=(1099105947932168212, 1103626508645453975),  # set the TWO role IDs allowed/expected to tick
+	 	ping_role_id=None,  # optional: role to mention when posting
+	 	embed_image_url="https://cdn.discordapp.com/attachments/1098331677224345660/1470325947562463367/10572156654_b6d4781f64_b.jpg?ex=699374ff&is=6992237f&hm=7330e9b5fcac56c81e3922840709865653e2b687f35747c65810ed4565c61af9",
 	 ),
 ]
 
