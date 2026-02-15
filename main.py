@@ -94,6 +94,7 @@ async def main():
         await bot.load_extension("cogs.gohamm")        
         await bot.load_extension("cogs.GameMonCog")
         await bot.load_extension("cogs.multi_trainee_tracker")
+        await bot.load_extension("cogs.rollcall")
         await bot.start(TOKEN)
 
 if __name__ == "__main__":

@@ -11,3 +11,7 @@ aiosqlite
 aiohttp
 PyPDF2
 pdf2image
+openpyxl
+pandas
+xlrd==1.2.0
+audioop-lts
