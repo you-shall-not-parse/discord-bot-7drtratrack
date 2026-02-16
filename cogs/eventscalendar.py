@@ -504,7 +504,7 @@ class EventDisplayCog(commands.Cog):
                 # Location information
                 location_str = ""
                 if event.location:
-                    location_str = f"\n**Location:** {event.location}"
+                    location_str = f"\n**Server:** {event.location}"
                 elif event.channel:
                     location_str = f"\n**Channel:** {event.channel.mention}"
 
