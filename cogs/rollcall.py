@@ -38,6 +38,11 @@ SCHEDULE_MINUTE = 0
 # Emoji members should react with to mark attendance.
 ROLLCALL_EMOJI = "✅"
 
+# Lock roll calls after this many hours from when the roll call post is sent.
+# After lock, ✅ reactions are removed and the user is DM'd.
+# Set to 0 or None to disable locking.
+ROLLCALL_LOCK_HOURS: Optional[float] = 144.0
+
 # Where to store the attendance workbook.
 # The bot writes to .xlsx. If you have a legacy .xls, see IMPORT_LEGACY_XLS_PATH.
 WORKBOOK_PATH = data_path("rollcall.xlsx")
@@ -59,7 +64,7 @@ UPDATE_HTML_ON_REACTION = True
 UPLOAD_WORKBOOK_ON_REACTION = False
 
 # Debounce delay for reaction-driven refreshes (seconds).
-REACTION_REFRESH_DEBOUNCE_SECONDS = 15.0
+REACTION_REFRESH_DEBOUNCE_SECONDS = 30.0
 
 # Optional: where to upload the rollcall.xlsx file so users can download it.
 # If None, falls back to HTML_CHANNEL_ID (if set) or the first configured rollcall channel.
@@ -139,9 +144,15 @@ class RollCallCog(commands.Cog):
 		self._refresh_task: Optional[asyncio.Task] = None
 		self._debounce_task: Optional[asyncio.Task] = None
 
+		# Don't start the scheduler or create asyncio tasks in __init__.
+		# APScheduler jobs and create_task() require a running event loop.
+
+	async def cog_load(self) -> None:
+		# Called by discord.py when the cog is loaded (event loop is running).
 		self._start_scheduler()
 		if BACKSTOP_REFRESH_MINUTES and BACKSTOP_REFRESH_MINUTES > 0:
-			self._backstop_task = asyncio.create_task(self._backstop_loop())
+			if self._backstop_task is None or self._backstop_task.done():
+				self._backstop_task = asyncio.create_task(self._backstop_loop())
 
 	def _user_can_force(self, interaction: discord.Interaction) -> bool:
 		user = interaction.user
@@ -252,6 +263,37 @@ class RollCallCog(commands.Cog):
 		rc.setdefault("last_sent_at", None)
 		return rc
 
+	def _get_cfg_for_rollcall_message(self, message_id: int) -> tuple[Optional[RollCallConfig], Optional[dict]]:
+		for cfg in ROLLCALLS:
+			st = self._rc_state(cfg.key)
+			if st.get("rollcall_message_id") == message_id:
+				return cfg, st
+		return None, None
+
+	def _is_rollcall_locked(self, st: dict) -> bool:
+		"""Return True if the roll call should be locked based on last_sent_at."""
+		hours = ROLLCALL_LOCK_HOURS
+		if hours is None:
+			return False
+		try:
+			hours_f = float(hours)
+		except Exception:
+			return False
+		if hours_f <= 0:
+			return False
+
+		sent_at = st.get("last_sent_at")
+		if not isinstance(sent_at, str) or not sent_at.strip():
+			return False
+		try:
+			dt = datetime.fromisoformat(sent_at.strip())
+		except Exception:
+			return False
+		# We store UTC timestamps without tzinfo; treat as UTC.
+		if dt.tzinfo is not None:
+			dt = dt.astimezone(tz=None).replace(tzinfo=None)
+		return (datetime.utcnow() - dt) >= timedelta(hours=hours_f)
+
 	def _workbook_state(self) -> dict:
 		wb = self._state.setdefault("workbook", {})
 		wb.setdefault("message_id", None)
@@ -325,7 +367,19 @@ class RollCallCog(commands.Cog):
 
 			tz = pytz.UTC
 
-		self._scheduler = AsyncIOScheduler(timezone=tz)
+		# Avoid starting twice.
+		if self._scheduler and getattr(self._scheduler, "running", False):
+			return
+
+		# Bind to the currently running loop (prevents jobs running without a loop).
+		try:
+			loop = asyncio.get_running_loop()
+		except RuntimeError:
+			# If we somehow got here without a running loop, bail; cog_load should call us with a loop.
+			logger.error("RollCall scheduler start requested with no running event loop")
+			return
+
+		self._scheduler = AsyncIOScheduler(timezone=tz, event_loop=loop)
 
 		trigger = CronTrigger(
 			day_of_week=SCHEDULE_WEEKDAY,
@@ -334,10 +388,8 @@ class RollCallCog(commands.Cog):
 			timezone=tz,
 		)
 
-		def _job():
-			asyncio.create_task(self._scheduled_send())
-
-		self._scheduler.add_job(_job, trigger=trigger, id="weekly_rollcall", replace_existing=True)
+		# Schedule the coroutine directly on the asyncio scheduler.
+		self._scheduler.add_job(self._scheduled_send, trigger=trigger, id="weekly_rollcall", replace_existing=True)
 		self._scheduler.start()
 
 	async def _backstop_loop(self) -> None:
@@ -1182,17 +1234,41 @@ class RollCallCog(commands.Cog):
 			return
 
 		# Only enforce reactions on *our* roll call post(s).
-		is_rollcall_message = False
-		for cfg in ROLLCALLS:
-			st = self._rc_state(cfg.key)
-			if st.get("rollcall_message_id") == payload.message_id:
-				is_rollcall_message = True
-				break
-		if not is_rollcall_message:
+		match_cfg, st = self._get_cfg_for_rollcall_message(payload.message_id)
+		if not match_cfg or not st:
 			return
 
 		# Allow only the configured tick emoji.
 		if str(payload.emoji) == str(ROLLCALL_EMOJI):
+			# Enforce rollcall lock.
+			if self._is_rollcall_locked(st):
+				guild = self.bot.get_guild(GUILD_ID)
+				member = guild.get_member(payload.user_id) if guild else None
+				if not member and guild:
+					try:
+						member = await guild.fetch_member(payload.user_id)
+					except Exception:
+						member = None
+
+				# Best-effort: remove the reaction they added.
+				try:
+					ch = await self._get_text_channel(payload.channel_id) if payload.channel_id else None
+					if ch and isinstance(member, discord.Member):
+						msg = await ch.fetch_message(payload.message_id)
+						await msg.remove_reaction(payload.emoji, member)
+				except Exception:
+					pass
+
+				# DM user
+				if isinstance(member, discord.Member):
+					try:
+						await member.send(
+							"this roll call is locked sorry :( make be sure to tick next week!"
+						)
+					except Exception:
+						pass
+				return
+
 			await self._handle_reaction_change(payload, marked=True)
 			return
 
@@ -1225,6 +1301,11 @@ class RollCallCog(commands.Cog):
 		if payload.guild_id != GUILD_ID:
 			return
 		if str(payload.emoji) != str(ROLLCALL_EMOJI):
+			return
+
+		# If the rollcall is locked, ignore removes so attendance can't be changed after the deadline.
+		_cfg, st = self._get_cfg_for_rollcall_message(payload.message_id)
+		if st and self._is_rollcall_locked(st):
 			return
 		await self._handle_reaction_change(payload, marked=False)
 
