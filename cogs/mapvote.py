@@ -457,34 +457,15 @@ class MapVote(commands.Cog):
             print("[MapVote] tick_task started")
             
     # --------------------------------------------------
-    # Per-player broadcast using message_player
+    # Broadcast using message_all_players
     # --------------------------------------------------
     async def broadcast_to_all(self, message: str):
         if not message:
             return
 
-        data = rcon_get("get_players")
-        if not data or data.get("error") or data.get("failed"):
-            print("[MapVote] broadcast_to_all: failed to get players:", data)
-            return
-
-        players = data.get("result") or []
-        if not players:
-            return
-
-        for p in players:
-            uid = p.get("player_id")
-            if not uid:
-                continue
-
-            payload = {
-                "player_id": uid,
-                "message": message,
-                "by": "7DRBot",
-                "save_message": False,
-            }
-            _ = rcon_post("message_player", payload)
-            await asyncio.sleep(0.1)
+        resp = rcon_post("message_all_players", {"message": message})
+        if not resp or resp.get("error") or resp.get("failed"):
+            print("[MapVote] broadcast_to_all: message_all_players failed:", resp)
 
     # --------------------------------------------------
     # Slash commands
