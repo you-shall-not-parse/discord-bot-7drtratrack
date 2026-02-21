@@ -44,12 +44,12 @@ NAMESHAME_ADMIN_ROLE_ID = 1213495462632361994  # set to your admin role ID
 
 # Preset reasons for the reason dropdown
 NAMESHAME_REASON_OPTIONS: list[str] = [
-	"Excessive Teamkilling / Griefing",
+	"Excessive Teamkilling / General Griefing",
 	"Racism / Hate speech",
 	"Cheating / Exploiting",
 	"Toxic / Harassment",
-	"No Show / AFK",
-	"Other (provide details to an NCO)",
+	"No Show",
+	"Other (provide details to an SNCO via DM)",
 ]
 
 # Persistent state file (main embed message id, approval channel id, strikes/history)
