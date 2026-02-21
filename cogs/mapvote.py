@@ -393,6 +393,30 @@ class MapVote(commands.Cog):
         # Cooldown to avoid immediate re-posts if Discord returns stale fetch
         self._last_create_ts: float | None = None
 
+    def _fast_forward_match_log_cursor(self):
+        """Advance last_processed_log_id to the newest match log entry.
+
+        This prevents replaying a backlog of Match Start/Ended logs after the
+        bot has been disabled/offline for a while.
+        """
+        logs_data = rcon_get_recent_logs(["Match Start", "Match Ended", "Match"], limit=1)
+        if not logs_data or logs_data.get("error") or logs_data.get("failed"):
+            return
+
+        logs = logs_data.get("result", {}).get("logs", []) or []
+        if not logs:
+            return
+
+        latest_id = 0
+        for log in logs:
+            log_id = log.get("timestamp_ms") or log.get("id") or 0
+            if isinstance(log_id, (int, float)) and log_id > latest_id:
+                latest_id = int(log_id)
+
+        if latest_id and (self.last_processed_log_id is None or latest_id > self.last_processed_log_id):
+            self.last_processed_log_id = latest_id
+            self._save_state_file()
+
     # ---------------- Persistence helpers ----------------
 
     def _save_state_file(self):
@@ -442,6 +466,13 @@ class MapVote(commands.Cog):
         # Ensure initial embed exists in some state (fresh)
         await self.ensure_initial_embed()
 
+        # Prevent replaying a backlog of match logs after downtime.
+        # We'll derive the current state from gamestate instead.
+        try:
+            self._fast_forward_match_log_cursor()
+        except Exception as e:
+            print(f"[MapVote] Failed to fast-forward match log cursor: {e}")
+
         # Force-start vote if match is active and no vote running after a restart
         try:
             gs = await fetch_gamestate()
@@ -481,6 +512,10 @@ class MapVote(commands.Cog):
     async def mapvote_enable_cmd(self, interaction: discord.Interaction):
         # If already enabled, still force-start vote if a match is active and no vote running
         await interaction.response.send_message("Enabling map voting…", ephemeral=True)
+
+        # Do NOT replay historical match logs when coming back online.
+        # Fast-forward the cursor first, then enable voting.
+        self._fast_forward_match_log_cursor()
 
         self.mapvote_enabled = True
         self._save_state_file()
