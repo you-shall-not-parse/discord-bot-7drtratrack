@@ -32,6 +32,16 @@ NAMESHAME_APPROVER_ROLE_IDS: set[int] = {
 	1213495462632361994,
 }
 
+# Preset reasons for the reason dropdown
+NAMESHAME_REASON_OPTIONS: list[str] = [
+	"Teamkilling / Griefing",
+	"Racism / Hate speech",
+	"Cheating / Exploiting",
+	"Toxic / Harassment",
+	"Offensive name",
+	"Other (see notes)",
+]
+
 # Persistent state file (main embed message id, approval channel id, strikes/history)
 NAMESHAME_STATE_FILE = data_path("nameshame_state.json")
 
@@ -70,28 +80,32 @@ def _save_state(state: dict) -> None:
 		print(f"[NameShame] Failed to save state: {e}")
 
 
-def _parse_user_id(raw: str) -> int | None:
-	if not raw:
-		return None
-	raw = raw.strip()
+def _reason_options(selected_reason: str | None) -> list[discord.SelectOption]:
+	options: list[discord.SelectOption] = []
+	for idx, label in enumerate(NAMESHAME_REASON_OPTIONS):
+		val = str(idx)
+		options.append(
+			discord.SelectOption(
+				label=label[:100],
+				value=val,
+				default=(label == selected_reason),
+			)
+		)
+	return options
 
-	m = re.match(r"^<@!?(\d+)>$", raw)
-	if m:
-		return int(m.group(1))
 
-	if raw.isdigit():
-		try:
-			return int(raw)
-		except Exception:
-			return None
-
-	m = re.search(r"(\d{15,25})", raw)
-	if m:
-		try:
-			return int(m.group(1))
-		except Exception:
-			return None
-	return None
+async def _safe_ephemeral_reply(interaction: discord.Interaction, content: str) -> None:
+	"""Send an ephemeral reply or followup without throwing if the interaction expired."""
+	try:
+		if interaction.response.is_done():
+			await interaction.followup.send(content, ephemeral=True)
+		else:
+			await interaction.response.send_message(content, ephemeral=True)
+	except discord.NotFound:
+		# Interaction expired / already gone
+		return
+	except Exception:
+		return
 
 
 # --------------------------------------------------
@@ -145,64 +159,143 @@ class PendingReport:
 # --------------------------------------------------
 
 
-class ReportModal(discord.ui.Modal, title="Report a player"):
-	player = discord.ui.TextInput(
-		label="Player (mention or Discord ID)",
-		placeholder="e.g. @Player or 123456789012345678",
-		max_length=100,
-	)
-	reason = discord.ui.TextInput(
-		label="Reason",
-		placeholder="What happened? Be specific.",
-		style=discord.TextStyle.paragraph,
-		max_length=1000,
-	)
 
+class ReportPlayerSelect(discord.ui.UserSelect):
+	def __init__(self, view: "ReportFlowView"):
+		super().__init__(placeholder="Select a player…", min_values=1, max_values=1)
+		self.flow_view = view
+
+	async def callback(self, interaction: discord.Interaction):
+		target = self.values[0] if self.values else None
+		target_id = getattr(target, "id", None)
+		if not target_id:
+			return await interaction.response.send_message("Invalid selection.", ephemeral=True)
+
+		self.flow_view.selected_target_user_id = int(target_id)
+		await self.flow_view.refresh_message(interaction)
+
+
+class ReportReasonSelect(discord.ui.Select):
+	def __init__(self, view: "ReportFlowView"):
+		self.flow_view = view
+		super().__init__(
+			placeholder="Select a reason…",
+			custom_id="nameshame:reason",
+			min_values=1,
+			max_values=1,
+			options=_reason_options(view.selected_reason),
+		)
+
+	async def callback(self, interaction: discord.Interaction):
+		idx = int(self.values[0])
+		idx = max(0, min(idx, len(NAMESHAME_REASON_OPTIONS) - 1))
+		self.flow_view.selected_reason = NAMESHAME_REASON_OPTIONS[idx]
+		await self.flow_view.refresh_message(interaction)
+
+
+class ReportFlowView(discord.ui.View):
 	def __init__(self, cog: "NameShame"):
-		super().__init__()
+		super().__init__(timeout=180)
 		self.cog = cog
+		self.selected_target_user_id: int | None = None
+		self.selected_reason: str | None = None
+		self.submitted: bool = False
 
-	async def on_submit(self, interaction: discord.Interaction):
+		self.player_select = ReportPlayerSelect(self)
+		self.reason_select = ReportReasonSelect(self)
+		self.add_item(self.player_select)
+		self.add_item(self.reason_select)
+
+		self.submit_button = discord.ui.Button(
+			label="Submit",
+			style=discord.ButtonStyle.success,
+			custom_id="nameshame:submit",
+			disabled=True,
+		)
+		self.submit_button.callback = self._submit
+		self.add_item(self.submit_button)
+
+		self.cancel_button = discord.ui.Button(
+			label="Cancel",
+			style=discord.ButtonStyle.secondary,
+			custom_id="nameshame:cancel",
+		)
+		self.cancel_button.callback = self._cancel
+		self.add_item(self.cancel_button)
+
+	def _content(self) -> str:
+		player_txt = f"<@{self.selected_target_user_id}>" if self.selected_target_user_id else "(not selected)"
+		reason_txt = self.selected_reason if self.selected_reason else "(not selected)"
+		return f"**Player:** {player_txt}\n**Reason:** {reason_txt}"
+
+	def _sync_controls(self):
+		ready = bool(self.selected_target_user_id and self.selected_reason) and not self.submitted
+		self.submit_button.disabled = not ready
+		self.player_select.disabled = self.submitted
+		self.reason_select.disabled = self.submitted
+		# Refresh reason options to show the selected one as default ("sticks")
+		self.reason_select.options = _reason_options(self.selected_reason)
+		self.cancel_button.disabled = self.submitted
+
+	async def refresh_message(self, interaction: discord.Interaction):
+		self._sync_controls()
+		try:
+			await interaction.response.edit_message(content=self._content(), view=self)
+		except Exception:
+			# Fallback when already responded
+			try:
+				await interaction.edit_original_response(content=self._content(), view=self)
+			except Exception:
+				return
+
+	async def _cancel(self, interaction: discord.Interaction):
+		self.submitted = True
+		self._sync_controls()
+		try:
+			await interaction.response.edit_message(content="Cancelled.", view=None)
+		except Exception:
+			try:
+				await interaction.edit_original_response(content="Cancelled.", view=None)
+			except Exception:
+				return
+
+	async def _submit(self, interaction: discord.Interaction):
 		if not isinstance(interaction.user, discord.Member):
-			return await interaction.response.send_message(
-				"Reporting must be done inside the server.",
-				ephemeral=True,
-			)
+			return await _safe_ephemeral_reply(interaction, "Reporting must be done inside the server.")
 
 		if NAMESHAME_REPORTER_ROLE_IDS:
 			allowed_roles = {rid for rid in NAMESHAME_REPORTER_ROLE_IDS if rid}
 			if allowed_roles and not any(r.id in allowed_roles for r in interaction.user.roles):
-				return await interaction.response.send_message(
-					"You are not allowed to submit reports.",
-					ephemeral=True,
-				)
+				return await _safe_ephemeral_reply(interaction, "You are not allowed to submit reports.")
 
 		if not self.cog.approval_channel_id:
-			return await interaction.response.send_message(
+			return await _safe_ephemeral_reply(
+				interaction,
 				"Reporting is not configured yet. Set `NAMESHAME_APPROVAL_CHANNEL_ID` in the cog.",
-				ephemeral=True,
 			)
 
-		target_id = _parse_user_id(str(self.player.value))
-		if not target_id:
-			return await interaction.response.send_message(
-				"Please mention the player or paste their Discord user ID.",
-				ephemeral=True,
-			)
+		if not self.selected_target_user_id or not self.selected_reason:
+			return await _safe_ephemeral_reply(interaction, "Select a player and a reason first.")
 
-		reason = str(self.reason.value).strip()
-		if not reason:
-			return await interaction.response.send_message(
-				"Please provide a reason.",
-				ephemeral=True,
-			)
+		# Acknowledge quickly to avoid interaction expiry
+		try:
+			if not interaction.response.is_done():
+				await interaction.response.defer(ephemeral=True)
+		except Exception:
+			pass
 
-		await interaction.response.send_message("Report submitted for approval.", ephemeral=True)
 		await self.cog.create_pending_report(
 			interaction=interaction,
-			target_user_id=target_id,
-			reason=reason,
+			target_user_id=int(self.selected_target_user_id),
+			reason=str(self.selected_reason),
 		)
+
+		self.submitted = True
+		self._sync_controls()
+		try:
+			await interaction.edit_original_response(content=f"Submitted for approval.\n\n{self._content()}", view=self)
+		except Exception:
+			return
 
 
 class DetailsSelect(discord.ui.Select):
@@ -245,7 +338,11 @@ class NameShameMainView(discord.ui.View):
 
 	@discord.ui.button(label="Report Player", style=discord.ButtonStyle.danger, custom_id="nameshame:report")
 	async def report_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-		await interaction.response.send_modal(ReportModal(self.cog))
+		await interaction.response.send_message(
+			content="Select a player and a reason, then submit:",
+			ephemeral=True,
+			view=ReportFlowView(self.cog),
+		)
 
 
 class ApprovalView(discord.ui.View):
@@ -257,13 +354,30 @@ class ApprovalView(discord.ui.View):
 	@discord.ui.button(label="Approve", style=discord.ButtonStyle.success, custom_id="nameshame:approve")
 	async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
 		if not await self.cog.is_approver(interaction):
-			return await interaction.response.send_message("You cannot approve reports.", ephemeral=True)
+			return await _safe_ephemeral_reply(interaction, "You cannot approve reports.")
+
+		# Acknowledge immediately to avoid "Unknown interaction" if processing takes time.
+		try:
+			if not interaction.response.is_done():
+				await interaction.response.defer(ephemeral=True)
+		except discord.NotFound:
+			return
+		except Exception:
+			pass
 		await self.cog.approve_report(interaction, self.pending)
 
 	@discord.ui.button(label="Reject", style=discord.ButtonStyle.secondary, custom_id="nameshame:reject")
 	async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
 		if not await self.cog.is_approver(interaction):
-			return await interaction.response.send_message("You cannot reject reports.", ephemeral=True)
+			return await _safe_ephemeral_reply(interaction, "You cannot reject reports.")
+
+		try:
+			if not interaction.response.is_done():
+				await interaction.response.defer(ephemeral=True)
+		except discord.NotFound:
+			return
+		except Exception:
+			pass
 		await self.cog.reject_report(interaction, self.pending)
 
 
@@ -528,7 +642,7 @@ class NameShame(commands.Cog):
 		except Exception:
 			pass
 
-		await interaction.response.send_message("Approved and strike added.", ephemeral=True)
+		await _safe_ephemeral_reply(interaction, "Approved and strike added.")
 		guild = self.bot.get_guild(GUILD_ID)
 		await self.refresh_main_message(guild)
 
@@ -543,7 +657,7 @@ class NameShame(commands.Cog):
 		except Exception:
 			pass
 
-		await interaction.response.send_message("Rejected.", ephemeral=True)
+		await _safe_ephemeral_reply(interaction, "Rejected.")
 
 async def setup(bot: commands.Bot):
 	await bot.add_cog(NameShame(bot))
