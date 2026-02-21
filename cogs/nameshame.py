@@ -616,17 +616,20 @@ class NameShame(commands.Cog):
 			timestamp=datetime.now(timezone.utc),
 			description=(
 				"Use **Report Player** to submit a report with a reason.\n"
-				"Reports are reviewed by staff in the <#1097920441022152774> channel. You may be asked to provide additional details.\n\n"
+				"Reports are reviewed by staff in the <#1097920406398185512> channel. You may be asked to provide additional details.\n\n"
 				"Use the dropdown to view **who reported**, **why**, and **when** for a player."
 			),
 		)
 
 		reports = _get_reports_root(self.state)
 		items = sorted(reports.items(), key=_player_sort_key)
-		items = [it for it in items if int((it[1] or {}).get("strikes") or 0) > 0 or (it[1] or {}).get("history")]
+		items = [it for it in items if int((it[1] or {}).get("strikes") or 0) > 0]
 
 		if not items:
-			embed.add_field(name="No reports yet", value="No approved reports have been logged.", inline=False)
+			if reports:
+				embed.add_field(name="No active strikes", value="Nobody currently has strikes (0-strike entries are hidden).", inline=False)
+			else:
+				embed.add_field(name="No reports yet", value="No approved reports have been logged.", inline=False)
 			return embed
 
 		lines: list[str] = []

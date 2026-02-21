@@ -20,7 +20,7 @@ load_dotenv()
 GUILD_ID = 1097913605082579024
 MAPVOTE_CHANNEL_ID = 1441751747935735878
 # Log destination can be a channel OR a thread
-MAPVOTE_LOG_CHANNEL_ID = 1474791517829857444
+MAPVOTE_LOG_CHANNEL_ID = 1098525492631572567
 
 # Role that can use /mapvote_* commands (plus admins)
 MAPVOTE_ADMIN_ROLE_ID = 1279832920479109160  # set this to your role ID
