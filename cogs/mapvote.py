@@ -19,7 +19,8 @@ load_dotenv()
 
 GUILD_ID = 1097913605082579024
 MAPVOTE_CHANNEL_ID = 1441751747935735878
-MAPVOTE_LOG_CHANNEL_ID = 1456686010841960579
+# Log destination can be a channel OR a thread
+MAPVOTE_LOG_CHANNEL_ID = 1474791517829857444
 
 # Role that can use /mapvote_* commands (plus admins)
 MAPVOTE_ADMIN_ROLE_ID = 1279832920479109160  # set this to your role ID
@@ -783,9 +784,15 @@ class MapVote(commands.Cog):
             print("[MapVote] end_vote_and_queue called with no channel")
             return
 
-        # Resolve log channel for CRCON responses
+        # Resolve log destination for CRCON responses (can be a thread)
         log_channel = self.bot.get_channel(MAPVOTE_LOG_CHANNEL_ID)
-        if not isinstance(log_channel, discord.TextChannel):
+        if log_channel is None:
+            try:
+                log_channel = await self.bot.fetch_channel(MAPVOTE_LOG_CHANNEL_ID)
+            except Exception:
+                log_channel = None
+
+        if not isinstance(log_channel, (discord.TextChannel, discord.Thread)):
             log_channel = channel  # Fallback to vote channel
 
         winner_id = None
