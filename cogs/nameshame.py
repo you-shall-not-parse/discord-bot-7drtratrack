@@ -17,10 +17,10 @@ from data_paths import data_path
 GUILD_ID = 1097913605082579024
 
 # Where the main "strikes" embed lives
-NAMESHAME_MAIN_CHANNEL_ID = 1099806153170489485  # e.g. 123... (text channel ID)
+NAMESHAME_MAIN_CHANNEL_ID = 1394274144547508344  # e.g. 123... (text channel ID)
 
 # Where approval messages get sent (can be a channel OR a thread ID)
-NAMESHAME_APPROVAL_CHANNEL_ID = 1099806153170489485  # e.g. 123...
+NAMESHAME_APPROVAL_CHANNEL_ID = 1097920406398185512  # e.g. 123...
 
 # Restrict who can submit reports by role. Leave empty to allow anyone.
 NAMESHAME_REPORTER_ROLE_IDS: set[int] = {
