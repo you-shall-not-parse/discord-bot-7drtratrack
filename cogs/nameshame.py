@@ -210,16 +210,28 @@ class DetailsSelect(discord.ui.Select):
 		self.cog = cog
 
 		options = cog.build_details_options()
+		disabled = len(options) == 0
+		if disabled:
+			options = [
+				discord.SelectOption(
+					label="No reports yet",
+					value="0",
+					description="No approved reports have been logged.",
+				)
+			]
 		super().__init__(
 			placeholder="View details for a reported player…",
 			custom_id="nameshame:details",
 			min_values=1,
 			max_values=1,
 			options=options,
-			disabled=(len(options) == 0),
+			disabled=disabled,
 		)
 
 	async def callback(self, interaction: discord.Interaction):
+		if self.values and self.values[0] == "0":
+			return await interaction.response.send_message("No reports yet.", ephemeral=True)
+
 		user_id = int(self.values[0])
 		embed = await self.cog.build_player_details_embed(interaction.guild, user_id)
 		await interaction.response.send_message(embed=embed, ephemeral=True)
