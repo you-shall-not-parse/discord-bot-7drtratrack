@@ -606,7 +606,9 @@ class MapVote(commands.Cog):
             # Ensure we're still in the same match (if match_id is known)
             if match_id is not None:
                 current_match_id = self._get_latest_match_start_id()
-                if current_match_id != match_id:
+                # If we can't read logs right now, don't abort the broadcast.
+                # We'll send best-effort rather than silently skipping.
+                if current_match_id is not None and current_match_id != match_id:
                     return
 
                 already_sent = getattr(self, sent_attr, None)
