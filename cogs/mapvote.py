@@ -29,14 +29,19 @@ MAPVOTE_ADMIN_ROLE_ID = 1279832920479109160  # set this to your role ID
 VOTE_END_OFFSET_SECONDS = 120
 
 # Embed update speed
-EMBED_UPDATE_INTERVAL = 2
+EMBED_UPDATE_INTERVAL = 4
 
 # How many map options to show
 OPTIONS_PER_VOTE = 20
 
+# Show voter nicknames alongside vote counts in the embed.
+# Names are captured at vote-time (no extra API calls).
+SHOW_VOTER_NAMES_IN_EMBED = True
+MAX_VOTER_NAMES_PER_MAP = 8
+
 # Delay the in-game "vote started" broadcast this many minutes into the match.
 # This is sent once per match.
-BROADCAST_START_DELAY_MINUTES = 5
+BROADCAST_START_DELAY_MINUTES = 1
 
 # --------------------------------------------------
 # IN-GAME BROADCASTS (CRCON message_all_players)
@@ -323,6 +328,7 @@ class VoteState:
 
         self.options: dict[str, str] = {}       # pretty → map_id
         self.user_votes: dict[int, str] = {}    # user_id → map_id
+        self.user_display_names: dict[int, str] = {}  # user_id → display name
         self.vote_counts: dict[str, int] = {}   # map_id → int
 
     def reset_for_match(self, gs: dict):
@@ -343,15 +349,19 @@ class VoteState:
         self.warning_sent = False
 
         self.user_votes.clear()
+        self.user_display_names.clear()
         self.vote_counts.clear()
 
     def set_options(self, mapping: dict[str, str]):
         self.options = mapping
 
-    def record_vote(self, user_id: int, map_id: str):
+    def record_vote(self, user_id: int, map_id: str, display_name: str | None = None):
         old = self.user_votes.get(user_id)
         if old == map_id:
             return
+
+        if display_name:
+            self.user_display_names[user_id] = display_name
 
         # remove old vote
         if old:
@@ -405,7 +415,10 @@ class MapVoteSelect(discord.ui.Select):
             )
 
         map_id = self.values[0]
-        self.state.record_vote(interaction.user.id, map_id)
+        display_name = None
+        if isinstance(interaction.user, discord.Member):
+            display_name = interaction.user.display_name
+        self.state.record_vote(interaction.user.id, map_id, display_name=display_name)
 
         await interaction.response.send_message(
             f"Your vote has been recorded.",
@@ -440,8 +453,10 @@ class MapVote(commands.Cog):
         # If previously stored small incremental IDs, reset to None so we don't skip timestamp_ms logs
         if self.last_processed_log_id and self.last_processed_log_id < 10_000_000_000:
             self.last_processed_log_id = None
-        self.last_warning_msg_id: int | None = None
-        self.last_winner_msg_id: int | None = None
+
+        # Embed-only notices (replaces standalone Discord messages)
+        self._embed_vote_notice: str | None = None
+        self._embed_last_result: str | None = None
 
         # UI view
         self.vote_view: MapVoteView | None = None
@@ -500,19 +515,16 @@ class MapVote(commands.Cog):
         if self.tick_task.is_running():
             self.tick_task.cancel()
 
-        self._cancel_broadcast_start_task()
-        self._cancel_broadcast_50_task()
+        self._cancel_task("_broadcast_start_task", extra_reset_attrs=["_broadcast_start_scheduled_for_match_id"])
+        self._cancel_task("_broadcast_50_task")
 
-    def _cancel_broadcast_start_task(self):
-        if self._broadcast_start_task and not self._broadcast_start_task.done():
-            self._broadcast_start_task.cancel()
-        self._broadcast_start_task = None
-        self._broadcast_start_scheduled_for_match_id = None
-
-    def _cancel_broadcast_50_task(self):
-        if self._broadcast_50_task and not self._broadcast_50_task.done():
-            self._broadcast_50_task.cancel()
-        self._broadcast_50_task = None
+    def _cancel_task(self, task_attr: str, *, extra_reset_attrs: list[str] | None = None):
+        task = getattr(self, task_attr, None)
+        if task and not task.done():
+            task.cancel()
+        setattr(self, task_attr, None)
+        for attr in extra_reset_attrs or []:
+            setattr(self, attr, None)
 
     def _get_latest_match_start_id(self) -> int | None:
         """Return timestamp_ms/id of the latest Match Start log entry."""
@@ -539,11 +551,20 @@ class MapVote(commands.Cog):
 
         # If we can't identify the match, just schedule from "now" as best-effort.
         if not match_id:
-            self._cancel_broadcast_start_task()
+            self._cancel_task("_broadcast_start_task", extra_reset_attrs=["_broadcast_start_scheduled_for_match_id"])
             delay_minutes = float(cfg.get("delay_minutes", BROADCAST_START_DELAY_MINUTES) or 0)
             delay_seconds = max(0, int(delay_minutes * 60))
             self._broadcast_start_scheduled_for_match_id = None
-            self._broadcast_start_task = asyncio.create_task(self._broadcast_start_after_delay(None, float(delay_seconds)))
+            self._broadcast_start_task = asyncio.create_task(
+                self._broadcast_after_delay(
+                    key="START",
+                    match_id=None,
+                    delay_seconds=float(delay_seconds),
+                    require_vote_active=True,
+                    sent_attr="_broadcast_start_sent_for_match_id",
+                    fmt_kwargs={},
+                )
+            )
             return
 
         if self._broadcast_start_sent_for_match_id == match_id:
@@ -555,7 +576,7 @@ class MapVote(commands.Cog):
         ):
             return
 
-        self._cancel_broadcast_start_task()
+        self._cancel_task("_broadcast_start_task", extra_reset_attrs=["_broadcast_start_scheduled_for_match_id"])
 
         delay_minutes = float(cfg.get("delay_minutes", BROADCAST_START_DELAY_MINUTES) or 0)
         delay_sec = max(0, int(delay_minutes * 60))
@@ -564,9 +585,28 @@ class MapVote(commands.Cog):
         remaining = max(0.0, delay_sec - elapsed_sec)
 
         self._broadcast_start_scheduled_for_match_id = match_id
-        self._broadcast_start_task = asyncio.create_task(self._broadcast_start_after_delay(match_id, remaining))
+        self._broadcast_start_task = asyncio.create_task(
+            self._broadcast_after_delay(
+                key="START",
+                match_id=match_id,
+                delay_seconds=float(remaining),
+                require_vote_active=True,
+                sent_attr="_broadcast_start_sent_for_match_id",
+                fmt_kwargs={},
+            )
+        )
 
-    async def _broadcast_start_after_delay(self, match_id: int | None, delay_seconds: float):
+    async def _broadcast_after_delay(
+        self,
+        *,
+        key: str,
+        match_id: int | None,
+        delay_seconds: float,
+        require_vote_active: bool,
+        sent_attr: str,
+        fmt_kwargs: dict,
+    ):
+        """Sleep, validate match, dedupe, then send a scheduled broadcast."""
         try:
             if delay_seconds > 0:
                 await asyncio.sleep(delay_seconds)
@@ -576,20 +616,24 @@ class MapVote(commands.Cog):
                 current_match_id = self._get_latest_match_start_id()
                 if current_match_id != match_id:
                     return
-                if self._broadcast_start_sent_for_match_id == match_id:
+
+                already_sent = getattr(self, sent_attr, None)
+                if already_sent == match_id:
                     return
 
-            # Only send while a vote is active + enabled
-            if not self.mapvote_enabled or not self.state.active:
+            # Only send while enabled; optionally require vote active (START)
+            if not self.mapvote_enabled:
+                return
+            if require_vote_active and not self.state.active:
                 return
 
-            await self.send_broadcast("START")
+            await self.send_broadcast(key, **(fmt_kwargs or {}))
             if match_id is not None:
-                self._broadcast_start_sent_for_match_id = match_id
+                setattr(self, sent_attr, match_id)
         except asyncio.CancelledError:
             return
         except Exception as e:
-            print(f"[MapVote] start broadcast task error: {e}")
+            print(f"[MapVote] {key} broadcast task error: {e}")
 
     def _is_score_five_zero(self, gs: dict | None) -> bool:
         if not gs:
@@ -610,32 +654,18 @@ class MapVote(commands.Cog):
         if match_id and self._broadcast_50_sent_for_match_id == match_id:
             return
 
-        self._cancel_broadcast_50_task()
+        self._cancel_task("_broadcast_50_task")
         delay_seconds = float(cfg.get("delay_seconds", 0) or 0)
         self._broadcast_50_task = asyncio.create_task(
-            self._broadcast_premature_50_after_delay(match_id, delay_seconds, next_map_pretty)
+            self._broadcast_after_delay(
+                key="PREMATURE_50",
+                match_id=match_id,
+                delay_seconds=delay_seconds,
+                require_vote_active=False,
+                sent_attr="_broadcast_50_sent_for_match_id",
+                fmt_kwargs={"next_map": next_map_pretty},
+            )
         )
-
-    async def _broadcast_premature_50_after_delay(self, match_id: int | None, delay_seconds: float, next_map_pretty: str):
-        try:
-            if delay_seconds > 0:
-                await asyncio.sleep(delay_seconds)
-
-            # Avoid sending late if a new match already started
-            if match_id is not None:
-                current_match_id = self._get_latest_match_start_id()
-                if current_match_id != match_id:
-                    return
-                if self._broadcast_50_sent_for_match_id == match_id:
-                    return
-
-            await self.send_broadcast("PREMATURE_50", next_map=next_map_pretty)
-            if match_id is not None:
-                self._broadcast_50_sent_for_match_id = match_id
-        except asyncio.CancelledError:
-            return
-        except Exception as e:
-            print(f"[MapVote] premature_50 broadcast task error: {e}")
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -704,15 +734,11 @@ class MapVote(commands.Cog):
         # Some CRCON variants return a raw JSON boolean.
         if isinstance(resp, bool):
             if not resp:
-                print("[MapVote] broadcast_to_all: message_all_players returned False")
+                print("[MapVote] message_all_players: message_all_players returned False")
             return
 
         if not resp or (isinstance(resp, dict) and (resp.get("error") or resp.get("failed"))):
             print("[MapVote] message_all_players: message_all_players failed:", resp)
-
-    async def broadcast_to_all(self, message: str):
-        """Back-compat alias."""
-        await self.message_all_players(message)
 
     async def send_broadcast(self, key: str, **fmt_kwargs):
         cfg = BROADCAST_SCHEDULE.get(key)
@@ -791,8 +817,8 @@ class MapVote(commands.Cog):
             )
         
         self.mapvote_enabled = False
-        self._cancel_broadcast_start_task()
-        self._cancel_broadcast_50_task()
+        self._cancel_task("_broadcast_start_task", extra_reset_attrs=["_broadcast_start_scheduled_for_match_id"])
+        self._cancel_task("_broadcast_50_task")
         self.state.active = False
         self.state.warning_sent = False
         self._save_state_file()
@@ -886,6 +912,12 @@ class MapVote(commands.Cog):
                 desc += "\n"
 
             desc += f"**Live votes:**\n{votetext}"
+
+            # Inline notices (instead of standalone Discord messages)
+            if self._embed_vote_notice:
+                desc += f"\n\n**Vote notice:** {self._embed_vote_notice}"
+            if self._embed_last_result:
+                desc += f"\n\n**Last update:** {self._embed_last_result}"
             embed.description = desc
 
             # Set map image
@@ -896,6 +928,10 @@ class MapVote(commands.Cog):
         else:
             embed.description = "Unknown status."
             embed.set_image(url=OFFLINE_CDN_IMAGE)
+
+        # Show the last result outside ACTIVE as well (keeps info visible without extra messages)
+        if status in ("DISABLED", "STANDBY") and self._embed_last_result:
+            embed.description = (embed.description or "") + f"\n\n**Last update:** {self._embed_last_result}"
 
         return embed
 
@@ -912,10 +948,36 @@ class MapVote(commands.Cog):
             key=lambda x: x[1],
             reverse=True
         )
+
+        # Reverse index: map_id -> [user_ids]
+        voters_by_map: dict[str, list[int]] = {}
+        if SHOW_VOTER_NAMES_IN_EMBED and self.state.user_votes:
+            for user_id, voted_map_id in self.state.user_votes.items():
+                voters_by_map.setdefault(voted_map_id, []).append(user_id)
+
         lines = []
         for map_id, count in sorted_votes:
             pretty = next((p for p, mid in MAPS.items() if mid == map_id), map_id)
-            lines.append(f"**{pretty}** — {count} vote{'s' if count != 1 else ''}")
+
+            suffix = f"{count} vote{'s' if count != 1 else ''}"
+            if SHOW_VOTER_NAMES_IN_EMBED:
+                voter_ids = voters_by_map.get(map_id, [])
+                if voter_ids:
+                    # Stable-ish ordering for readability
+                    voter_ids = sorted(voter_ids)
+
+                    names: list[str] = []
+                    for uid in voter_ids[:MAX_VOTER_NAMES_PER_MAP]:
+                        nm = self.state.user_display_names.get(uid)
+                        names.append(nm if nm else f"<@{uid}>")
+
+                    remaining = max(0, len(voter_ids) - MAX_VOTER_NAMES_PER_MAP)
+                    names_str = ", ".join(names)
+                    if remaining:
+                        names_str += f" (+{remaining} more)"
+                    suffix += f" — {names_str}"
+
+            lines.append(f"**{pretty}** — {suffix}")
         
         return "\n".join(lines)
 
@@ -1010,8 +1072,9 @@ class MapVote(commands.Cog):
 
     async def start_vote(self, gs: dict):
         """Start a new vote for the given match."""
-        # Cleanup transient messages from previous match
-        await self._cleanup_transient_messages()
+        # Reset embed-only notices for new match
+        self._embed_vote_notice = None
+        self._embed_last_result = None
 
         # Reset state for this match
         self.state.reset_for_match(gs)
@@ -1029,28 +1092,11 @@ class MapVote(commands.Cog):
         # Schedule the in-game broadcast for X minutes into the match.
         self._schedule_broadcast_start()
 
-    async def _cleanup_transient_messages(self):
-        """Delete warning and winner messages from previous match."""
-        if not self.state.vote_channel:
-            return
-        
-        for msg_id in [self.last_warning_msg_id, self.last_winner_msg_id]:
-            if msg_id:
-                try:
-                    msg = await self.state.vote_channel.fetch_message(msg_id)
-                    await msg.delete()
-                except discord.NotFound:
-                    pass
-                except Exception as e:
-                    print(f"[MapVote] Failed to delete message {msg_id}: {e}")
-        
-        self.last_warning_msg_id = None
-        self.last_winner_msg_id = None
-
     async def end_vote_and_queue(self, gs: dict, premature: bool = False):
         """End the current vote and update map rotation."""
         self.state.active = False
-        self._cancel_broadcast_start_task()
+        self._cancel_task("_broadcast_start_task", extra_reset_attrs=["_broadcast_start_scheduled_for_match_id"])
+        self._embed_vote_notice = None
         channel = self.state.vote_channel
         if not channel:
             print("[MapVote] end_vote_and_queue called with no channel")
@@ -1074,6 +1120,7 @@ class MapVote(commands.Cog):
             res = rcon_set_rotation(DEFAULT_ROTATION)
 
             await self.send_broadcast("NO_VOTES")
+            self._embed_last_result = "No votes — default map rotation restored."
             await log_channel.send(f"CRCON Response (restored default rotation - no votes):\n```{res}```")
             print("[MapVote] Vote ended with no votes — restored default rotation.")
         else:
@@ -1083,11 +1130,7 @@ class MapVote(commands.Cog):
                 res = rcon_set_rotation([winner_id])
 
                 await self.send_broadcast("WINNER", winner=pretty)
-                winner_msg = await channel.send(
-                    f"🏆 **Winner: {pretty}**\n"
-                    f"The next rotation has been set to this map only."
-                )
-                self.last_winner_msg_id = winner_msg.id
+                self._embed_last_result = f"🏆 Winner: {pretty}"
 
                 await log_channel.send(f"CRCON Response (set rotation to winner):\n```{res}```")
                 print(f"[MapVote] Vote ended, winner {pretty}")
@@ -1100,13 +1143,7 @@ class MapVote(commands.Cog):
                 res = rcon_set_rotation([winner_id])
 
                 await self.send_broadcast("TIE", winner=pretty_winner, tied=", ".join(pretty_tied))
-                winner_msg = await channel.send(
-                    "🤝 **Tie detected!**\n"
-                    f"Tied maps: {', '.join(pretty_tied)}\n"
-                    f"🎲 Randomly selected winner: **{pretty_winner}**\n"
-                    f"The next rotation has been set to this map only."
-                )
-                self.last_winner_msg_id = winner_msg.id
+                self._embed_last_result = f"🤝 Tie: {pretty_winner} selected from {', '.join(pretty_tied)}"
 
                 await log_channel.send(f"CRCON Response (tie - set rotation to random winner):\n```{res}```")
                 print(f"[MapVote] Tie among {pretty_tied}. Random winner: {pretty_winner}")
@@ -1169,9 +1206,10 @@ class MapVote(commands.Cog):
             if remaining <= warn_threshold and not self.state.warning_sent:
                 self.state.warning_sent = True
                 await self.send_broadcast("ENDING_SOON")
-                if self.state.vote_channel:
-                    warn_msg = await self.state.vote_channel.send("⏳ Vote closes in 2 minutes!")
-                    self.last_warning_msg_id = warn_msg.id
+                self._embed_vote_notice = "⏳ Vote closes in 2 minutes!"
+
+                # Force an immediate embed refresh so the notice appears right away
+                await self.ensure_embed("ACTIVE", gs)
 
     async def check_match_events(self, gs: dict):
         """Check audit logs for match start/end events."""
