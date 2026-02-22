@@ -57,7 +57,7 @@ BROADCAST_SCHEDULE = {
         "message": (
             "Vote for the next map on discord.gg/7dr!\n"
             "You can select one of up to 25 maps!\n\n"
-            "Join us now as a recruit or just join as a Blueberry to keep up to date with the latest news, map vote and see our kill feed!"
+            "Join us now as a recruit or just join as a Blueberry to keep up to date with the latest news and map vote!"
         ),
     },
     # Sent once per match when vote has <= N seconds remaining
@@ -67,16 +67,16 @@ BROADCAST_SCHEDULE = {
         "message": (
             "Map vote closes in 2 minutes!\n\n"
             "Head over to discord.gg/7dr to cast your vote!\n\n"
-            "Join us now as a recruit or just join as a Blueberry to keep up to date with the latest news, map vote and see our kill feed!"
+            "Join us now as a recruit or just join as a Blueberry to keep up to date with the latest news and map vote!"
         ),
     },
     # Sent when vote ends and there were no votes
     "NO_VOTES": {
         "enabled": True,
         "message": (
-            "No votes, the map rotation wins.\n\n"
+            "No votes, the default map rotation wins.\n\n"
             "Head over to discord.gg/7dr to cast your vote!\n\n"
-            "Join us now as a recruit or just join as a Blueberry to keep up to date with the latest news, map vote and see our kill feed!"
+            "Join us now as a recruit or just join as a Blueberry to keep up to date with the latest news and map vote!"
         ),
     },
     # Sent when a single map wins the vote (no tie)
@@ -91,12 +91,6 @@ BROADCAST_SCHEDULE = {
     "TIE": {
         "enabled": True,
         "message": "Tie detected! {winner} was randomly selected as the next map.",
-    },
-    # Sent when the match ends prematurely as a 5-0/0-5 (optional). {next_map} will be formatted in.
-    "PREMATURE_50": {
-        "enabled": True,
-        "delay_seconds": 20,
-        "message": "Vote ended prematurely due to 5-0. The next map is {next_map}.",
     },
 }
 
@@ -124,6 +118,9 @@ MAPS = {
     "Purple Heart Lane Warfare (Rain)": "PHL_L_1944_Warfare",
     "Tobruk Warfare (Dawn)": "tobruk_warfare_morning",
 }
+
+# Reverse lookup: CRCON map ID → pretty name
+MAP_ID_TO_PRETTY = {mid: pretty for pretty, mid in MAPS.items()}
 
 # Default rotation when mapvote is disabled
 DEFAULT_ROTATION = [
@@ -376,7 +373,7 @@ class VoteState:
     def winner(self):
         if not self.vote_counts:
             return None
-        return max(self.vote_counts.items(), key=lambda kv: kv[1])[0]
+        return max(self.vote_counts, key=self.vote_counts.get)
 
     def winners_tied(self) -> list[str]:
         """Return all map_ids tied for the highest vote count."""
@@ -421,7 +418,7 @@ class MapVoteSelect(discord.ui.Select):
         self.state.record_vote(interaction.user.id, map_id, display_name=display_name)
 
         await interaction.response.send_message(
-            f"Your vote has been recorded.",
+            "Your vote has been recorded.",
             ephemeral=True
         )
 
@@ -470,10 +467,6 @@ class MapVote(commands.Cog):
         self._broadcast_start_scheduled_for_match_id: int | None = None
         self._broadcast_start_sent_for_match_id: int | None = None
 
-        # Optional delayed PREMATURE_50 broadcast (send once per match)
-        self._broadcast_50_task: asyncio.Task | None = None
-        self._broadcast_50_sent_for_match_id: int | None = None
-
     def _fast_forward_match_log_cursor(self):
         """Advance last_processed_log_id to the newest match log entry.
 
@@ -516,7 +509,6 @@ class MapVote(commands.Cog):
             self.tick_task.cancel()
 
         self._cancel_task("_broadcast_start_task", extra_reset_attrs=["_broadcast_start_scheduled_for_match_id"])
-        self._cancel_task("_broadcast_50_task")
 
     def _cancel_task(self, task_attr: str, *, extra_reset_attrs: list[str] | None = None):
         task = getattr(self, task_attr, None)
@@ -634,38 +626,6 @@ class MapVote(commands.Cog):
             return
         except Exception as e:
             print(f"[MapVote] {key} broadcast task error: {e}")
-
-    def _is_score_five_zero(self, gs: dict | None) -> bool:
-        if not gs:
-            return False
-        try:
-            axis_score = int(gs.get("axis_score", 0))
-            allied_score = int(gs.get("allied_score", 0))
-        except Exception:
-            return False
-        return (axis_score == 5 and allied_score == 0) or (axis_score == 0 and allied_score == 5)
-
-    def _schedule_broadcast_premature_50(self, next_map_pretty: str):
-        cfg = BROADCAST_SCHEDULE.get("PREMATURE_50", {})
-        if not cfg.get("enabled", False):
-            return
-
-        match_id = self._get_latest_match_start_id()
-        if match_id and self._broadcast_50_sent_for_match_id == match_id:
-            return
-
-        self._cancel_task("_broadcast_50_task")
-        delay_seconds = float(cfg.get("delay_seconds", 0) or 0)
-        self._broadcast_50_task = asyncio.create_task(
-            self._broadcast_after_delay(
-                key="PREMATURE_50",
-                match_id=match_id,
-                delay_seconds=delay_seconds,
-                require_vote_active=False,
-                sent_attr="_broadcast_50_sent_for_match_id",
-                fmt_kwargs={"next_map": next_map_pretty},
-            )
-        )
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -818,7 +778,6 @@ class MapVote(commands.Cog):
         
         self.mapvote_enabled = False
         self._cancel_task("_broadcast_start_task", extra_reset_attrs=["_broadcast_start_scheduled_for_match_id"])
-        self._cancel_task("_broadcast_50_task")
         self.state.active = False
         self.state.warning_sent = False
         self._save_state_file()
@@ -840,13 +799,14 @@ class MapVote(commands.Cog):
         now = datetime.now(timezone.utc)
 
         # Extract gamestate values with defaults
-        current = gs.get("current_map_pretty", "Unknown") if gs else "Unknown"
-        raw_time = gs.get("raw_time_remaining", "0:00:00") if gs else "0:00:00"
-        axis = gs.get("axis_players", 0) if gs else 0
-        allied = gs.get("allied_players", 0) if gs else 0
-        axis_score = gs.get("axis_score", 0) if gs else 0
-        allied_score = gs.get("allied_score", 0) if gs else 0
-        server_name = gs.get("server_name", "Unknown server") if gs else "Unknown server"
+        gs_ = gs or {}
+        current = gs_.get("current_map_pretty", "Unknown")
+        raw_time = gs_.get("raw_time_remaining", "0:00:00")
+        axis = gs_.get("axis_players", 0)
+        allied = gs_.get("allied_players", 0)
+        axis_score = gs_.get("axis_score", 0)
+        allied_score = gs_.get("allied_score", 0)
+        server_name = gs_.get("server_name", "Unknown server")
 
         # Base embed
         embed = discord.Embed(
@@ -957,7 +917,7 @@ class MapVote(commands.Cog):
 
         lines = []
         for map_id, count in sorted_votes:
-            pretty = next((p for p, mid in MAPS.items() if mid == map_id), map_id)
+            pretty = MAP_ID_TO_PRETTY.get(map_id, map_id)
 
             suffix = f"{count} vote{'s' if count != 1 else ''}"
             if SHOW_VOTER_NAMES_IN_EMBED:
@@ -1050,9 +1010,7 @@ class MapVote(commands.Cog):
             return msg
 
     async def ensure_initial_embed(self):
-        gs = await fetch_gamestate()
-        status = classify_status(gs, self.mapvote_enabled)
-        await self.ensure_embed(status, gs)
+        await self.refresh_status_embed()
 
     async def refresh_status_embed(self):
         gs = await fetch_gamestate()
@@ -1092,7 +1050,7 @@ class MapVote(commands.Cog):
         # Schedule the in-game broadcast for X minutes into the match.
         self._schedule_broadcast_start()
 
-    async def end_vote_and_queue(self, gs: dict, premature: bool = False):
+    async def end_vote_and_queue(self, gs: dict):
         """End the current vote and update map rotation."""
         self.state.active = False
         self._cancel_task("_broadcast_start_task", extra_reset_attrs=["_broadcast_start_scheduled_for_match_id"])
@@ -1126,7 +1084,7 @@ class MapVote(commands.Cog):
         else:
             if len(tied) == 1:
                 winner_id = tied[0]
-                pretty = next((p for p, mid in MAPS.items() if mid == winner_id), winner_id)
+                pretty = MAP_ID_TO_PRETTY.get(winner_id, winner_id)
                 res = rcon_set_rotation([winner_id])
 
                 await self.send_broadcast("WINNER", winner=pretty)
@@ -1137,8 +1095,8 @@ class MapVote(commands.Cog):
             else:
                 # Tie: choose a random winner from tied maps and announce tie
                 winner_id = random.choice(tied)
-                pretty_winner = next((p for p, mid in MAPS.items() if mid == winner_id), winner_id)
-                pretty_tied = [next((p for p, mid in MAPS.items() if mid == mid_t), mid_t) for mid_t in tied]
+                pretty_winner = MAP_ID_TO_PRETTY.get(winner_id, winner_id)
+                pretty_tied = [MAP_ID_TO_PRETTY.get(mid_t, mid_t) for mid_t in tied]
 
                 res = rcon_set_rotation([winner_id])
 
@@ -1147,17 +1105,6 @@ class MapVote(commands.Cog):
 
                 await log_channel.send(f"CRCON Response (tie - set rotation to random winner):\n```{res}```")
                 print(f"[MapVote] Tie among {pretty_tied}. Random winner: {pretty_winner}")
-
-        # Optional: if the match ended prematurely as a 5-0/0-5, schedule the PREMATURE_50 broadcast.
-        if premature and self._is_score_five_zero(gs):
-            if winner_id:
-                next_map_pretty = next((p for p, mid in MAPS.items() if mid == winner_id), winner_id)
-            else:
-                # No votes => default rotation; announce the first map in that rotation as "next"
-                next_id = DEFAULT_ROTATION[0] if DEFAULT_ROTATION else "Unknown"
-                next_map_pretty = next((p for p, mid in MAPS.items() if mid == next_id), next_id)
-
-            self._schedule_broadcast_premature_50(next_map_pretty)
 
         # Refresh embed to reflect that the vote is no longer active
         await self.refresh_status_embed()
@@ -1246,7 +1193,7 @@ class MapVote(commands.Cog):
                 print(f"[MapVote] MATCH ENDED detected (#{log_id})")
                 if self.state.active:
                     # End the vote immediately when the match ends
-                    await self.end_vote_and_queue(gs, premature=True)
+                    await self.end_vote_and_queue(gs)
 
     @tick_task.before_loop
     async def before_tick(self):

@@ -169,6 +169,10 @@ class ReactionReader(commands.Cog):
         if now - last < LOCKED_DM_COOLDOWN_SECONDS:
             return
 
+        # Skip if the executor is the bot itself (ClientUser has no .send())
+        if self.bot.user and user_id == self.bot.user.id:
+            return
+
         user = self.bot.get_user(user_id)
         if user is None:
             try:
