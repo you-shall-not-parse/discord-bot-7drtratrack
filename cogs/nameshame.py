@@ -14,7 +14,7 @@ from data_paths import data_path
 # CONFIG YOU EDIT
 # --------------------------------------------------
 
-GUILD_ID = 1097913605082579024
+GUILD_ID = 10979136050825790242
 
 # Where the main "strikes" embed lives
 NAMESHAME_MAIN_CHANNEL_ID = 1394274144547508344  # e.g. 123... (text channel ID)

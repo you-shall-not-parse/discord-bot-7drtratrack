@@ -34,6 +34,67 @@ EMBED_UPDATE_INTERVAL = 2
 # How many map options to show
 OPTIONS_PER_VOTE = 20
 
+# Delay the in-game "vote started" broadcast this many minutes into the match.
+# This is sent once per match.
+BROADCAST_START_DELAY_MINUTES = 5
+
+# --------------------------------------------------
+# IN-GAME BROADCASTS (CRCON message_all_players)
+# Edit WHEN they send + their text here.
+# --------------------------------------------------
+
+# Each key below is used by code via send_broadcast("KEY", ...)
+BROADCAST_SCHEDULE = {
+    # Sent once per match, N minutes after Match Start (only while mapvote is enabled + vote is active)
+    "START": {
+        "enabled": True,
+        "delay_minutes": BROADCAST_START_DELAY_MINUTES,
+        "message": (
+            "Vote for the next map on discord.gg/7dr!\n"
+            "You can select one of up to 25 maps!\n\n"
+            "Join us now as a recruit or just join as a Blueberry to keep up to date with the latest news, map vote and see our kill feed!"
+        ),
+    },
+    # Sent once per match when vote has <= N seconds remaining
+    "ENDING_SOON": {
+        "enabled": True,
+        "vote_remaining_seconds": 120,
+        "message": (
+            "Map vote closes in 2 minutes!\n\n"
+            "Head over to discord.gg/7dr to cast your vote!\n\n"
+            "Join us now as a recruit or just join as a Blueberry to keep up to date with the latest news, map vote and see our kill feed!"
+        ),
+    },
+    # Sent when vote ends and there were no votes
+    "NO_VOTES": {
+        "enabled": True,
+        "message": (
+            "No votes, the map rotation wins.\n\n"
+            "Head over to discord.gg/7dr to cast your vote!\n\n"
+            "Join us now as a recruit or just join as a Blueberry to keep up to date with the latest news, map vote and see our kill feed!"
+        ),
+    },
+    # Sent when a single map wins the vote (no tie)
+    "WINNER": {
+        "enabled": True,
+        "message": (
+            "{winner} has won the vote!\n"
+            "Head over to discord.gg/7dr to cast your vote on the next map!"
+        ),
+    },
+    # Sent when there is a tie and we randomly select a winner
+    "TIE": {
+        "enabled": True,
+        "message": "Tie detected! {winner} was randomly selected as the next map.",
+    },
+    # Sent when the match ends prematurely as a 5-0/0-5 (optional). {next_map} will be formatted in.
+    "PREMATURE_50": {
+        "enabled": True,
+        "delay_seconds": 20,
+        "message": "Vote ended prematurely due to 5-0. The next map is {next_map}.",
+    },
+}
+
 # Persistent state file (message id, enabled flag, etc.)
 MAPVOTE_STATE_FILE = data_path("mapvote_state.json")
 
@@ -98,11 +159,7 @@ STANDBY_CDN_IMAGE = "https://cdn.discordapp.com/attachments/1098976074852999261/
 OFFLINE_CDN_IMAGE = "https://cdn.discordapp.com/attachments/1098976074852999261/1444486531531280505/ChatGPT_Image_Nov_30_2025_12_33_09_AM.png?ex=6938172a&is=6936c5aa&hm=b08120d9cf51a7bf212e0926cb12036c429d6287a7b542fc8f4bc3b1aac36017"
 DISABLED_CDN_IMAGE = "https://cdn.discordapp.com/attachments/1098976074852999261/1444486531531280505/ChatGPT_Image_Nov_30_2025_12_33_09_AM.png?ex=6938172a&is=6936c5aa&hm=b08120d9cf51a7bf212e0926cb12036c429d6287a7b542fc8f4bc3b1aac36017"
 
-# Broadcasts into game to all players
-BROADCAST_START = "Vote for the next map on discord.gg/7dr!\nYou can select one of up to 25 maps!\n\nJoin us now as a recruit or just join as a Blueberry to keep up to date with the latest news, map vote and see our kill feed!"
-BROADCAST_ENDING_SOON = "Map vote closes in 2 minutes!\n\nHead over to discord.gg/7dr to cast your vote!\n\nJoin us now as a recruit or just join as a Blueberry to keep up to date with the latest news, map vote and see our kill feed!"
-BROADCAST_NO_VOTES = "No votes, the map rotation wins.\n\nHead over to discord.gg/7dr to cast your vote!\n\nJoin us now as a recruit or just join as a Blueberry to keep up to date with the latest news, map vote and see our kill feed!"
-BROADCAST_50 = "Vote ended prematurely due to 5-0. The next map is {next_map}."
+# Back-compat: older constants removed in favor of BROADCAST_SCHEDULE above.
 
 # --------------------------------------------------
 # CRCON API (Bearer token)
@@ -393,6 +450,15 @@ class MapVote(commands.Cog):
         # Cooldown to avoid immediate re-posts if Discord returns stale fetch
         self._last_create_ts: float | None = None
 
+        # Delayed BROADCAST_START (send once per match)
+        self._broadcast_start_task: asyncio.Task | None = None
+        self._broadcast_start_scheduled_for_match_id: int | None = None
+        self._broadcast_start_sent_for_match_id: int | None = None
+
+        # Optional delayed PREMATURE_50 broadcast (send once per match)
+        self._broadcast_50_task: asyncio.Task | None = None
+        self._broadcast_50_sent_for_match_id: int | None = None
+
     def _fast_forward_match_log_cursor(self):
         """Advance last_processed_log_id to the newest match log entry.
 
@@ -433,6 +499,143 @@ class MapVote(commands.Cog):
     def cog_unload(self):
         if self.tick_task.is_running():
             self.tick_task.cancel()
+
+        self._cancel_broadcast_start_task()
+        self._cancel_broadcast_50_task()
+
+    def _cancel_broadcast_start_task(self):
+        if self._broadcast_start_task and not self._broadcast_start_task.done():
+            self._broadcast_start_task.cancel()
+        self._broadcast_start_task = None
+        self._broadcast_start_scheduled_for_match_id = None
+
+    def _cancel_broadcast_50_task(self):
+        if self._broadcast_50_task and not self._broadcast_50_task.done():
+            self._broadcast_50_task.cancel()
+        self._broadcast_50_task = None
+
+    def _get_latest_match_start_id(self) -> int | None:
+        """Return timestamp_ms/id of the latest Match Start log entry."""
+        logs_data = rcon_get_recent_logs(["Match Start"], limit=1)
+        if not logs_data or logs_data.get("error") or logs_data.get("failed"):
+            return None
+        logs = logs_data.get("result", {}).get("logs", []) or []
+        if not logs:
+            return None
+        log = logs[-1]
+        log_id = log.get("timestamp_ms") or log.get("id")
+        try:
+            return int(log_id)
+        except Exception:
+            return None
+
+    def _schedule_broadcast_start(self):
+        """Schedule BROADCAST_START for X minutes after match start."""
+        cfg = BROADCAST_SCHEDULE.get("START", {})
+        if not cfg.get("enabled", True):
+            return
+
+        match_id = self._get_latest_match_start_id()
+
+        # If we can't identify the match, just schedule from "now" as best-effort.
+        if not match_id:
+            self._cancel_broadcast_start_task()
+            delay_minutes = float(cfg.get("delay_minutes", BROADCAST_START_DELAY_MINUTES) or 0)
+            delay_seconds = max(0, int(delay_minutes * 60))
+            self._broadcast_start_scheduled_for_match_id = None
+            self._broadcast_start_task = asyncio.create_task(self._broadcast_start_after_delay(None, float(delay_seconds)))
+            return
+
+        if self._broadcast_start_sent_for_match_id == match_id:
+            return
+        if (
+            self._broadcast_start_scheduled_for_match_id == match_id
+            and self._broadcast_start_task
+            and not self._broadcast_start_task.done()
+        ):
+            return
+
+        self._cancel_broadcast_start_task()
+
+        delay_minutes = float(cfg.get("delay_minutes", BROADCAST_START_DELAY_MINUTES) or 0)
+        delay_sec = max(0, int(delay_minutes * 60))
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        elapsed_sec = max(0.0, (now_ms - match_id) / 1000.0)
+        remaining = max(0.0, delay_sec - elapsed_sec)
+
+        self._broadcast_start_scheduled_for_match_id = match_id
+        self._broadcast_start_task = asyncio.create_task(self._broadcast_start_after_delay(match_id, remaining))
+
+    async def _broadcast_start_after_delay(self, match_id: int | None, delay_seconds: float):
+        try:
+            if delay_seconds > 0:
+                await asyncio.sleep(delay_seconds)
+
+            # Ensure we're still in the same match (if match_id is known)
+            if match_id is not None:
+                current_match_id = self._get_latest_match_start_id()
+                if current_match_id != match_id:
+                    return
+                if self._broadcast_start_sent_for_match_id == match_id:
+                    return
+
+            # Only send while a vote is active + enabled
+            if not self.mapvote_enabled or not self.state.active:
+                return
+
+            await self.send_broadcast("START")
+            if match_id is not None:
+                self._broadcast_start_sent_for_match_id = match_id
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            print(f"[MapVote] start broadcast task error: {e}")
+
+    def _is_score_five_zero(self, gs: dict | None) -> bool:
+        if not gs:
+            return False
+        try:
+            axis_score = int(gs.get("axis_score", 0))
+            allied_score = int(gs.get("allied_score", 0))
+        except Exception:
+            return False
+        return (axis_score == 5 and allied_score == 0) or (axis_score == 0 and allied_score == 5)
+
+    def _schedule_broadcast_premature_50(self, next_map_pretty: str):
+        cfg = BROADCAST_SCHEDULE.get("PREMATURE_50", {})
+        if not cfg.get("enabled", False):
+            return
+
+        match_id = self._get_latest_match_start_id()
+        if match_id and self._broadcast_50_sent_for_match_id == match_id:
+            return
+
+        self._cancel_broadcast_50_task()
+        delay_seconds = float(cfg.get("delay_seconds", 0) or 0)
+        self._broadcast_50_task = asyncio.create_task(
+            self._broadcast_premature_50_after_delay(match_id, delay_seconds, next_map_pretty)
+        )
+
+    async def _broadcast_premature_50_after_delay(self, match_id: int | None, delay_seconds: float, next_map_pretty: str):
+        try:
+            if delay_seconds > 0:
+                await asyncio.sleep(delay_seconds)
+
+            # Avoid sending late if a new match already started
+            if match_id is not None:
+                current_match_id = self._get_latest_match_start_id()
+                if current_match_id != match_id:
+                    return
+                if self._broadcast_50_sent_for_match_id == match_id:
+                    return
+
+            await self.send_broadcast("PREMATURE_50", next_map=next_map_pretty)
+            if match_id is not None:
+                self._broadcast_50_sent_for_match_id = match_id
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            print(f"[MapVote] premature_50 broadcast task error: {e}")
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -491,13 +694,43 @@ class MapVote(commands.Cog):
     # --------------------------------------------------
     # Broadcast using message_all_players
     # --------------------------------------------------
-    async def broadcast_to_all(self, message: str):
+    async def message_all_players(self, message: str):
         if not message:
             return
 
+        # Endpoint definition: message_all_players only accepts {"message": str}
         resp = rcon_post("message_all_players", {"message": message})
-        if not resp or resp.get("error") or resp.get("failed"):
-            print("[MapVote] broadcast_to_all: message_all_players failed:", resp)
+
+        # Some CRCON variants return a raw JSON boolean.
+        if isinstance(resp, bool):
+            if not resp:
+                print("[MapVote] broadcast_to_all: message_all_players returned False")
+            return
+
+        if not resp or (isinstance(resp, dict) and (resp.get("error") or resp.get("failed"))):
+            print("[MapVote] message_all_players: message_all_players failed:", resp)
+
+    async def broadcast_to_all(self, message: str):
+        """Back-compat alias."""
+        await self.message_all_players(message)
+
+    async def send_broadcast(self, key: str, **fmt_kwargs):
+        cfg = BROADCAST_SCHEDULE.get(key)
+        if not cfg:
+            print(f"[MapVote] Unknown broadcast key: {key}")
+            return
+        if not cfg.get("enabled", True):
+            return
+
+        msg = cfg.get("message", "")
+        if fmt_kwargs:
+            try:
+                msg = msg.format(**fmt_kwargs)
+            except Exception as e:
+                print(f"[MapVote] Failed to format broadcast '{key}': {e}")
+                return
+
+        await self.message_all_players(msg)
 
     # --------------------------------------------------
     # Slash commands
@@ -558,6 +791,8 @@ class MapVote(commands.Cog):
             )
         
         self.mapvote_enabled = False
+        self._cancel_broadcast_start_task()
+        self._cancel_broadcast_50_task()
         self.state.active = False
         self.state.warning_sent = False
         self._save_state_file()
@@ -791,7 +1026,8 @@ class MapVote(commands.Cog):
         await self.ensure_embed("ACTIVE", gs)
 
         print(f"[MapVote] Vote started for {gs['current_map_pretty']}")
-        await self.broadcast_to_all(BROADCAST_START)
+        # Schedule the in-game broadcast for X minutes into the match.
+        self._schedule_broadcast_start()
 
     async def _cleanup_transient_messages(self):
         """Delete warning and winner messages from previous match."""
@@ -814,6 +1050,7 @@ class MapVote(commands.Cog):
     async def end_vote_and_queue(self, gs: dict, premature: bool = False):
         """End the current vote and update map rotation."""
         self.state.active = False
+        self._cancel_broadcast_start_task()
         channel = self.state.vote_channel
         if not channel:
             print("[MapVote] end_vote_and_queue called with no channel")
@@ -836,7 +1073,7 @@ class MapVote(commands.Cog):
             # No votes: use default rotation
             res = rcon_set_rotation(DEFAULT_ROTATION)
 
-            await self.broadcast_to_all(BROADCAST_NO_VOTES)
+            await self.send_broadcast("NO_VOTES")
             await log_channel.send(f"CRCON Response (restored default rotation - no votes):\n```{res}```")
             print("[MapVote] Vote ended with no votes — restored default rotation.")
         else:
@@ -845,7 +1082,7 @@ class MapVote(commands.Cog):
                 pretty = next((p for p, mid in MAPS.items() if mid == winner_id), winner_id)
                 res = rcon_set_rotation([winner_id])
 
-                await self.broadcast_to_all(f"{pretty} has won the vote!\nHead over to discord.gg/7dr to cast your vote on the next map!")
+                await self.send_broadcast("WINNER", winner=pretty)
                 winner_msg = await channel.send(
                     f"🏆 **Winner: {pretty}**\n"
                     f"The next rotation has been set to this map only."
@@ -862,7 +1099,7 @@ class MapVote(commands.Cog):
 
                 res = rcon_set_rotation([winner_id])
 
-                await self.broadcast_to_all(f"Tie detected! {pretty_winner} was randomly selected as the next map.")
+                await self.send_broadcast("TIE", winner=pretty_winner, tied=", ".join(pretty_tied))
                 winner_msg = await channel.send(
                     "🤝 **Tie detected!**\n"
                     f"Tied maps: {', '.join(pretty_tied)}\n"
@@ -874,11 +1111,16 @@ class MapVote(commands.Cog):
                 await log_channel.send(f"CRCON Response (tie - set rotation to random winner):\n```{res}```")
                 print(f"[MapVote] Tie among {pretty_tied}. Random winner: {pretty_winner}")
 
-        # If the match ended prematurely, send BROADCAST_50 after 20 seconds
-        # if premature and winner_id:
-        #    pretty_winner = next((p for p, mid in MAPS.items() if mid == winner_id), winner_id)
-        #    await asyncio.sleep(20)  # Wait 20 seconds
-        #    await self.broadcast_to_all(BROADCAST_50.format(next_map=pretty_winner))
+        # Optional: if the match ended prematurely as a 5-0/0-5, schedule the PREMATURE_50 broadcast.
+        if premature and self._is_score_five_zero(gs):
+            if winner_id:
+                next_map_pretty = next((p for p, mid in MAPS.items() if mid == winner_id), winner_id)
+            else:
+                # No votes => default rotation; announce the first map in that rotation as "next"
+                next_id = DEFAULT_ROTATION[0] if DEFAULT_ROTATION else "Unknown"
+                next_map_pretty = next((p for p, mid in MAPS.items() if mid == next_id), next_id)
+
+            self._schedule_broadcast_premature_50(next_map_pretty)
 
         # Refresh embed to reflect that the vote is no longer active
         await self.refresh_status_embed()
@@ -923,9 +1165,10 @@ class MapVote(commands.Cog):
                 return
 
             # 2-minute warning
-            if remaining <= 120 and not self.state.warning_sent:
+            warn_threshold = float(BROADCAST_SCHEDULE.get("ENDING_SOON", {}).get("vote_remaining_seconds", 120) or 120)
+            if remaining <= warn_threshold and not self.state.warning_sent:
                 self.state.warning_sent = True
-                await self.broadcast_to_all(BROADCAST_ENDING_SOON)
+                await self.send_broadcast("ENDING_SOON")
                 if self.state.vote_channel:
                     warn_msg = await self.state.vote_channel.send("⏳ Vote closes in 2 minutes!")
                     self.last_warning_msg_id = warn_msg.id
