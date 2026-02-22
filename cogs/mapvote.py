@@ -193,10 +193,17 @@ def rcon_post(endpoint: str, payload: dict):
             timeout=10
         )
         try:
-            return r.json()
+            data = r.json()
+            # Preserve existing return shapes, but annotate dict responses with HTTP status
+            if isinstance(data, dict):
+                data.setdefault("_http_status", r.status_code)
+                data.setdefault("_endpoint", endpoint)
+            return data
         except Exception:
             return {
                 "status": r.status_code,
+                "_http_status": r.status_code,
+                "_endpoint": endpoint,
                 "text": r.text or "",
             }
     except Exception as e:
@@ -546,6 +553,7 @@ class MapVote(commands.Cog):
             self._cancel_task("_broadcast_start_task", extra_reset_attrs=["_broadcast_start_scheduled_for_match_id"])
             delay_minutes = float(cfg.get("delay_minutes", BROADCAST_START_DELAY_MINUTES) or 0)
             delay_seconds = max(0, int(delay_minutes * 60))
+            print(f"[MapVote] Scheduling START broadcast in {delay_seconds}s (match id unknown)")
             self._broadcast_start_scheduled_for_match_id = None
             self._broadcast_start_task = asyncio.create_task(
                 self._broadcast_after_delay(
@@ -577,6 +585,7 @@ class MapVote(commands.Cog):
         remaining = max(0.0, delay_sec - elapsed_sec)
 
         self._broadcast_start_scheduled_for_match_id = match_id
+        print(f"[MapVote] Scheduling START broadcast in {int(remaining)}s for match {match_id}")
         self._broadcast_start_task = asyncio.create_task(
             self._broadcast_after_delay(
                 key="START",
@@ -609,6 +618,7 @@ class MapVote(commands.Cog):
                 # If we can't read logs right now, don't abort the broadcast.
                 # We'll send best-effort rather than silently skipping.
                 if current_match_id is not None and current_match_id != match_id:
+                    print(f"[MapVote] {key} broadcast skipped (match changed: {match_id} -> {current_match_id})")
                     return
 
                 already_sent = getattr(self, sent_attr, None)
@@ -617,10 +627,13 @@ class MapVote(commands.Cog):
 
             # Only send while enabled; optionally require vote active (START)
             if not self.mapvote_enabled:
+                print(f"[MapVote] {key} broadcast skipped (mapvote disabled)")
                 return
             if require_vote_active and not self.state.active:
+                print(f"[MapVote] {key} broadcast skipped (vote not active)")
                 return
 
+            print(f"[MapVote] Sending broadcast: {key}")
             await self.send_broadcast(key, **(fmt_kwargs or {}))
             if match_id is not None:
                 setattr(self, sent_attr, match_id)
@@ -690,14 +703,56 @@ class MapVote(commands.Cog):
         if not message:
             return
 
-        # Endpoint definition: message_all_players only accepts {"message": str}
-        resp = rcon_post("message_all_players", {"message": message})
+        if not CRCON_API_KEY:
+            print("[MapVote] message_all_players: CRCON_API_KEY is not set; cannot broadcast")
+            return
+
+        async def _try(endpoint: str):
+            resp = rcon_post(endpoint, {"message": message})
+            return resp
+
+        # CRCON historically used `message_all_players`, but some deployments expose `server_broadcast`.
+        # Try the primary endpoint first, then fallback if it looks unsupported.
+        resp = await _try("message_all_players")
 
         # Some CRCON variants return a raw JSON boolean.
         if isinstance(resp, bool):
             if not resp:
                 print("[MapVote] message_all_players: message_all_players returned False")
             return
+
+        # If we got a non-JSON response, rcon_post returns {status/text}.
+        if isinstance(resp, dict):
+            http_status = resp.get("_http_status") or resp.get("status")
+
+            # Some CRCON frontends return 200 with an error JSON body for unknown endpoints.
+            # Treat common "not found" patterns as unsupported and try the fallback.
+            resp_text = (resp.get("text") or "") if isinstance(resp.get("text"), str) else ""
+            try:
+                resp_blob = (resp_text + " " + json.dumps(resp, default=str)).lower()
+            except Exception:
+                resp_blob = (resp_text + " " + str(resp)).lower()
+
+            # Fallback on common "endpoint not found" / "method not allowed" statuses.
+            looks_unsupported = http_status in (404, 405)
+            if "not found" in resp_blob or "unknown endpoint" in resp_blob or "no route" in resp_blob:
+                looks_unsupported = True
+
+            if looks_unsupported:
+                fallback = await _try("server_broadcast")
+                if isinstance(fallback, bool):
+                    if not fallback:
+                        print("[MapVote] message_all_players: server_broadcast returned False")
+                    return
+                if isinstance(fallback, dict):
+                    fb_status = fallback.get("_http_status") or fallback.get("status")
+                    if fb_status and int(fb_status) >= 400:
+                        print("[MapVote] message_all_players: server_broadcast failed:", fallback)
+                    return
+
+            if http_status and int(http_status) >= 400:
+                print("[MapVote] message_all_players failed:", resp)
+                return
 
         if not resp or (isinstance(resp, dict) and (resp.get("error") or resp.get("failed"))):
             print("[MapVote] message_all_players: message_all_players failed:", resp)
