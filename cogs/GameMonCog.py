@@ -25,6 +25,7 @@ GUILD_ID = 1097913605082579024   # Replace with your guild/server ID
 THREAD_ID = 1412934277133369494  # replace with your thread ID
 IGNORED_GAMES = ["Spotify", "Discord", "Pornhub", "Netflix", "Disney", "Sky TV", "Youtube"]
 PREFS_FILE = data_path("game_prefs.json")
+FEED_STATE_FILE = data_path("game_feed_state.json")
 DEFAULT_PREFERENCE = "opt_in"  # Default preference for users (opt_in or opt_out)
 ADMIN_USER_IDS = [1109147750932676649]  # Replace with your admin user IDs who can use special commands
 TEMP_DISABLE_DEFAULT_MONITORING = False  # Set to True to temporarily disable all monitoring for users without explicit preferences
@@ -37,6 +38,7 @@ PRUNE_EXTRA_FETCH = 50
 
 SQUAD_EMOJI = "⚔️"
 SQUAD_SUFFIX = "and is looking for a squad!"
+JOIN_SUFFIX = "is looking to join"
 # ----------------------------------------
 
 class PreferenceView(discord.ui.View):
@@ -57,8 +59,8 @@ class PreferenceView(discord.ui.View):
             ),
             discord.SelectOption(
                 label="Looking for squad",
-                value="opt_in_lfs",
-                description="Post + mark me LFS"
+                value="lfs",
+                description="Mark this post as LFS"
             ),
             discord.SelectOption(
                 label="Hide me",
@@ -70,6 +72,10 @@ class PreferenceView(discord.ui.View):
     )
     async def preference_select(self, interaction: discord.Interaction, select: discord.ui.Select):
         pref = select.values[0]
+        if pref == "lfs":
+            await self.cog.handle_lfs_select(interaction)
+            return
+
         await self._set_preference(interaction, pref)
         
     async def _set_preference(self, interaction, pref):
@@ -91,11 +97,6 @@ class PreferenceView(discord.ui.View):
                     "You're opted in! When you start playing a game, it will be posted in the feed.",
                     ephemeral=True
                 )
-            elif pref == "opt_in_lfs":
-                await interaction.response.send_message(
-                    f"You're opted in and marked as looking for squad ({SQUAD_EMOJI}). Your posts will include that tag.",
-                    ephemeral=True
-                )
             else:  # opt_out
                 await interaction.response.send_message(
                     "You're opted out. Your games will not be posted in the feed.",
@@ -111,12 +112,18 @@ class GameMonCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.prefs = self.load_json(PREFS_FILE)
+
+        self.feed_state = self.load_json(FEED_STATE_FILE)
+        if not isinstance(self.feed_state, dict):
+            self.feed_state = {}
+        if "messages" not in self.feed_state or not isinstance(self.feed_state.get("messages"), dict):
+            self.feed_state["messages"] = {}
             
         # File lock to prevent race conditions
         self.file_lock = asyncio.Lock()
 
         # Feed batching/debounce state
-        self._feed_lines: List[str] = []
+        self._feed_events: List[dict] = []
         self._last_feed_post = 0.0
         self._feed_post_lock = asyncio.Lock()
         self._feed_post_task: Optional[asyncio.Task] = None
@@ -328,7 +335,7 @@ class GameMonCog(commands.Cog):
             pref = self.prefs.get(user_id, DEFAULT_PREFERENCE)
 
             # If opted out, don't post anything
-            if pref not in ("opt_in", "opt_in_lfs"):
+            if pref != "opt_in":
                 return
 
             before_games = self._get_tracked_games(before)
@@ -336,7 +343,7 @@ class GameMonCog(commands.Cog):
 
             # Feed message on game starts (no per-user cooldown; only global debounced posting)
             for game_name in [g for g in after_games if g not in before_games]:
-                await self.enqueue_feed_line(self._format_started_playing(after, game_name))
+                await self.enqueue_feed_event(after, game_name)
         except Exception as e:
             logger.error(f"Error in on_presence_update: {e}")
 
@@ -355,13 +362,26 @@ class GameMonCog(commands.Cog):
         return games
 
     def _format_started_playing(self, member: discord.Member, game_name: str) -> str:
-        # Feed line (simple + readable)
+        # Base feed line (no mention/tag)
         display = member.display_name
-        user_id = str(member.id)
-        pref = self.prefs.get(user_id, DEFAULT_PREFERENCE)
-        if pref == "opt_in_lfs":
-            return f"{display} started playing {game_name} {SQUAD_EMOJI} {SQUAD_SUFFIX}"
         return f"{display} started playing {game_name}"
+
+    def _render_feed_description(self, message_ctx: dict) -> str:
+        target_display = message_ctx.get("target_display", "Someone")
+        game_name = message_ctx.get("game", "a game")
+        lfs_enabled = bool(message_ctx.get("lfs_enabled"))
+
+        base = f"{target_display} started playing {game_name}"
+        if lfs_enabled:
+            base = f"{base} {SQUAD_EMOJI} {SQUAD_SUFFIX}"
+
+        joiners = message_ctx.get("joiners", [])
+        lines = [base]
+        if isinstance(joiners, list) and joiners:
+            for joiner_display in joiners:
+                if joiner_display:
+                    lines.append(f"... and {joiner_display} {JOIN_SUFFIX}")
+        return "\n".join(lines)
 
     async def _get_thread(self):
         thread = self.bot.get_channel(THREAD_ID)
@@ -373,21 +393,21 @@ class GameMonCog(commands.Cog):
             logger.error(f"Thread with ID {THREAD_ID} not found. Cannot post feed message: {e}")
             return None
 
-    async def _post_feed_message(self, content: str) -> bool:
+    async def _post_feed_message(self, content: str, view: Optional[discord.ui.View] = None) -> Optional[discord.Message]:
         thread = await self._get_thread()
         if not thread:
-            return False
+            return None
         try:
             # Use a fresh View instance per message; keep persistent handlers registered via bot.add_view(...)
             embed = discord.Embed(description=content, color=discord.Color.green())
             embed.timestamp = discord.utils.utcnow()
-            await thread.send(embed=embed, view=PreferenceView(self))
+            msg = await thread.send(embed=embed, view=view or PreferenceView(self))
             # Keep the thread tidy
             await self.prune_thread_messages()
-            return True
+            return msg
         except discord.Forbidden as e:
             logger.error(f"Permission error posting feed message: {e}")
-            return False
+            return None
         except discord.HTTPException as e:
             status = getattr(e, 'status', None)
             retry_after = getattr(e, 'retry_after', 10)
@@ -397,16 +417,17 @@ class GameMonCog(commands.Cog):
                 try:
                     embed = discord.Embed(description=content, color=discord.Color.green())
                     embed.timestamp = discord.utils.utcnow()
-                    await thread.send(embed=embed, view=PreferenceView(self))
-                    return True
+                    msg = await thread.send(embed=embed, view=view or PreferenceView(self))
+                    await self.prune_thread_messages()
+                    return msg
                 except Exception as e2:
                     logger.error(f"Retry failed posting feed message: {e2}")
-                    return False
+                    return None
             logger.error(f"HTTP error posting feed message: {e}")
-            return False
+            return None
         except Exception as e:
             logger.error(f"Unexpected error posting feed message: {e}")
-            return False
+            return None
 
     async def prune_thread_messages(self) -> None:
         """Delete non-pinned messages older than the newest KEEP_LAST_MESSAGES in the monitored thread."""
@@ -431,6 +452,7 @@ class GameMonCog(commands.Cog):
 
                 to_delete = messages[KEEP_LAST_MESSAGES:]
                 deleted_any = False
+                state_changed = False
 
                 for msg in to_delete:
                     if msg.pinned:
@@ -438,6 +460,9 @@ class GameMonCog(commands.Cog):
                     try:
                         await msg.delete()
                         deleted_any = True
+                        if str(msg.id) in self.feed_state.get("messages", {}):
+                            self.feed_state["messages"].pop(str(msg.id), None)
+                            state_changed = True
                         # Small spacing helps avoid hitting per-route limits when lots of deletes happen
                         await asyncio.sleep(0.25)
                     except discord.Forbidden:
@@ -454,9 +479,17 @@ class GameMonCog(commands.Cog):
                 if not deleted_any:
                     return
 
-    async def enqueue_feed_line(self, line: str) -> None:
+                if state_changed:
+                    await self.save_json(FEED_STATE_FILE, self.feed_state)
+
+    async def enqueue_feed_event(self, member: discord.Member, game_name: str) -> None:
+        event = {
+            "target_user_id": str(member.id),
+            "target_display": member.display_name,
+            "game": game_name,
+        }
         async with self._feed_post_lock:
-            self._feed_lines.append(line)
+            self._feed_events.append(event)
         await self._schedule_feed_post()
 
     async def _schedule_feed_post(self) -> None:
@@ -471,15 +504,34 @@ class GameMonCog(commands.Cog):
                     try:
                         await asyncio.sleep(delay)
                         async with self._feed_post_lock:
-                            if not self._feed_lines:
+                            if not self._feed_events:
                                 return
-                            lines = self._feed_lines
-                            self._feed_lines = []
 
-                        await self._post_feed_message("\n".join(lines))
+                            event = self._feed_events.pop(0)
+
+                        # One message per start event so LFS is per-post.
+                        ctx = {
+                            "target_user_id": event.get("target_user_id"),
+                            "target_display": event.get("target_display"),
+                            "game": event.get("game"),
+                            "lfs_enabled": False,
+                            "joiners": [],
+                        }
+
+                        description = self._render_feed_description(ctx)
+                        msg = await self._post_feed_message(description, view=PreferenceView(self))
+
+                        if msg:
+                            self.feed_state["messages"][str(msg.id)] = ctx
+                            await self.save_json(FEED_STATE_FILE, self.feed_state)
                     finally:
                         self._last_feed_post = asyncio.get_event_loop().time()
                         self._feed_post_task = None
+
+                        async with self._feed_post_lock:
+                            has_more = bool(self._feed_events)
+                        if has_more:
+                            await self._schedule_feed_post()
 
                 self._feed_post_task = asyncio.create_task(runner())
 
@@ -488,6 +540,74 @@ class GameMonCog(commands.Cog):
                 _schedule(0)
             else:
                 _schedule(FEED_POST_MIN_INTERVAL - elapsed)
+
+    async def handle_lfs_select(self, interaction: discord.Interaction) -> None:
+        """Per-message 'Looking for squad' action.
+
+        - If the target user clicks: mark the post as LFS.
+        - If anyone else clicks: append them as '... and X is looking to join'.
+        """
+        try:
+            message = interaction.message
+            if not message:
+                await interaction.response.send_message("Couldn't find the message for this action.", ephemeral=True)
+                return
+
+            msg_id = str(message.id)
+            ctx = self.feed_state.get("messages", {}).get(msg_id)
+            if not ctx:
+                await interaction.response.send_message(
+                    "This post is too old to modify (state not found).",
+                    ephemeral=True
+                )
+                return
+
+            target_user_id = str(ctx.get("target_user_id")) if ctx.get("target_user_id") is not None else None
+            clicker_id = str(interaction.user.id)
+            changed = False
+
+            if target_user_id and clicker_id == target_user_id:
+                if not ctx.get("lfs_enabled"):
+                    ctx["lfs_enabled"] = True
+                    changed = True
+                    await interaction.response.send_message("Marked this post as looking for a squad.", ephemeral=True)
+                else:
+                    await interaction.response.send_message("This post is already marked as LFS.", ephemeral=True)
+            else:
+                joiners = ctx.get("joiners")
+                if not isinstance(joiners, list):
+                    joiners = []
+                    ctx["joiners"] = joiners
+
+                joiner_name = getattr(interaction.user, "display_name", None) or getattr(interaction.user, "name", "Someone")
+                if joiner_name in joiners:
+                    await interaction.response.send_message("You're already listed as looking to join.", ephemeral=True)
+                else:
+                    joiners.append(joiner_name)
+                    changed = True
+                    await interaction.response.send_message("Added you as looking to join.", ephemeral=True)
+
+            if not changed:
+                return
+
+            description = self._render_feed_description(ctx)
+            embed = message.embeds[0] if message.embeds else discord.Embed(color=discord.Color.green())
+            embed.description = description
+            embed.timestamp = discord.utils.utcnow()
+
+            await message.edit(embed=embed, view=PreferenceView(self))
+
+            self.feed_state["messages"][msg_id] = ctx
+            await self.save_json(FEED_STATE_FILE, self.feed_state)
+        except Exception as e:
+            logger.error(f"Error handling LFS select: {e}")
+            try:
+                if interaction.response.is_done():
+                    await interaction.followup.send("Something went wrong handling that action.", ephemeral=True)
+                else:
+                    await interaction.response.send_message("Something went wrong handling that action.", ephemeral=True)
+            except Exception:
+                pass
 
 async def setup(bot):
     await bot.add_cog(GameMonCog(bot))
