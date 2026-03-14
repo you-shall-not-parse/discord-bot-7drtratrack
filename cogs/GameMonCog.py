@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands
+from discord import app_commands
 import json
 import os
 import asyncio
@@ -26,7 +27,8 @@ GUILD_ID = 1097913605082579024   # Replace with your guild/server ID
 THREAD_ID = 1412934277133369494  # replace with your thread ID
 IGNORED_GAMES = ["Spotify", "Discord", "Pornhub", "Netflix", "Disney", "Sky TV", "Youtube"]
 
-# Per-game GIFs (URLs). Keys should be lowercase normalized game names.
+# Per-game GIFs (URLs). Keys are treated case-insensitively.
+# (Recommended: use lowercase normalized game names.)
 # Add more games/URLs here.
 GAME_GIF_URLS = {
     "Hell Let Loose": [
@@ -40,7 +42,7 @@ GAME_GIF_URLS = {
 }
 
 # If True, put the GIF in the embed thumbnail; if False, use the main image.
-GIF_AS_THUMBNAIL = False
+GIF_AS_THUMBNAIL = True
 
 PREFS_FILE = data_path("game_prefs.json")
 FEED_STATE_FILE = data_path("game_feed_state.json")
@@ -417,6 +419,12 @@ class GameMonCog(commands.Cog):
 
         key = str(game_name).strip().lower()
         urls = GAME_GIF_URLS.get(key)
+        if urls is None:
+            # Case-insensitive key lookup so users can type natural casing in config.
+            for map_key, map_urls in GAME_GIF_URLS.items():
+                if str(map_key).strip().lower() == key:
+                    urls = map_urls
+                    break
         if not isinstance(urls, list) or not urls:
             return None
 
@@ -425,6 +433,18 @@ class GameMonCog(commands.Cog):
             return None
 
         return random.choice(urls)
+
+    def _apply_gif_to_embed(self, embed: discord.Embed, gif_url: Optional[str]) -> None:
+        """Apply the chosen GIF to the embed as either thumbnail or main image."""
+        if not gif_url:
+            return
+
+        if GIF_AS_THUMBNAIL:
+            embed.set_thumbnail(url=gif_url)
+            embed.set_image(url=discord.Embed.Empty)
+        else:
+            embed.set_image(url=gif_url)
+            embed.set_thumbnail(url=discord.Embed.Empty)
 
     async def _get_thread(self):
         thread = self.bot.get_channel(THREAD_ID)
@@ -448,13 +468,7 @@ class GameMonCog(commands.Cog):
         try:
             # Use a fresh View instance per message; keep persistent handlers registered via bot.add_view(...)
             embed = discord.Embed(description=content, color=discord.Color.green())
-            if gif_url:
-                if GIF_AS_THUMBNAIL:
-                    embed.set_thumbnail(url=gif_url)
-                    embed.set_image(url=None)
-                else:
-                    embed.set_image(url=gif_url)
-                    embed.set_thumbnail(url=None)
+            self._apply_gif_to_embed(embed, gif_url)
             embed.timestamp = discord.utils.utcnow()
             msg = await thread.send(embed=embed, view=view or PreferenceView(self))
             # Keep the thread tidy
@@ -471,13 +485,7 @@ class GameMonCog(commands.Cog):
                 await asyncio.sleep(retry_after)
                 try:
                     embed = discord.Embed(description=content, color=discord.Color.green())
-                    if gif_url:
-                        if GIF_AS_THUMBNAIL:
-                            embed.set_thumbnail(url=gif_url)
-                            embed.set_image(url=None)
-                        else:
-                            embed.set_image(url=gif_url)
-                            embed.set_thumbnail(url=None)
+                    self._apply_gif_to_embed(embed, gif_url)
                     embed.timestamp = discord.utils.utcnow()
                     msg = await thread.send(embed=embed, view=view or PreferenceView(self))
                     await self.prune_thread_messages()
@@ -555,14 +563,57 @@ class GameMonCog(commands.Cog):
                 await self.save_json(FEED_STATE_FILE, self.feed_state)
 
     async def enqueue_feed_event(self, member: discord.Member, game_name: str) -> None:
+        await self.enqueue_feed_event_custom(
+            target_user_id=str(member.id),
+            target_display=member.display_name,
+            game_name=game_name,
+        )
+
+    async def enqueue_feed_event_custom(
+        self,
+        target_user_id: Optional[str],
+        target_display: str,
+        game_name: str,
+    ) -> None:
+        """Queue a feed post with explicit target display/user id.
+
+        Used by tests/admin commands to simulate a post without a real presence update.
+        """
         event = {
-            "target_user_id": str(member.id),
-            "target_display": member.display_name,
+            "target_user_id": str(target_user_id) if target_user_id is not None else None,
+            "target_display": str(target_display) if target_display else "Someone",
             "game": game_name,
         }
         async with self._feed_post_lock:
             self._feed_events.append(event)
         await self._schedule_feed_post()
+
+    @app_commands.command(
+        name="gamemon_test_hll",
+        description="Post a test Hell Let Loose feed message (admin only).",
+    )
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    @app_commands.describe(player_name="Fake player name to display in the post")
+    async def gamemon_test_hll(self, interaction: discord.Interaction, player_name: Optional[str] = None):
+        if interaction.user.id not in ADMIN_USER_IDS:
+            await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
+            return
+
+        fake_name = (player_name or "Test Soldier").strip()
+        if not fake_name:
+            fake_name = "Test Soldier"
+
+        # Use the invoker's user id so they can test the LFS 'target user' behavior.
+        await self.enqueue_feed_event_custom(
+            target_user_id=str(interaction.user.id),
+            target_display=fake_name,
+            game_name="Hell Let Loose",
+        )
+
+        await interaction.response.send_message(
+            f"Queued test post: **{fake_name}** started playing Hell Let Loose.",
+            ephemeral=True,
+        )
 
     async def _schedule_feed_post(self) -> None:
         async with self._feed_post_lock:
@@ -672,14 +723,7 @@ class GameMonCog(commands.Cog):
             description = self._render_feed_description(ctx)
             embed = message.embeds[0] if message.embeds else discord.Embed(color=discord.Color.green())
             embed.description = description
-            gif_url = ctx.get("gif_url")
-            if gif_url:
-                if GIF_AS_THUMBNAIL:
-                    embed.set_thumbnail(url=gif_url)
-                    embed.set_image(url=None)
-                else:
-                    embed.set_image(url=gif_url)
-                    embed.set_thumbnail(url=None)
+            self._apply_gif_to_embed(embed, ctx.get("gif_url"))
             embed.timestamp = discord.utils.utcnow()
 
             await message.edit(embed=embed, view=PreferenceView(self))
