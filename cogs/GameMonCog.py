@@ -4,6 +4,7 @@ import json
 import os
 import asyncio
 import logging
+import random
 from typing import List, Optional
 
 from data_paths import data_path
@@ -24,6 +25,19 @@ logging.getLogger('discord.http').setLevel(logging.ERROR)
 GUILD_ID = 1097913605082579024   # Replace with your guild/server ID
 THREAD_ID = 1412934277133369494  # replace with your thread ID
 IGNORED_GAMES = ["Spotify", "Discord", "Pornhub", "Netflix", "Disney", "Sky TV", "Youtube"]
+
+# Per-game GIFs (URLs). Keys should be lowercase normalized game names.
+# Add more games/URLs here.
+GAME_GIF_URLS = {
+    "hell let loose": [
+        # "https://media.tenor.com/uwluoIbniJwAAAAd/hell-let-loose-hll.gif",
+        # "https://media.tenor.com/6j5fK6jPtegAAAAd/arty-hell-let-loose.gif",
+    ],
+}
+
+# If True, put the GIF in the embed thumbnail; if False, use the main image.
+GIF_AS_THUMBNAIL = True
+
 PREFS_FILE = data_path("game_prefs.json")
 FEED_STATE_FILE = data_path("game_feed_state.json")
 DEFAULT_PREFERENCE = "opt_in"  # Default preference for users (opt_in or opt_out)
@@ -392,6 +406,22 @@ class GameMonCog(commands.Cog):
                     lines.append(f"...**and** {joiner_display} {JOIN_SUFFIX}")
         return "\n".join(lines)
 
+    def _pick_gif_url_for_game(self, game_name: str) -> Optional[str]:
+        """Pick a random GIF URL for a given game name (if configured)."""
+        if not game_name:
+            return None
+
+        key = str(game_name).strip().lower()
+        urls = GAME_GIF_URLS.get(key)
+        if not isinstance(urls, list) or not urls:
+            return None
+
+        urls = [u for u in urls if isinstance(u, str) and u.strip()]
+        if not urls:
+            return None
+
+        return random.choice(urls)
+
     async def _get_thread(self):
         thread = self.bot.get_channel(THREAD_ID)
         if thread:
@@ -402,13 +432,25 @@ class GameMonCog(commands.Cog):
             logger.error(f"Thread with ID {THREAD_ID} not found. Cannot post feed message: {e}")
             return None
 
-    async def _post_feed_message(self, content: str, view: Optional[discord.ui.View] = None) -> Optional[discord.Message]:
+    async def _post_feed_message(
+        self,
+        content: str,
+        view: Optional[discord.ui.View] = None,
+        gif_url: Optional[str] = None,
+    ) -> Optional[discord.Message]:
         thread = await self._get_thread()
         if not thread:
             return None
         try:
             # Use a fresh View instance per message; keep persistent handlers registered via bot.add_view(...)
             embed = discord.Embed(description=content, color=discord.Color.green())
+            if gif_url:
+                if GIF_AS_THUMBNAIL:
+                    embed.set_thumbnail(url=gif_url)
+                    embed.set_image(url=None)
+                else:
+                    embed.set_image(url=gif_url)
+                    embed.set_thumbnail(url=None)
             embed.timestamp = discord.utils.utcnow()
             msg = await thread.send(embed=embed, view=view or PreferenceView(self))
             # Keep the thread tidy
@@ -425,6 +467,13 @@ class GameMonCog(commands.Cog):
                 await asyncio.sleep(retry_after)
                 try:
                     embed = discord.Embed(description=content, color=discord.Color.green())
+                    if gif_url:
+                        if GIF_AS_THUMBNAIL:
+                            embed.set_thumbnail(url=gif_url)
+                            embed.set_image(url=None)
+                        else:
+                            embed.set_image(url=gif_url)
+                            embed.set_thumbnail(url=None)
                     embed.timestamp = discord.utils.utcnow()
                     msg = await thread.send(embed=embed, view=view or PreferenceView(self))
                     await self.prune_thread_messages()
@@ -533,12 +582,19 @@ class GameMonCog(commands.Cog):
                             "target_user_id": event.get("target_user_id"),
                             "target_display": event.get("target_display"),
                             "game": event.get("game"),
+                            "gif_url": None,
                             "lfs_enabled": False,
                             "joiners": [],
                         }
 
+                        ctx["gif_url"] = self._pick_gif_url_for_game(ctx.get("game"))
+
                         description = self._render_feed_description(ctx)
-                        msg = await self._post_feed_message(description, view=PreferenceView(self))
+                        msg = await self._post_feed_message(
+                            description,
+                            view=PreferenceView(self),
+                            gif_url=ctx.get("gif_url"),
+                        )
 
                         if msg:
                             self.feed_state["messages"][str(msg.id)] = ctx
@@ -612,6 +668,14 @@ class GameMonCog(commands.Cog):
             description = self._render_feed_description(ctx)
             embed = message.embeds[0] if message.embeds else discord.Embed(color=discord.Color.green())
             embed.description = description
+            gif_url = ctx.get("gif_url")
+            if gif_url:
+                if GIF_AS_THUMBNAIL:
+                    embed.set_thumbnail(url=gif_url)
+                    embed.set_image(url=None)
+                else:
+                    embed.set_image(url=gif_url)
+                    embed.set_thumbnail(url=None)
             embed.timestamp = discord.utils.utcnow()
 
             await message.edit(embed=embed, view=PreferenceView(self))
