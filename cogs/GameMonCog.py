@@ -38,7 +38,7 @@ PRUNE_EXTRA_FETCH = 50
 
 SQUAD_EMOJI = "⚔️"
 SQUAD_SUFFIX = "and is looking for a squad!"
-JOIN_SUFFIX = "is looking to join"
+JOIN_SUFFIX = "is looking to join ⚔️"
 # ----------------------------------------
 
 class PreferenceView(discord.ui.View):
@@ -48,22 +48,27 @@ class PreferenceView(discord.ui.View):
         self.cog = cog
 
     @discord.ui.select(
-        placeholder="Game feed preference…",
+        placeholder="Your Game Feed Preferences…",
         min_values=1,
         max_values=1,
         options=[
             discord.SelectOption(
-                label="Show my games",
+                label="Show my games 🎮",
                 value="opt_in",
                 description="Post when I start playing"
             ),
             discord.SelectOption(
-                label="Looking for squad",
+                label="Looking for squad ⚔️",
                 value="lfs",
-                description="Mark this post as LFS"
+                description="Mark this post as LFS (or join if this is not your post)"
             ),
             discord.SelectOption(
-                label="Hide me",
+                label="How to link my console? 🕹️",
+                value="console_help",
+                description="Show Xbox/PlayStation linking guides"
+            ),
+            discord.SelectOption(
+                label="Hide me 🚫",
                 value="opt_out",
                 description="Do not post my games"
             ),
@@ -74,6 +79,10 @@ class PreferenceView(discord.ui.View):
         pref = select.values[0]
         if pref == "lfs":
             await self.cog.handle_lfs_select(interaction)
+            return
+
+        if pref == "console_help":
+            await self.cog.handle_console_help_select(interaction)
             return
 
         await self._set_preference(interaction, pref)
@@ -430,7 +439,7 @@ class GameMonCog(commands.Cog):
             return None
 
     async def prune_thread_messages(self) -> None:
-        """Delete this bot's non-pinned messages older than the newest KEEP_LAST_MESSAGES in the monitored thread."""
+        """Delete this cog's (GameMon) non-pinned messages older than the newest KEEP_LAST_MESSAGES in the monitored thread."""
         # Avoid overlapping prune runs (posting can happen in bursts)
         async with self._prune_lock:
             thread = await self._get_thread()
@@ -441,17 +450,27 @@ class GameMonCog(commands.Cog):
             if not bot_user:
                 return
 
-            # Collect newest bot-authored messages first, skipping pinned.
+            tracked = self.feed_state.get("messages", {})
+            if not isinstance(tracked, dict) or not tracked:
+                return
+
+            # Collect newest messages created by this cog first (tracked by message id), skipping pinned.
             bot_messages: List[discord.Message] = []
             try:
                 async for msg in thread.history(limit=None, oldest_first=False):
                     if msg.pinned:
                         continue
-                    if msg.author and msg.author.id == bot_user.id:
-                        bot_messages.append(msg)
-                        # Only fetch enough history to delete an extra batch
-                        if len(bot_messages) >= KEEP_LAST_MESSAGES + PRUNE_EXTRA_FETCH:
-                            break
+                    if not msg.author or msg.author.id != bot_user.id:
+                        continue
+
+                    msg_id = str(msg.id)
+                    if msg_id not in tracked:
+                        continue
+
+                    bot_messages.append(msg)
+                    # Only fetch enough history to delete an extra batch
+                    if len(bot_messages) >= KEEP_LAST_MESSAGES + PRUNE_EXTRA_FETCH:
+                        break
             except Exception as e:
                 logger.error(f"Failed to fetch thread history for pruning: {e}")
                 return
@@ -608,6 +627,29 @@ class GameMonCog(commands.Cog):
                     await interaction.response.send_message("Something went wrong handling that action.", ephemeral=True)
             except Exception:
                 pass
+
+    async def handle_console_help_select(self, interaction: discord.Interaction) -> None:
+        """Send an ephemeral message with console-linking guides."""
+        xbox_url = "https://support.discord.com/hc/en-us/articles/360003953831-Discord-and-Xbox-Connection-FAQ"
+        ps_url = "https://support.discord.com/hc/en-us/articles/4419534960919-Discord-and-PlayStation-Network-Connection-FAQ"
+
+        help_text = (
+            "Here are the official Discord guides for linking your console:\n\n"
+            f"Xbox: {xbox_url}\n"
+            f"PlayStation: {ps_url}"
+        )
+
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(help_text, ephemeral=True)
+            else:
+                await interaction.response.send_message(help_text, ephemeral=True)
+        except Exception as e:
+            logger.error(f"Error sending console help message: {e}")
+            if interaction.response.is_done():
+                await interaction.followup.send("Something went wrong sending that message.", ephemeral=True)
+            else:
+                await interaction.response.send_message("Something went wrong sending that message.", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(GameMonCog(bot))
