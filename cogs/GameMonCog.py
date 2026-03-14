@@ -37,7 +37,12 @@ GAME_GIF_URLS = {
         "https://media.tenor.com/N_O18E66mKQAAAAd/hell-let-loose-flamethrower.gif",
         "https://media.tenor.com/qMxHeWaGylQAAAAd/kek-m60.gif",
         "https://media.tenor.com/GEYZLiYatRoAAAAC/hell-let-loose-hll.gif",
-        "https://media.tenor.com/bO2URHoai5kAAAAC/krrc-hell-let-loose.gif"
+        "https://media.tenor.com/bO2URHoai5kAAAAC/krrc-hell-let-loose.gif",
+        "https://media.tenor.com/wTO4Un397JsAAAAC/arti-artillery.gif",
+        "https://media.tenor.com/HDXJEh0lusgAAAAC/band-of-brothers-hll.gif",
+        "https://media.tenor.com/0mZvkVi5HzkAAAAd/help-medic.gif",
+        "https://media.tenor.com/PUh8QHHGQ7IAAAAC/hell-let.gif",
+        "https://media.tenor.com/luLMy2KSgOMAAAAd/hell-let-loose.gif"
     ],
 }
 
@@ -56,7 +61,6 @@ KEEP_LAST_MESSAGES = 20
 # How many messages beyond KEEP_LAST_MESSAGES to fetch per prune pass
 PRUNE_EXTRA_FETCH = 50
 
-SQUAD_EMOJI = "⚔️"
 SQUAD_SUFFIX = "and is looking for a squad! 🗡️"
 JOIN_SUFFIX = "is looking to join ⚔️"
 # ----------------------------------------
@@ -402,7 +406,7 @@ class GameMonCog(commands.Cog):
 
         base = f"**{target_display}** started playing {game_name} 🗡️"
         if lfs_enabled:
-            base = f"{base} {SQUAD_EMOJI} {SQUAD_SUFFIX}"
+            base = f"{base} {SQUAD_SUFFIX}"
 
         joiners = message_ctx.get("joiners", [])
         lines = [base]
