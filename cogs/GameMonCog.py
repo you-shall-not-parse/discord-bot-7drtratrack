@@ -37,7 +37,7 @@ KEEP_LAST_MESSAGES = 20
 PRUNE_EXTRA_FETCH = 50
 
 SQUAD_EMOJI = "⚔️"
-SQUAD_SUFFIX = "and is looking for a squad!"
+SQUAD_SUFFIX = "and is looking for a squad! 🗡️"
 JOIN_SUFFIX = "is looking to join ⚔️"
 # ----------------------------------------
 
@@ -373,14 +373,14 @@ class GameMonCog(commands.Cog):
     def _format_started_playing(self, member: discord.Member, game_name: str) -> str:
         # Base feed line (no mention/tag)
         display = member.display_name
-        return f"{display} started playing {game_name}"
+        return f"**{display}** started playing {game_name} 🗡️"
 
     def _render_feed_description(self, message_ctx: dict) -> str:
         target_display = message_ctx.get("target_display", "Someone")
         game_name = message_ctx.get("game", "a game")
         lfs_enabled = bool(message_ctx.get("lfs_enabled"))
 
-        base = f"{target_display} started playing {game_name}"
+        base = f"**{target_display}** started playing {game_name} 🗡️"
         if lfs_enabled:
             base = f"{base} {SQUAD_EMOJI} {SQUAD_SUFFIX}"
 
@@ -389,7 +389,7 @@ class GameMonCog(commands.Cog):
         if isinstance(joiners, list) and joiners:
             for joiner_display in joiners:
                 if joiner_display:
-                    lines.append(f"... and {joiner_display} {JOIN_SUFFIX}")
+                    lines.append(f"...**and** {joiner_display} {JOIN_SUFFIX}")
         return "\n".join(lines)
 
     async def _get_thread(self):
