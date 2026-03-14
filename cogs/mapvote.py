@@ -110,7 +110,6 @@ MAPS = {
     "Mortain Warfare (Dusk)": "mortain_warfare_dusk",
     "Driel Warfare": "driel_warfare",
     "Kursk Warfare": "kursk_warfare",
-    "Carentan Warfare (Night)": "carentan_warfare_night",
     "Hurtgen Forest Warfare": "hurtgenforest_warfare_V2",
     "Remagen Warfare": "remagen_warfare",
     "Omaha Beach Warfare": "omahabeach_warfare",
@@ -125,12 +124,11 @@ MAP_ID_TO_PRETTY = {mid: pretty for pretty, mid in MAPS.items()}
 # Default rotation when mapvote is disabled
 DEFAULT_ROTATION = [
     "stmariedumont_warfare",
-    "tobruk_warfare_morning",
-    "elsenbornridge_warfare_morning",
     "stmereeglise_warfare",
-    "elalamein_warfare",
-    "smolensk_warfare_dusk",
-    "PHL_L_1944_Warfare",
+    "hill400_warfare",
+    "omahabeach_warfare",
+    "remagen_warfare",
+    "utahbeach_warfare",
 ]
 
 # Map images (put your real CDN URLs back in here)
