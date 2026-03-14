@@ -29,7 +29,7 @@ IGNORED_GAMES = ["Spotify", "Discord", "Pornhub", "Netflix", "Disney", "Sky TV",
 # Per-game GIFs (URLs). Keys should be lowercase normalized game names.
 # Add more games/URLs here.
 GAME_GIF_URLS = {
-    "hell let loose": [
+    "Hell Let Loose": [
         # "https://media.tenor.com/uwluoIbniJwAAAAd/hell-let-loose-hll.gif",
         # "https://media.tenor.com/6j5fK6jPtegAAAAd/arty-hell-let-loose.gif",
     ],
