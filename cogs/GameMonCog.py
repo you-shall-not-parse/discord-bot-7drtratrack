@@ -52,6 +52,8 @@ GIF_AS_THUMBNAIL = True
 PREFS_FILE = data_path("game_prefs.json")
 FEED_STATE_FILE = data_path("game_feed_state.json")
 DEFAULT_PREFERENCE = "opt_in"  # Default preference for users (opt_in or opt_out)
+# Admin-only slash commands are gated by this role ID.
+ADMIN_ROLE_ID = 1213495462632361994
 ADMIN_USER_IDS = [1109147750932676649]  # Replace with your admin user IDs who can use special commands
 TEMP_DISABLE_DEFAULT_MONITORING = False  # Set to True to temporarily disable all monitoring for users without explicit preferences
 # Throttle: minimum seconds between feed posts (global debounce)
@@ -600,25 +602,41 @@ class GameMonCog(commands.Cog):
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.describe(player_name="Fake player name to display in the post")
     async def gamemon_test_hll(self, interaction: discord.Interaction, player_name: Optional[str] = None):
-        if interaction.user.id not in ADMIN_USER_IDS:
+        # Permission check: must have the admin role in this guild.
+        invoker = interaction.user
+        has_admin_role = any(r.id == ADMIN_ROLE_ID for r in getattr(invoker, "roles", []) or [])
+        if not has_admin_role:
             await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
             return
 
-        fake_name = (player_name or "Test Soldier").strip()
-        if not fake_name:
-            fake_name = "Test Soldier"
+        fake_name = (player_name or "Test Soldier").strip() or "Test Soldier"
 
-        # Use the invoker's user id so they can test the LFS 'target user' behavior.
-        await self.enqueue_feed_event_custom(
-            target_user_id=str(interaction.user.id),
-            target_display=fake_name,
-            game_name="Hell Let Loose",
-        )
+        # Post the test embed in the channel where the command is run (not the monitored thread).
+        ctx = {
+            "target_user_id": str(invoker.id),
+            "target_display": str(fake_name),
+            "game": "Hell Let Loose",
+            "gif_url": None,
+            "lfs_enabled": False,
+            "joiners": [],
+        }
+        ctx["gif_url"] = self._pick_gif_url_for_game(ctx.get("game"))
+        description = self._render_feed_description(ctx)
 
-        await interaction.response.send_message(
-            f"Queued test post: **{fake_name}** started playing Hell Let Loose.",
-            ephemeral=True,
-        )
+        embed = discord.Embed(description=description, color=discord.Color.green())
+        self._apply_gif_to_embed(embed, ctx.get("gif_url"))
+        embed.timestamp = discord.utils.utcnow()
+
+        await interaction.response.send_message(embed=embed, view=PreferenceView(self))
+        try:
+            msg = await interaction.original_response()
+        except Exception:
+            msg = None
+
+        if msg:
+            self.feed_state.setdefault("messages", {})
+            self.feed_state["messages"][str(msg.id)] = ctx
+            await self.save_json(FEED_STATE_FILE, self.feed_state)
 
     async def _schedule_feed_post(self) -> None:
         async with self._feed_post_lock:
