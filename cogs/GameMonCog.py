@@ -34,21 +34,43 @@ FEED_POST_MIN_INTERVAL = 5  # increase if still rate-limited
 KEEP_LAST_MESSAGES = 20
 # How many messages beyond KEEP_LAST_MESSAGES to fetch per prune pass
 PRUNE_EXTRA_FETCH = 50
+
+SQUAD_EMOJI = "⚔️"
+SQUAD_SUFFIX = "and is looking for a squad!"
 # ----------------------------------------
 
 class PreferenceView(discord.ui.View):
-    """Persistent preference buttons (attach to every feed message)."""
+    """Persistent preference dropdown (attach to every feed message)."""
     def __init__(self, cog):
         super().__init__(timeout=None)  # No timeout for persistent view
         self.cog = cog
-        
-    @discord.ui.button(label="Show Games", style=discord.ButtonStyle.green, custom_id="pref:opt_in")
-    async def opt_in(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._set_preference(interaction, "opt_in")
-        
-    @discord.ui.button(label="Hide Me", style=discord.ButtonStyle.red, custom_id="pref:opt_out")
-    async def opt_out(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._set_preference(interaction, "opt_out")
+
+    @discord.ui.select(
+        placeholder="Game feed preference…",
+        min_values=1,
+        max_values=1,
+        options=[
+            discord.SelectOption(
+                label="Show my games",
+                value="opt_in",
+                description="Post when I start playing"
+            ),
+            discord.SelectOption(
+                label="Looking for squad",
+                value="opt_in_lfs",
+                description="Post + mark me LFS"
+            ),
+            discord.SelectOption(
+                label="Hide me",
+                value="opt_out",
+                description="Do not post my games"
+            ),
+        ],
+        custom_id="pref:select"
+    )
+    async def preference_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        pref = select.values[0]
+        await self._set_preference(interaction, pref)
         
     async def _set_preference(self, interaction, pref):
         user_id = str(interaction.user.id)
@@ -67,6 +89,11 @@ class PreferenceView(discord.ui.View):
             if pref == "opt_in":
                 await interaction.response.send_message(
                     "You're opted in! When you start playing a game, it will be posted in the feed.",
+                    ephemeral=True
+                )
+            elif pref == "opt_in_lfs":
+                await interaction.response.send_message(
+                    f"You're opted in and marked as looking for squad ({SQUAD_EMOJI}). Your posts will include that tag.",
                     ephemeral=True
                 )
             else:  # opt_out
@@ -301,7 +328,7 @@ class GameMonCog(commands.Cog):
             pref = self.prefs.get(user_id, DEFAULT_PREFERENCE)
 
             # If opted out, don't post anything
-            if pref != "opt_in":
+            if pref not in ("opt_in", "opt_in_lfs"):
                 return
 
             before_games = self._get_tracked_games(before)
@@ -330,6 +357,10 @@ class GameMonCog(commands.Cog):
     def _format_started_playing(self, member: discord.Member, game_name: str) -> str:
         # Feed line (simple + readable)
         display = member.display_name
+        user_id = str(member.id)
+        pref = self.prefs.get(user_id, DEFAULT_PREFERENCE)
+        if pref == "opt_in_lfs":
+            return f"{display} started playing {game_name} {SQUAD_EMOJI} {SQUAD_SUFFIX}"
         return f"{display} started playing {game_name}"
 
     async def _get_thread(self):
