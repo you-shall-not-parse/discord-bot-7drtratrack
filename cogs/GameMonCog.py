@@ -441,10 +441,11 @@ class GameMonCog(commands.Cog):
 
         if GIF_AS_THUMBNAIL:
             embed.set_thumbnail(url=gif_url)
-            embed.set_image(url=discord.Embed.Empty)
+            # Some discord.py versions don't expose Embed.Empty; None clears the field.
+            embed.set_image(url=None)
         else:
             embed.set_image(url=gif_url)
-            embed.set_thumbnail(url=discord.Embed.Empty)
+            embed.set_thumbnail(url=None)
 
     async def _get_thread(self):
         thread = self.bot.get_channel(THREAD_ID)
