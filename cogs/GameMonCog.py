@@ -30,6 +30,10 @@ ADMIN_USER_IDS = [1109147750932676649]  # Replace with your admin user IDs who c
 TEMP_DISABLE_DEFAULT_MONITORING = False  # Set to True to temporarily disable all monitoring for users without explicit preferences
 # Throttle: minimum seconds between feed posts (global debounce)
 FEED_POST_MIN_INTERVAL = 5  # increase if still rate-limited
+# Prune: keep only the newest N messages in the thread (excluding pinned)
+KEEP_LAST_MESSAGES = 20
+# How many messages beyond KEEP_LAST_MESSAGES to fetch per prune pass
+PRUNE_EXTRA_FETCH = 50
 # ----------------------------------------
 
 class PreferenceView(discord.ui.View):
@@ -38,11 +42,11 @@ class PreferenceView(discord.ui.View):
         super().__init__(timeout=None)  # No timeout for persistent view
         self.cog = cog
         
-    @discord.ui.button(label="Opt-In (Show My Games)", style=discord.ButtonStyle.green, custom_id="pref:opt_in")
+    @discord.ui.button(label="Show Games", style=discord.ButtonStyle.green, custom_id="pref:opt_in")
     async def opt_in(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._set_preference(interaction, "opt_in")
         
-    @discord.ui.button(label="Opt-Out (Hide My Games)", style=discord.ButtonStyle.red, custom_id="pref:opt_out")
+    @discord.ui.button(label="Hide Me", style=discord.ButtonStyle.red, custom_id="pref:opt_out")
     async def opt_out(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._set_preference(interaction, "opt_out")
         
@@ -89,6 +93,9 @@ class GameMonCog(commands.Cog):
         self._last_feed_post = 0.0
         self._feed_post_lock = asyncio.Lock()
         self._feed_post_task: Optional[asyncio.Task] = None
+
+        # Prune lock to avoid concurrent history sweeps
+        self._prune_lock = asyncio.Lock()
 
         # Persistent view registration guard (on_ready can fire multiple times)
         self._persistent_view_registered = False
@@ -236,7 +243,7 @@ class GameMonCog(commands.Cog):
                 logger.warning("Bot is not a member of the guild for the thread (on_ready)")
             else:
                 permissions = thread.permissions_for(bot_member)
-                if not permissions.send_messages:
+                if not permissions.send_messages or not permissions.embed_links:
                     logger.warning("Bot lacks some required permissions in the thread (on_ready)")
                 else:
                     logger.info("Thread validation successful")
@@ -321,7 +328,7 @@ class GameMonCog(commands.Cog):
         return games
 
     def _format_started_playing(self, member: discord.Member, game_name: str) -> str:
-        # Plain-text feed line (simple + readable)
+        # Feed line (simple + readable)
         display = member.display_name
         return f"{display} started playing {game_name}"
 
@@ -341,7 +348,11 @@ class GameMonCog(commands.Cog):
             return False
         try:
             # Use a fresh View instance per message; keep persistent handlers registered via bot.add_view(...)
-            await thread.send(content=content, view=PreferenceView(self))
+            embed = discord.Embed(description=content, color=discord.Color.green())
+            embed.timestamp = discord.utils.utcnow()
+            await thread.send(embed=embed, view=PreferenceView(self))
+            # Keep the thread tidy
+            await self.prune_thread_messages()
             return True
         except discord.Forbidden as e:
             logger.error(f"Permission error posting feed message: {e}")
@@ -353,7 +364,9 @@ class GameMonCog(commands.Cog):
                 logger.warning(f"Rate limited while posting feed message. Retrying in {retry_after} seconds.")
                 await asyncio.sleep(retry_after)
                 try:
-                    await thread.send(content=content, view=PreferenceView(self))
+                    embed = discord.Embed(description=content, color=discord.Color.green())
+                    embed.timestamp = discord.utils.utcnow()
+                    await thread.send(embed=embed, view=PreferenceView(self))
                     return True
                 except Exception as e2:
                     logger.error(f"Retry failed posting feed message: {e2}")
@@ -363,6 +376,52 @@ class GameMonCog(commands.Cog):
         except Exception as e:
             logger.error(f"Unexpected error posting feed message: {e}")
             return False
+
+    async def prune_thread_messages(self) -> None:
+        """Delete non-pinned messages older than the newest KEEP_LAST_MESSAGES in the monitored thread."""
+        # Avoid overlapping prune runs (posting can happen in bursts)
+        async with self._prune_lock:
+            thread = await self._get_thread()
+            if not thread:
+                return
+
+            # Delete in small batches; repeat a few times in case the thread is very long.
+            max_passes = 5
+            for _ in range(max_passes):
+                try:
+                    # Newest-first history
+                    messages = [m async for m in thread.history(limit=KEEP_LAST_MESSAGES + PRUNE_EXTRA_FETCH, oldest_first=False)]
+                except Exception as e:
+                    logger.error(f"Failed to fetch thread history for pruning: {e}")
+                    return
+
+                if len(messages) <= KEEP_LAST_MESSAGES:
+                    return
+
+                to_delete = messages[KEEP_LAST_MESSAGES:]
+                deleted_any = False
+
+                for msg in to_delete:
+                    if msg.pinned:
+                        continue
+                    try:
+                        await msg.delete()
+                        deleted_any = True
+                        # Small spacing helps avoid hitting per-route limits when lots of deletes happen
+                        await asyncio.sleep(0.25)
+                    except discord.Forbidden:
+                        logger.error("Missing permissions to delete messages while pruning")
+                        return
+                    except discord.NotFound:
+                        continue
+                    except discord.HTTPException as e:
+                        logger.error(f"HTTP error deleting message during prune: {e}")
+                        # Stop this pass; next feed post will try again.
+                        return
+
+                # If nothing could be deleted (e.g., everything old is pinned), stop.
+                if not deleted_any:
+                    return
 
     async def enqueue_feed_line(self, line: str) -> None:
         async with self._feed_post_lock:
