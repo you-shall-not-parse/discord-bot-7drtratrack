@@ -32,11 +32,15 @@ GAME_GIF_URLS = {
     "Hell Let Loose": [
         "https://media.tenor.com/uwluoIbniJwAAAAd/hell-let-loose-hll.gif",
         "https://media.tenor.com/6j5fK6jPtegAAAAd/arty-hell-let-loose.gif",
+        "https://media.tenor.com/N_O18E66mKQAAAAd/hell-let-loose-flamethrower.gif",
+        "https://media.tenor.com/qMxHeWaGylQAAAAd/kek-m60.gif",
+        "https://media.tenor.com/GEYZLiYatRoAAAAC/hell-let-loose-hll.gif",
+        "https://media.tenor.com/bO2URHoai5kAAAAC/krrc-hell-let-loose.gif"
     ],
 }
 
 # If True, put the GIF in the embed thumbnail; if False, use the main image.
-GIF_AS_THUMBNAIL = True
+GIF_AS_THUMBNAIL = False
 
 PREFS_FILE = data_path("game_prefs.json")
 FEED_STATE_FILE = data_path("game_feed_state.json")
