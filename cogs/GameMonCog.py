@@ -430,57 +430,57 @@ class GameMonCog(commands.Cog):
             return None
 
     async def prune_thread_messages(self) -> None:
-        """Delete non-pinned messages older than the newest KEEP_LAST_MESSAGES in the monitored thread."""
+        """Delete this bot's non-pinned messages older than the newest KEEP_LAST_MESSAGES in the monitored thread."""
         # Avoid overlapping prune runs (posting can happen in bursts)
         async with self._prune_lock:
             thread = await self._get_thread()
             if not thread:
                 return
 
-            # Delete in small batches; repeat a few times in case the thread is very long.
-            max_passes = 5
-            for _ in range(max_passes):
-                try:
-                    # Newest-first history
-                    messages = [m async for m in thread.history(limit=KEEP_LAST_MESSAGES + PRUNE_EXTRA_FETCH, oldest_first=False)]
-                except Exception as e:
-                    logger.error(f"Failed to fetch thread history for pruning: {e}")
-                    return
+            bot_user = getattr(self.bot, "user", None)
+            if not bot_user:
+                return
 
-                if len(messages) <= KEEP_LAST_MESSAGES:
-                    return
-
-                to_delete = messages[KEEP_LAST_MESSAGES:]
-                deleted_any = False
-                state_changed = False
-
-                for msg in to_delete:
+            # Collect newest bot-authored messages first, skipping pinned.
+            bot_messages: List[discord.Message] = []
+            try:
+                async for msg in thread.history(limit=None, oldest_first=False):
                     if msg.pinned:
                         continue
-                    try:
-                        await msg.delete()
-                        deleted_any = True
-                        if str(msg.id) in self.feed_state.get("messages", {}):
-                            self.feed_state["messages"].pop(str(msg.id), None)
-                            state_changed = True
-                        # Small spacing helps avoid hitting per-route limits when lots of deletes happen
-                        await asyncio.sleep(0.25)
-                    except discord.Forbidden:
-                        logger.error("Missing permissions to delete messages while pruning")
-                        return
-                    except discord.NotFound:
-                        continue
-                    except discord.HTTPException as e:
-                        logger.error(f"HTTP error deleting message during prune: {e}")
-                        # Stop this pass; next feed post will try again.
-                        return
+                    if msg.author and msg.author.id == bot_user.id:
+                        bot_messages.append(msg)
+                        # Only fetch enough history to delete an extra batch
+                        if len(bot_messages) >= KEEP_LAST_MESSAGES + PRUNE_EXTRA_FETCH:
+                            break
+            except Exception as e:
+                logger.error(f"Failed to fetch thread history for pruning: {e}")
+                return
 
-                # If nothing could be deleted (e.g., everything old is pinned), stop.
-                if not deleted_any:
+            # Nothing to do if we haven't exceeded the cap for bot messages.
+            if len(bot_messages) <= KEEP_LAST_MESSAGES:
+                return
+
+            to_delete = bot_messages[KEEP_LAST_MESSAGES:]
+            state_changed = False
+            for msg in to_delete:
+                try:
+                    await msg.delete()
+                    if str(msg.id) in self.feed_state.get("messages", {}):
+                        self.feed_state["messages"].pop(str(msg.id), None)
+                        state_changed = True
+                    # Small spacing helps avoid hitting per-route limits when lots of deletes happen
+                    await asyncio.sleep(0.25)
+                except discord.Forbidden:
+                    logger.error("Missing permissions to delete messages while pruning")
+                    return
+                except discord.NotFound:
+                    continue
+                except discord.HTTPException as e:
+                    logger.error(f"HTTP error deleting message during prune: {e}")
                     return
 
-                if state_changed:
-                    await self.save_json(FEED_STATE_FILE, self.feed_state)
+            if state_changed:
+                await self.save_json(FEED_STATE_FILE, self.feed_state)
 
     async def enqueue_feed_event(self, member: discord.Member, game_name: str) -> None:
         event = {
