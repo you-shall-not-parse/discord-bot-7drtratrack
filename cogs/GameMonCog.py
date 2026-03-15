@@ -31,6 +31,9 @@ THREAD_ID = 1412934277133369494  # replace with your thread ID
 # If set, Hell Let Loose posts are routed here; other games go to THREAD_ID.
 # Can be a text channel or thread ID.
 HLL_CHANNEL_ID = 1099090838203666474
+# Users with any of these roles will never generate GameMon posts.
+# Put role IDs in this list, e.g. [123, 456]. Leave empty to disable.
+EXCLUDED_ROLE_IDS: list[int] = [1098206797900284035, 1103762811491975218]
 IGNORED_GAMES = ["Spotify", "Discord", "Pornhub", "Netflix", "Disney", "Sky TV", "Youtube"]
 
 # For custom image links: Discord embeds generally require a *direct* image URL.
@@ -908,6 +911,15 @@ class GameMonCog(commands.Cog):
                 return
             if after.guild is None or after.guild.id != GUILD_ID:
                 return
+
+            # Optional: exclude members with specific roles from ever posting.
+            if EXCLUDED_ROLE_IDS:
+                try:
+                    excluded = set(int(r) for r in EXCLUDED_ROLE_IDS)
+                    if any(getattr(role, "id", None) in excluded for role in (getattr(after, "roles", None) or [])):
+                        return
+                except Exception:
+                    pass
 
             user_id = str(after.id)
 
