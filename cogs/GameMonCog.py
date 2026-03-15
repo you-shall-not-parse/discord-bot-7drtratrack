@@ -231,6 +231,17 @@ class GameMonCog(commands.Cog):
         sends a message containing an embed preview rather than a file attachment.
         """
         embeds = getattr(message, "embeds", None) or []
+        candidates: list[str] = []
+
+        def _add_candidate(url: object) -> None:
+            if not isinstance(url, str):
+                return
+            candidate = url.strip()
+            if not candidate:
+                return
+            if self.is_valid_direct_image_url(candidate):
+                candidates.append(candidate)
+
         for emb in embeds:
             try:
                 data = emb.to_dict() if hasattr(emb, "to_dict") else {}
@@ -240,18 +251,38 @@ class GameMonCog(commands.Cog):
             if not isinstance(data, dict):
                 continue
 
+            # Still preview URLs (often .png/.webp) live here.
             for key in ("image", "thumbnail"):
                 try:
-                    url = (data.get(key) or {}).get("url")
+                    _add_candidate((data.get(key) or {}).get("url"))
                 except Exception:
-                    url = None
+                    pass
 
-                if isinstance(url, str) and url.strip():
-                    candidate = url.strip()
-                    if self.is_valid_direct_image_url(candidate):
-                        return candidate
+            # Tenor GIF picker commonly provides the animated media as a video URL.
+            # If it's an .mp4, try swapping to the matching .gif on the same path.
+            try:
+                video_url = (data.get("video") or {}).get("url")
+            except Exception:
+                video_url = None
 
-        return None
+            if isinstance(video_url, str) and video_url.strip():
+                v = video_url.strip()
+                try:
+                    parsed = urlparse(v)
+                    path = parsed.path or ""
+                    if path.lower().endswith(".mp4"):
+                        gif_path = path[:-4] + ".gif"
+                        gif_url = parsed._replace(path=gif_path).geturl()
+                        _add_candidate(gif_url)
+                except Exception:
+                    pass
+
+        # Prefer actual GIFs over still previews.
+        for url in candidates:
+            if url.lower().endswith(".gif"):
+                return url
+
+        return candidates[0] if candidates else None
 
     def _pick_first_image_url_from_message(self, message: discord.Message) -> Optional[str]:
         """Pick the best image/GIF URL from a DM message.
@@ -1074,7 +1105,7 @@ class GameMonCog(commands.Cog):
                 await dm.send(
                     "Reply to this DM with the image/GIF you want game monitor to use on all of your future posts.\n"
                     "- You can attach an image/GIF, use Discord's GIF picker (Tenor), OR paste a direct image/GIF link (ending in .gif/.png/.jpg/.webp).\n"
-                    "- To remove your custom image and go back to defaults, send: `remove` (within 10 minutes)\n\n"
+                    "- To remove your custom image and go back to defaults, send: `remove` (within 10 minutes)\n"
                     "I will use the first valid attachment/GIF-picker/direct-link you send in the next 10 minutes."
                 )
             except discord.Forbidden:
@@ -1125,7 +1156,7 @@ class GameMonCog(commands.Cog):
         """Send an ephemeral explanation of the Game Feed and dropdown options."""
         text = (
             "**About the Game Feed❓**\n"
-            "This bot watches your Discord activity (when you start playing a game) and posts it into the <#1412934277133369494> channel or <#1099090838203666474> if the game is Hell Let Loose (only).\n\n This only works if you have opted-in and have your device/console linked to your Discord account.\n"
+            "This bot watches your Discord activity (when you start playing a game) and posts it into the <#1412934277133369494> channel or <#1099090838203666474> if the game is Hell Let Loose (only).\nThis only works if you have opted-in and have your device/console linked to your Discord account.\n"
             "**Dropdown options**\n"
             "• **Show my games 🎮** — Opt in to posting when you start playing.\n"
             "• **Hide me 🚫** — Opt out so your games are not posted or tracked whatsoever.\n"
