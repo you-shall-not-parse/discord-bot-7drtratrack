@@ -8,7 +8,7 @@ import logging
 import random
 import re
 from typing import List, Optional
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from data_paths import data_path
 
@@ -233,12 +233,33 @@ class GameMonCog(commands.Cog):
         embeds = getattr(message, "embeds", None) or []
         candidates: list[str] = []
 
+        def _maybe_decode_proxy(url: str) -> str:
+            """If url looks like a proxy with a `url=` param, return the decoded target."""
+            try:
+                parsed = urlparse(url)
+                qs = parse_qs(parsed.query or "")
+                raw = qs.get("url", [None])[0]
+                if isinstance(raw, str) and raw.strip():
+                    try:
+                        return unquote(raw.strip())
+                    except Exception:
+                        return raw.strip()
+            except Exception:
+                pass
+            return url
+
         def _add_candidate(url: object) -> None:
             if not isinstance(url, str):
                 return
             candidate = url.strip()
             if not candidate:
                 return
+
+            # Prefer the underlying target when Discord provides a proxy URL.
+            candidate = _maybe_decode_proxy(candidate).strip()
+            if not candidate:
+                return
+
             if self.is_valid_direct_image_url(candidate):
                 candidates.append(candidate)
 
@@ -267,6 +288,7 @@ class GameMonCog(commands.Cog):
 
             if isinstance(video_url, str) and video_url.strip():
                 v = video_url.strip()
+                v = _maybe_decode_proxy(v).strip()
                 try:
                     parsed = urlparse(v)
                     path = parsed.path or ""
@@ -403,7 +425,37 @@ class GameMonCog(commands.Cog):
             return False
 
         path = (parsed.path or "").lower()
-        return any(path.endswith(ext) for ext in DIRECT_IMAGE_EXTENSIONS)
+        if any(path.endswith(ext) for ext in DIRECT_IMAGE_EXTENSIONS):
+            return True
+
+        # Discord and some CDNs serve images through proxy URLs where the file extension
+        # isn't in the path, but the query string includes `format=webp|png|gif|...`.
+        try:
+            qs = parse_qs(parsed.query or "")
+        except Exception:
+            qs = {}
+
+        fmt = (qs.get("format", [""])[0] or "").lower()
+        if fmt in {"gif", "png", "jpg", "jpeg", "webp"}:
+            return True
+
+        # Some proxy URLs store the real target as a `url=` query param.
+        raw = qs.get("url", [None])[0]
+        if isinstance(raw, str) and raw.strip():
+            try:
+                decoded = unquote(raw.strip())
+            except Exception:
+                decoded = raw.strip()
+            if self.is_valid_media_url(decoded):
+                try:
+                    inner = urlparse(decoded)
+                    inner_path = (inner.path or "").lower()
+                except Exception:
+                    inner_path = ""
+                if any(inner_path.endswith(ext) for ext in DIRECT_IMAGE_EXTENSIONS):
+                    return True
+
+        return False
 
     def cog_unload(self):
         """Clean up when cog is unloaded"""
