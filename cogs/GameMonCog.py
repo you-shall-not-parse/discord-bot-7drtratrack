@@ -28,6 +28,9 @@ logging.getLogger('discord.http').setLevel(logging.ERROR)
 # ---------------- CONFIG ----------------
 GUILD_ID = 1097913605082579024   # Replace with your guild/server ID
 THREAD_ID = 1412934277133369494  # replace with your thread ID
+# If set, Hell Let Loose posts are routed here; other games go to THREAD_ID.
+# Can be a text channel or thread ID.
+HLL_CHANNEL_ID = 1099090838203666474
 IGNORED_GAMES = ["Spotify", "Discord", "Pornhub", "Netflix", "Disney", "Sky TV", "Youtube"]
 
 # For custom image links: Discord embeds generally require a *direct* image URL.
@@ -509,6 +512,11 @@ class GameMonCog(commands.Cog):
 
         await channel.send("Removed. Your posts will use the default images again.")
 
+    def _is_hll_game(self, game_name: Optional[str]) -> bool:
+        if not game_name:
+            return False
+        return str(game_name).strip().lower() == "hell let loose"
+
     # ---------- Preference Helpers ----------
     def ensure_user_pref_record(self, user_id: str) -> dict:
         """Return a mutable per-user record, migrating legacy string prefs on the fly."""
@@ -736,26 +744,35 @@ class GameMonCog(commands.Cog):
         # Wait a moment to ensure bot is fully connected before attempting message operations
         await asyncio.sleep(5)
         
-        # Validate thread exists (try cache first, then API). If not found, continue startup
-        thread = self.bot.get_channel(THREAD_ID)
-        if not thread:
-            try:
-                thread = await self.bot.fetch_channel(THREAD_ID)
-                logger.info(f"Fetched thread via API during on_ready: {THREAD_ID}")
-            except Exception as e:
-                logger.warning(f"Thread with ID {THREAD_ID} not found during on_ready: {e}")
+        # Validate destination channels exist (try cache first, then API). If not found, continue startup.
+        for cid, label in (
+            (THREAD_ID, "default"),
+            (HLL_CHANNEL_ID, "hll"),
+        ):
+            if not isinstance(cid, int) or not cid:
+                continue
 
-        if thread:
-            # Check permissions when we have the thread object
-            bot_member = thread.guild.get_member(self.bot.user.id)
-            if not bot_member:
-                logger.warning("Bot is not a member of the guild for the thread (on_ready)")
-            else:
-                permissions = thread.permissions_for(bot_member)
-                if not permissions.send_messages or not permissions.embed_links:
-                    logger.warning("Bot lacks some required permissions in the thread (on_ready)")
+            chan = self.bot.get_channel(cid)
+            if not chan:
+                try:
+                    chan = await self.bot.fetch_channel(cid)
+                    logger.info(f"Fetched {label} channel via API during on_ready: {cid}")
+                except Exception as e:
+                    logger.warning(f"Channel with ID {cid} not found during on_ready ({label}): {e}")
+                    continue
+
+            try:
+                bot_member = chan.guild.get_member(self.bot.user.id)
+                if not bot_member:
+                    logger.warning(f"Bot is not a member of the guild for channel {cid} (on_ready)")
                 else:
-                    logger.info("Thread validation successful")
+                    permissions = chan.permissions_for(bot_member)
+                    if not permissions.send_messages or not permissions.embed_links:
+                        logger.warning(f"Bot lacks required permissions in channel {cid} (on_ready)")
+                    else:
+                        logger.info(f"Channel validation successful ({label}): {cid}")
+            except Exception:
+                pass
         
         # Register persistent view handlers (required for buttons to work after restarts)
         if not self._persistent_view_registered:
@@ -1002,25 +1019,32 @@ class GameMonCog(commands.Cog):
                 return
         self._apply_gif_to_embed(embed, ctx.get("gif_url") if isinstance(ctx, dict) else None)
 
-    async def _get_thread(self):
-        thread = self.bot.get_channel(THREAD_ID)
-        if thread:
-            return thread
+    async def _get_channel(self, channel_id: int):
+        channel = self.bot.get_channel(int(channel_id))
+        if channel:
+            return channel
         try:
-            return await self.bot.fetch_channel(THREAD_ID)
+            return await self.bot.fetch_channel(int(channel_id))
         except Exception as e:
-            logger.error(f"Thread with ID {THREAD_ID} not found. Cannot post feed message: {e}")
+            logger.error(f"Channel with ID {channel_id} not found. Cannot post feed message: {e}")
             return None
+
+    def _get_destination_channel_id_for_game(self, game_name: Optional[str]) -> int:
+        if self._is_hll_game(game_name) and isinstance(HLL_CHANNEL_ID, int) and HLL_CHANNEL_ID:
+            return HLL_CHANNEL_ID
+        return THREAD_ID
 
     async def _post_feed_message(
         self,
         content: str,
+        game_name: Optional[str] = None,
         view: Optional[discord.ui.View] = None,
         gif_url: Optional[str] = None,
         custom_image_url: Optional[str] = None,
     ) -> Optional[discord.Message]:
-        thread = await self._get_thread()
-        if not thread:
+        dest_id = self._get_destination_channel_id_for_game(game_name)
+        channel = await self._get_channel(dest_id)
+        if not channel:
             return None
         try:
             # Use a fresh View instance per message; keep persistent handlers registered via bot.add_view(...)
@@ -1030,9 +1054,9 @@ class GameMonCog(commands.Cog):
             else:
                 self._apply_gif_to_embed(embed, gif_url)
             embed.timestamp = discord.utils.utcnow()
-            msg = await thread.send(embed=embed, view=view or PreferenceView(self))
-            # Keep the thread tidy
-            await self.prune_thread_messages()
+            msg = await channel.send(embed=embed, view=view or PreferenceView(self))
+            # Keep the destination tidy
+            await self.prune_channel_messages(dest_id)
             return msg
         except discord.Forbidden as e:
             logger.error(f"Permission error posting feed message: {e}")
@@ -1050,8 +1074,8 @@ class GameMonCog(commands.Cog):
                     else:
                         self._apply_gif_to_embed(embed, gif_url)
                     embed.timestamp = discord.utils.utcnow()
-                    msg = await thread.send(embed=embed, view=view or PreferenceView(self))
-                    await self.prune_thread_messages()
+                    msg = await channel.send(embed=embed, view=view or PreferenceView(self))
+                    await self.prune_channel_messages(dest_id)
                     return msg
                 except Exception as e2:
                     logger.error(f"Retry failed posting feed message: {e2}")
@@ -1062,12 +1086,12 @@ class GameMonCog(commands.Cog):
             logger.error(f"Unexpected error posting feed message: {e}")
             return None
 
-    async def prune_thread_messages(self) -> None:
-        """Delete this cog's (GameMon) non-pinned messages older than the newest KEEP_LAST_MESSAGES in the monitored thread."""
+    async def prune_channel_messages(self, channel_id: int) -> None:
+        """Delete this cog's (GameMon) non-pinned messages older than the newest KEEP_LAST_MESSAGES in the destination channel/thread."""
         # Avoid overlapping prune runs (posting can happen in bursts)
         async with self._prune_lock:
-            thread = await self._get_thread()
-            if not thread:
+            channel = await self._get_channel(int(channel_id))
+            if not channel:
                 return
 
             bot_user = getattr(self.bot, "user", None)
@@ -1081,7 +1105,7 @@ class GameMonCog(commands.Cog):
             # Collect newest messages created by this cog first (tracked by message id), skipping pinned.
             bot_messages: List[discord.Message] = []
             try:
-                async for msg in thread.history(limit=None, oldest_first=False):
+                async for msg in channel.history(limit=None, oldest_first=False):
                     if msg.pinned:
                         continue
                     if not msg.author or msg.author.id != bot_user.id:
@@ -1232,6 +1256,7 @@ class GameMonCog(commands.Cog):
                         description = self._render_feed_description(ctx)
                         msg = await self._post_feed_message(
                             description,
+                            game_name=ctx.get("game"),
                             view=PreferenceView(self),
                             gif_url=ctx.get("gif_url"),
                             custom_image_url=ctx.get("custom_image_url"),
@@ -1398,14 +1423,22 @@ class GameMonCog(commands.Cog):
 
     async def handle_about_feed_select(self, interaction: discord.Interaction) -> None:
         """Send an ephemeral explanation of the Game Feed and dropdown options."""
+        hll_line = ""
+        try:
+            if isinstance(HLL_CHANNEL_ID, int) and HLL_CHANNEL_ID:
+                hll_line = f" or <#{HLL_CHANNEL_ID}> if the game is Hell Let Loose (only)."
+        except Exception:
+            hll_line = ""
+
         text = (
             "**About the Game Feed❓**\n"
-            "This bot watches your Discord activity (when you start playing a game) and posts it into the <#1412934277133369494> channel or <#1099090838203666474> if the game is Hell Let Loose (only).\nThis only works if you have opted-in and have your device/console linked to your Discord account.\n"
+            f"This bot watches your Discord activity (when you start playing a game) and posts it into the <#{THREAD_ID}> channel{hll_line}\n"
+            "This only works if you have opted-in and have your device/console linked to your Discord account.\n"
             "**Dropdown options**\n"
             "• **Show my games 🎮** — Opt in to posting when you start playing.\n"
             "• **Hide me 🚫** — Opt out so your games are not posted or tracked whatsoever.\n"
             "• **Looking for squad ⚔️** — If you click this on *your* post, it marks it as looking for a squad. If you click it on someone else’s post, it adds you as looking to join.\n"
-            "• **Set my post image/GIF 🖼️** — Starts a DM flow where you can send an image/GIF (attachment or link). That image will be used as the *main embed image* on your future Game Feed posts. To remove your custom image during the 10‑minute DM window, send a DM back to the bot stating `remove`\n"
+            "• **Set my post image/GIF 🖼️** — Starts a DM flow where you can send an image/GIF (attachment or link). That image will be used as the *main embed image* on your future Game Feed posts unless you remove it via DM.\n"
             "• **How to link my console? 🕹️** — Shows official Xbox/PlayStation linking guides."
         )
 
