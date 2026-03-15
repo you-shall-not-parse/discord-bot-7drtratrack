@@ -234,6 +234,35 @@ class GameMonCog(commands.Cog):
         embeds = getattr(message, "embeds", None) or []
         candidates: list[str] = []
 
+        def _normalize_tenor_media_url(url: str) -> str:
+            """Normalize Tenor media URLs to a more embed-friendly form.
+
+            Tenor often serves GIF-picker media as `mediaN.tenor.com/m/...`.
+            The bot's built-in GIFs use `media.tenor.com/...` without `/m/`,
+            which tends to embed more reliably.
+            """
+            try:
+                parsed = urlparse(url)
+            except Exception:
+                return url
+
+            host = (parsed.netloc or "").lower()
+            if "tenor.com" not in host:
+                return url
+
+            path = parsed.path or ""
+            if path.startswith("/m/"):
+                path = path[2:]  # drop leading '/m'
+
+            # Prefer the canonical host if it's a tenor media host.
+            if host.startswith("media") and host.endswith(".tenor.com"):
+                host = "media.tenor.com"
+
+            try:
+                return parsed._replace(netloc=host, path=path).geturl()
+            except Exception:
+                return url
+
         def _maybe_decode_proxy(url: str) -> str:
             """If url looks like a proxy with a `url=` param, return the decoded target."""
             try:
@@ -258,6 +287,8 @@ class GameMonCog(commands.Cog):
 
             # Prefer the underlying target when Discord provides a proxy URL.
             candidate = _maybe_decode_proxy(candidate).strip()
+            if candidate:
+                candidate = _normalize_tenor_media_url(candidate).strip()
             if not candidate:
                 return
 
@@ -290,6 +321,8 @@ class GameMonCog(commands.Cog):
             if isinstance(video_url, str) and video_url.strip():
                 v = video_url.strip()
                 v = _maybe_decode_proxy(v).strip()
+                if v:
+                    v = _normalize_tenor_media_url(v).strip()
                 try:
                     parsed = urlparse(v)
                     path = parsed.path or ""
@@ -390,15 +423,30 @@ class GameMonCog(commands.Cog):
         except Exception:
             return None
 
-        # Prefer the direct GIF (Tenor commonly includes media*.tenor.com/m/...gif in the page).
-        gif_matches = re.findall(r"https?://media\d+\.tenor\.com/[^\s\"']+\.gif", html, flags=re.IGNORECASE)
+        # Prefer the direct GIF (Tenor commonly includes media*.tenor.com/...gif in the page).
+        gif_matches = re.findall(r"https?://media\d*\.tenor\.com/[^\s\"']+\.gif", html, flags=re.IGNORECASE)
         if not gif_matches:
             return None
 
         # Heuristic: prefer /m/ URLs (common on tenor pages), else first.
         gif_matches = [m.strip() for m in gif_matches if isinstance(m, str) and m.strip()]
+        def _normalize(url: str) -> str:
+            try:
+                parsed = urlparse(url)
+            except Exception:
+                return url
+            host = "media.tenor.com" if (parsed.netloc or "").lower().endswith(".tenor.com") else (parsed.netloc or "")
+            path = parsed.path or ""
+            if path.startswith("/m/"):
+                path = path[2:]
+            try:
+                return parsed._replace(netloc=host, path=path).geturl()
+            except Exception:
+                return url
+
+        gif_matches = [_normalize(m.strip()) for m in gif_matches if isinstance(m, str) and m.strip()]
         for m in gif_matches:
-            if "/m/" in m:
+            if m.lower().endswith(".gif") and "/m/" not in m:
                 return m
         return gif_matches[0] if gif_matches else None
 
@@ -709,6 +757,17 @@ class GameMonCog(commands.Cog):
                         resolved = await self._resolve_tenor_page_to_direct_gif(raw) if raw else None
                         if resolved and self.is_valid_direct_image_url(resolved):
                             url = resolved
+                    if isinstance(url, str) and url.strip():
+                        # Normalize Tenor media URLs before saving.
+                        try:
+                            parsed = urlparse(url.strip())
+                            if (parsed.netloc or "").lower().endswith(".tenor.com"):
+                                path = parsed.path or ""
+                                if path.startswith("/m/"):
+                                    path = path[2:]
+                                url = parsed._replace(netloc="media.tenor.com", path=path).geturl()
+                        except Exception:
+                            pass
                     if not url:
                         await message.channel.send(
                             "Please send an image/GIF as an attachment, use the Discord GIF picker (Tenor), or paste a direct image/GIF link.\n"
