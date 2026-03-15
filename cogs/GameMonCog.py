@@ -7,6 +7,7 @@ import asyncio
 import logging
 import random
 import re
+import aiohttp
 from typing import List, Optional
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -341,6 +342,66 @@ class GameMonCog(commands.Cog):
 
         return None
 
+    def _pick_first_http_url_from_text(self, text: str) -> Optional[str]:
+        """Return the first http(s) URL from text (not necessarily a direct image)."""
+        if not isinstance(text, str):
+            return None
+
+        for token in text.split():
+            candidate = token.strip().strip("<>").strip()
+            if not candidate:
+                continue
+            if candidate.startswith("http://") or candidate.startswith("https://"):
+                return candidate
+
+        match = re.search(r"https?://\S+", text)
+        if match:
+            return match.group(0).strip().strip("<>").strip()
+        return None
+
+    async def _resolve_tenor_page_to_direct_gif(self, url: str) -> Optional[str]:
+        """Resolve a Tenor page URL (tenor.com/view/...) to a direct .gif URL.
+
+        Tenor 'share' links are often page URLs; embeds require direct media URLs.
+        """
+        if not isinstance(url, str) or not url.strip():
+            return None
+
+        candidate = url.strip().strip("<>").strip()
+        try:
+            parsed = urlparse(candidate)
+        except Exception:
+            return None
+
+        host = (parsed.netloc or "").lower()
+        path = (parsed.path or "").lower()
+        if "tenor.com" not in host:
+            return None
+        if "/view/" not in path:
+            return None
+
+        timeout = aiohttp.ClientTimeout(total=6)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(candidate, headers={"User-Agent": "Mozilla/5.0"}, allow_redirects=True) as resp:
+                    if resp.status != 200:
+                        return None
+                    html = await resp.text(errors="ignore")
+        except Exception:
+            return None
+
+        # Prefer the direct GIF (Tenor commonly includes media*.tenor.com/m/...gif in the page).
+        gif_matches = re.findall(r"https?://media\d+\.tenor\.com/[^\s\"']+\.gif", html, flags=re.IGNORECASE)
+        if not gif_matches:
+            return None
+
+        # Heuristic: prefer /m/ URLs (common on tenor pages), else first.
+        gif_matches = [m.strip() for m in gif_matches if isinstance(m, str) and m.strip()]
+        for m in gif_matches:
+            if "/m/" in m:
+                return m
+        return gif_matches[0] if gif_matches else None
+
     async def _clear_user_custom_image(self, user_id: str, channel: discord.abc.Messageable) -> None:
         user_id = str(user_id)
         record = self.ensure_user_pref_record(user_id)
@@ -643,6 +704,11 @@ class GameMonCog(commands.Cog):
                         return
 
                     url = self._pick_first_image_url_from_message(message)
+                    if not url:
+                        raw = self._pick_first_http_url_from_text(content)
+                        resolved = await self._resolve_tenor_page_to_direct_gif(raw) if raw else None
+                        if resolved and self.is_valid_direct_image_url(resolved):
+                            url = resolved
                     if not url:
                         await message.channel.send(
                             "Please send an image/GIF as an attachment, use the Discord GIF picker (Tenor), or paste a direct image/GIF link.\n"
