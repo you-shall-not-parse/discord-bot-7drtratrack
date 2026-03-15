@@ -7,6 +7,7 @@ import asyncio
 import logging
 import random
 from typing import List, Optional
+from urllib.parse import urlparse
 
 from data_paths import data_path
 
@@ -94,6 +95,11 @@ class PreferenceView(discord.ui.View):
                 description="Show Xbox/PlayStation linking guides"
             ),
             discord.SelectOption(
+                label="Set my post image/GIF 🖼️",
+                value="custom_image",
+                description="Use your own image on your posts"
+            ),
+            discord.SelectOption(
                 label="Hide me 🚫",
                 value="opt_out",
                 description="Do not post my games"
@@ -111,11 +117,15 @@ class PreferenceView(discord.ui.View):
             await self.cog.handle_console_help_select(interaction)
             return
 
+        if pref == "custom_image":
+            await self.cog.handle_custom_image_select(interaction)
+            return
+
         await self._set_preference(interaction, pref)
         
     async def _set_preference(self, interaction, pref):
         user_id = str(interaction.user.id)
-        current_pref = self.cog.prefs.get(user_id, DEFAULT_PREFERENCE)
+        current_pref = self.cog.get_user_preference(user_id)
         if current_pref == pref:
             await interaction.response.send_message(
                 f"You're already set to '{pref}'.",
@@ -123,7 +133,9 @@ class PreferenceView(discord.ui.View):
             )
             return
 
-        self.cog.prefs[user_id] = pref
+        record = self.cog.ensure_user_pref_record(user_id)
+        record["pref"] = pref
+        self.cog.prefs[user_id] = record
         success = await self.cog.save_json(PREFS_FILE, self.cog.prefs)
         
         if success:
@@ -142,6 +154,76 @@ class PreferenceView(discord.ui.View):
                 "Error saving preference. Please try again.",
                 ephemeral=True
             )
+
+
+class CustomImageModal(discord.ui.Modal, title="Set your post image/GIF"):
+    def __init__(self, cog: "GameMonCog", user_id: str, message_id: Optional[int] = None):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.user_id = str(user_id)
+        self.message_id = int(message_id) if message_id is not None else None
+
+        self.image_url = discord.ui.TextInput(
+            label="Direct image/GIF URL",
+            placeholder="https://...",
+            required=True,
+            max_length=500,
+        )
+        self.add_item(self.image_url)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        url = (str(self.image_url.value) if self.image_url.value is not None else "").strip()
+        if not self.cog.is_valid_media_url(url):
+            await interaction.response.send_message(
+                "That doesn't look like a valid http(s) URL. Please paste a direct image/GIF link.",
+                ephemeral=True,
+            )
+            return
+
+        # Acknowledge quickly to avoid interaction timeouts, then do work.
+        await interaction.response.defer(ephemeral=True)
+
+        record = self.cog.ensure_user_pref_record(self.user_id)
+        record["custom_image_url"] = url
+        self.cog.prefs[self.user_id] = record
+
+        success = await self.cog.save_json(PREFS_FILE, self.cog.prefs)
+        if not success:
+            await interaction.followup.send("Error saving your image. Please try again.", ephemeral=True)
+            return
+
+        # Update the specific message (if provided) so the user sees immediate effect.
+        if self.message_id is not None:
+            try:
+                channel = interaction.channel
+                msg = None
+                if channel and hasattr(channel, "fetch_message"):
+                    msg = await channel.fetch_message(self.message_id)
+
+                if msg:
+                    msg_id = str(msg.id)
+                    ctx = self.cog.feed_state.get("messages", {}).get(msg_id)
+                    if isinstance(ctx, dict):
+                        # Only allow editing when the clicker is the original poster.
+                        target_user_id = str(ctx.get("target_user_id")) if ctx.get("target_user_id") is not None else None
+                        if target_user_id and str(interaction.user.id) == target_user_id:
+                            ctx["custom_image_url"] = url
+                            description = self.cog._render_feed_description(ctx)
+                            embed = msg.embeds[0] if msg.embeds else discord.Embed(color=discord.Color.green())
+                            embed.description = description
+                            self.cog._apply_ctx_media_to_embed(embed, ctx)
+                            embed.timestamp = discord.utils.utcnow()
+                            await msg.edit(embed=embed, view=PreferenceView(self.cog))
+                            self.cog.feed_state.setdefault("messages", {})
+                            self.cog.feed_state["messages"][msg_id] = ctx
+                            await self.cog.save_json(FEED_STATE_FILE, self.cog.feed_state)
+            except Exception as e:
+                logger.error(f"Failed to update message after setting custom image: {e}")
+
+        await interaction.followup.send(
+            "Saved! Your future GameMon posts will use that image as the main embed image.",
+            ephemeral=True,
+        )
 
 class GameMonCog(commands.Cog):
     def __init__(self, bot):
@@ -168,6 +250,63 @@ class GameMonCog(commands.Cog):
 
         # Persistent view registration guard (on_ready can fire multiple times)
         self._persistent_view_registered = False
+
+    # ---------- Preference Helpers ----------
+    def ensure_user_pref_record(self, user_id: str) -> dict:
+        """Return a mutable per-user record, migrating legacy string prefs on the fly."""
+        user_id = str(user_id)
+        existing = self.prefs.get(user_id)
+
+        if isinstance(existing, dict):
+            record = dict(existing)
+        elif isinstance(existing, str):
+            record = {"pref": existing}
+        else:
+            record = {"pref": DEFAULT_PREFERENCE}
+
+        # Normalize fields
+        if "pref" not in record or not isinstance(record.get("pref"), str):
+            record["pref"] = DEFAULT_PREFERENCE
+        if "custom_image_url" in record and not isinstance(record.get("custom_image_url"), str):
+            record.pop("custom_image_url", None)
+
+        return record
+
+    def get_user_preference(self, user_id: str) -> str:
+        user_id = str(user_id)
+        value = self.prefs.get(user_id)
+        if isinstance(value, dict):
+            pref = value.get("pref")
+            return pref if isinstance(pref, str) and pref else DEFAULT_PREFERENCE
+        if isinstance(value, str) and value:
+            return value
+        return DEFAULT_PREFERENCE
+
+    def get_user_custom_image_url(self, user_id: Optional[str]) -> Optional[str]:
+        if user_id is None:
+            return None
+        user_id = str(user_id)
+        value = self.prefs.get(user_id)
+        if isinstance(value, dict):
+            url = value.get("custom_image_url")
+            return url.strip() if isinstance(url, str) and url.strip() else None
+        return None
+
+    def is_valid_media_url(self, url: str) -> bool:
+        if not isinstance(url, str):
+            return False
+        url = url.strip()
+        if not url:
+            return False
+        try:
+            parsed = urlparse(url)
+        except Exception:
+            return False
+        if parsed.scheme not in {"http", "https"}:
+            return False
+        if not parsed.netloc:
+            return False
+        return True
 
     def cog_unload(self):
         """Clean up when cog is unloaded"""
@@ -367,7 +506,7 @@ class GameMonCog(commands.Cog):
             if TEMP_DISABLE_DEFAULT_MONITORING and user_id not in self.prefs:
                 return
 
-            pref = self.prefs.get(user_id, DEFAULT_PREFERENCE)
+            pref = self.get_user_preference(user_id)
 
             # If opted out, don't post anything
             if pref != "opt_in":
@@ -453,6 +592,22 @@ class GameMonCog(commands.Cog):
             embed.set_image(url=gif_url)
             embed.set_thumbnail(url=None)
 
+    def _apply_custom_image_to_embed(self, embed: discord.Embed, image_url: Optional[str]) -> None:
+        """Apply a user-provided image/GIF as the main embed image (never thumbnail)."""
+        if not image_url:
+            return
+
+        embed.set_image(url=image_url)
+        embed.set_thumbnail(url=None)
+
+    def _apply_ctx_media_to_embed(self, embed: discord.Embed, ctx: dict) -> None:
+        """Apply the correct media to an embed based on message context."""
+        custom_image_url = ctx.get("custom_image_url") if isinstance(ctx, dict) else None
+        if isinstance(custom_image_url, str) and custom_image_url.strip():
+            self._apply_custom_image_to_embed(embed, custom_image_url.strip())
+            return
+        self._apply_gif_to_embed(embed, ctx.get("gif_url") if isinstance(ctx, dict) else None)
+
     async def _get_thread(self):
         thread = self.bot.get_channel(THREAD_ID)
         if thread:
@@ -468,6 +623,7 @@ class GameMonCog(commands.Cog):
         content: str,
         view: Optional[discord.ui.View] = None,
         gif_url: Optional[str] = None,
+        custom_image_url: Optional[str] = None,
     ) -> Optional[discord.Message]:
         thread = await self._get_thread()
         if not thread:
@@ -475,7 +631,10 @@ class GameMonCog(commands.Cog):
         try:
             # Use a fresh View instance per message; keep persistent handlers registered via bot.add_view(...)
             embed = discord.Embed(description=content, color=discord.Color.green())
-            self._apply_gif_to_embed(embed, gif_url)
+            if custom_image_url:
+                self._apply_custom_image_to_embed(embed, custom_image_url)
+            else:
+                self._apply_gif_to_embed(embed, gif_url)
             embed.timestamp = discord.utils.utcnow()
             msg = await thread.send(embed=embed, view=view or PreferenceView(self))
             # Keep the thread tidy
@@ -492,7 +651,10 @@ class GameMonCog(commands.Cog):
                 await asyncio.sleep(retry_after)
                 try:
                     embed = discord.Embed(description=content, color=discord.Color.green())
-                    self._apply_gif_to_embed(embed, gif_url)
+                    if custom_image_url:
+                        self._apply_custom_image_to_embed(embed, custom_image_url)
+                    else:
+                        self._apply_gif_to_embed(embed, gif_url)
                     embed.timestamp = discord.utils.utcnow()
                     msg = await thread.send(embed=embed, view=view or PreferenceView(self))
                     await self.prune_thread_messages()
@@ -617,14 +779,17 @@ class GameMonCog(commands.Cog):
             "target_display": str(fake_name),
             "game": "Hell Let Loose",
             "gif_url": None,
+            "custom_image_url": None,
             "lfs_enabled": False,
             "joiners": [],
         }
-        ctx["gif_url"] = self._pick_gif_url_for_game(ctx.get("game"))
+        ctx["custom_image_url"] = self.get_user_custom_image_url(str(invoker.id))
+        if not ctx.get("custom_image_url"):
+            ctx["gif_url"] = self._pick_gif_url_for_game(ctx.get("game"))
         description = self._render_feed_description(ctx)
 
         embed = discord.Embed(description=description, color=discord.Color.green())
-        self._apply_gif_to_embed(embed, ctx.get("gif_url"))
+        self._apply_ctx_media_to_embed(embed, ctx)
         embed.timestamp = discord.utils.utcnow()
 
         await interaction.response.send_message(embed=embed, view=PreferenceView(self))
@@ -661,17 +826,21 @@ class GameMonCog(commands.Cog):
                             "target_display": event.get("target_display"),
                             "game": event.get("game"),
                             "gif_url": None,
+                            "custom_image_url": None,
                             "lfs_enabled": False,
                             "joiners": [],
                         }
 
-                        ctx["gif_url"] = self._pick_gif_url_for_game(ctx.get("game"))
+                        ctx["custom_image_url"] = self.get_user_custom_image_url(ctx.get("target_user_id"))
+                        if not ctx.get("custom_image_url"):
+                            ctx["gif_url"] = self._pick_gif_url_for_game(ctx.get("game"))
 
                         description = self._render_feed_description(ctx)
                         msg = await self._post_feed_message(
                             description,
                             view=PreferenceView(self),
                             gif_url=ctx.get("gif_url"),
+                            custom_image_url=ctx.get("custom_image_url"),
                         )
 
                         if msg:
@@ -746,7 +915,7 @@ class GameMonCog(commands.Cog):
             description = self._render_feed_description(ctx)
             embed = message.embeds[0] if message.embeds else discord.Embed(color=discord.Color.green())
             embed.description = description
-            self._apply_gif_to_embed(embed, ctx.get("gif_url"))
+            self._apply_ctx_media_to_embed(embed, ctx)
             embed.timestamp = discord.utils.utcnow()
 
             await message.edit(embed=embed, view=PreferenceView(self))
@@ -755,6 +924,31 @@ class GameMonCog(commands.Cog):
             await self.save_json(FEED_STATE_FILE, self.feed_state)
         except Exception as e:
             logger.error(f"Error handling LFS select: {e}")
+            try:
+                if interaction.response.is_done():
+                    await interaction.followup.send("Something went wrong handling that action.", ephemeral=True)
+                else:
+                    await interaction.response.send_message("Something went wrong handling that action.", ephemeral=True)
+            except Exception:
+                pass
+
+    async def handle_custom_image_select(self, interaction: discord.Interaction) -> None:
+        """Open a modal to set the clicker's per-user custom image/GIF.
+
+        The dropdown is attached to every feed post, so anyone can open the modal from any post.
+        The clicked message is only updated if the clicker is also that post's original poster
+        (enforced inside the modal using the stored message context).
+        """
+        try:
+            message = interaction.message
+            if not message:
+                await interaction.response.send_message("Couldn't find the message for this action.", ephemeral=True)
+                return
+
+            clicker_id = str(interaction.user.id)
+            await interaction.response.send_modal(CustomImageModal(self, user_id=clicker_id, message_id=message.id))
+        except Exception as e:
+            logger.error(f"Error handling custom image select: {e}")
             try:
                 if interaction.response.is_done():
                     await interaction.followup.send("Something went wrong handling that action.", ephemeral=True)
