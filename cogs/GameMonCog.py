@@ -786,8 +786,16 @@ class GameMonCog(commands.Cog):
                         return
 
                     self._pending_custom_image.pop(user_id, None)
+                    suffix = ""
+                    try:
+                        if isinstance(url, str) and url.lower().endswith(".gif"):
+                            suffix = " (GIF)"
+                    except Exception:
+                        pass
+
                     await message.channel.send(
-                        "Saved! Your future GameMon posts will use that image as the main embed image.",
+                        "Saved! Your future GameMon posts will use that image as the main embed image.\n"
+                        f"Saved URL{suffix}: {url}"
                     )
                     return
         except Exception as e:
