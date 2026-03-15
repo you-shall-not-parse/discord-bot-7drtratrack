@@ -97,7 +97,7 @@ class PreferenceView(discord.ui.View):
             discord.SelectOption(
                 label="Set my post image/GIF 🖼️",
                 value="custom_image",
-                description="Use your own image on your posts"
+                description="Send an image/GIF to the bot via DM"
             ),
             discord.SelectOption(
                 label="Hide me 🚫",
@@ -156,75 +156,6 @@ class PreferenceView(discord.ui.View):
             )
 
 
-class CustomImageModal(discord.ui.Modal, title="Set your post image/GIF"):
-    def __init__(self, cog: "GameMonCog", user_id: str, message_id: Optional[int] = None):
-        super().__init__(timeout=300)
-        self.cog = cog
-        self.user_id = str(user_id)
-        self.message_id = int(message_id) if message_id is not None else None
-
-        self.image_url = discord.ui.TextInput(
-            label="Direct image/GIF URL",
-            placeholder="https://...",
-            required=True,
-            max_length=500,
-        )
-        self.add_item(self.image_url)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        url = (str(self.image_url.value) if self.image_url.value is not None else "").strip()
-        if not self.cog.is_valid_media_url(url):
-            await interaction.response.send_message(
-                "That doesn't look like a valid http(s) URL. Please paste a direct image/GIF link.",
-                ephemeral=True,
-            )
-            return
-
-        # Acknowledge quickly to avoid interaction timeouts, then do work.
-        await interaction.response.defer(ephemeral=True)
-
-        record = self.cog.ensure_user_pref_record(self.user_id)
-        record["custom_image_url"] = url
-        self.cog.prefs[self.user_id] = record
-
-        success = await self.cog.save_json(PREFS_FILE, self.cog.prefs)
-        if not success:
-            await interaction.followup.send("Error saving your image. Please try again.", ephemeral=True)
-            return
-
-        # Update the specific message (if provided) so the user sees immediate effect.
-        if self.message_id is not None:
-            try:
-                channel = interaction.channel
-                msg = None
-                if channel and hasattr(channel, "fetch_message"):
-                    msg = await channel.fetch_message(self.message_id)
-
-                if msg:
-                    msg_id = str(msg.id)
-                    ctx = self.cog.feed_state.get("messages", {}).get(msg_id)
-                    if isinstance(ctx, dict):
-                        # Only allow editing when the clicker is the original poster.
-                        target_user_id = str(ctx.get("target_user_id")) if ctx.get("target_user_id") is not None else None
-                        if target_user_id and str(interaction.user.id) == target_user_id:
-                            ctx["custom_image_url"] = url
-                            description = self.cog._render_feed_description(ctx)
-                            embed = msg.embeds[0] if msg.embeds else discord.Embed(color=discord.Color.green())
-                            embed.description = description
-                            self.cog._apply_ctx_media_to_embed(embed, ctx)
-                            embed.timestamp = discord.utils.utcnow()
-                            await msg.edit(embed=embed, view=PreferenceView(self.cog))
-                            self.cog.feed_state.setdefault("messages", {})
-                            self.cog.feed_state["messages"][msg_id] = ctx
-                            await self.cog.save_json(FEED_STATE_FILE, self.cog.feed_state)
-            except Exception as e:
-                logger.error(f"Failed to update message after setting custom image: {e}")
-
-        await interaction.followup.send(
-            "Saved! Your future GameMon posts will use that image as the main embed image.",
-            ephemeral=True,
-        )
-
 class GameMonCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -250,6 +181,35 @@ class GameMonCog(commands.Cog):
 
         # Persistent view registration guard (on_ready can fire multiple times)
         self._persistent_view_registered = False
+
+        # Pending DM-based custom image flow: user_id -> {"expires_at": float}
+        self._pending_custom_image: dict[str, dict] = {}
+
+    # ---------- Custom Image via DM ----------
+    def _custom_image_dm_expires_at(self) -> float:
+        # 10 minutes from now
+        return asyncio.get_running_loop().time() + 600
+
+    def _pick_first_image_attachment_url(self, message: discord.Message) -> Optional[str]:
+        atts = getattr(message, "attachments", None) or []
+        for att in atts:
+            try:
+                content_type = (getattr(att, "content_type", None) or "").lower()
+                filename = (getattr(att, "filename", None) or "").lower()
+                url = getattr(att, "url", None)
+            except Exception:
+                continue
+
+            if not isinstance(url, str) or not url.strip():
+                continue
+
+            # Prefer content_type when available; otherwise fall back to file extension.
+            if content_type.startswith("image/"):
+                return url
+            if filename.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp")):
+                return url
+
+        return None
 
     # ---------- Preference Helpers ----------
     def ensure_user_pref_record(self, user_id: str) -> dict:
@@ -468,6 +428,45 @@ class GameMonCog(commands.Cog):
     @commands.Cog.listener()
     async def on_message(self, message):
         """Monitor messages and delete human messages in the tracked thread"""
+        # Handle DM-based custom image uploads first.
+        try:
+            if getattr(message, "guild", None) is None and message.author and not message.author.bot:
+                user_id = str(message.author.id)
+                pending = self._pending_custom_image.get(user_id)
+                if pending:
+                    now = asyncio.get_running_loop().time()
+                    expires_at = float(pending.get("expires_at") or 0)
+                    if expires_at and now > expires_at:
+                        self._pending_custom_image.pop(user_id, None)
+                        await message.channel.send(
+                            "That request expired. Use the dropdown again to start over.",
+                        )
+                        return
+
+                    url = self._pick_first_image_attachment_url(message)
+                    if not url:
+                        await message.channel.send(
+                            "Please send an image/GIF as an attachment (not a link).",
+                        )
+                        return
+
+                    record = self.ensure_user_pref_record(user_id)
+                    record["custom_image_url"] = url
+                    self.prefs[user_id] = record
+
+                    success = await self.save_json(PREFS_FILE, self.prefs)
+                    if not success:
+                        await message.channel.send("Error saving your image. Please try again.")
+                        return
+
+                    self._pending_custom_image.pop(user_id, None)
+                    await message.channel.send(
+                        "Saved! Your future GameMon posts will use that image as the main embed image.",
+                    )
+                    return
+        except Exception as e:
+            logger.error(f"Error handling DM custom image flow: {e}")
+
         # Skip messages from bots (including the bot itself)
         if message.author.bot:
             return
@@ -933,11 +932,10 @@ class GameMonCog(commands.Cog):
                 pass
 
     async def handle_custom_image_select(self, interaction: discord.Interaction) -> None:
-        """Open a modal to set the clicker's per-user custom image/GIF.
+        """Start a DM flow to set the clicker's per-user custom image/GIF.
 
-        The dropdown is attached to every feed post, so anyone can open the modal from any post.
-        The clicked message is only updated if the clicker is also that post's original poster
-        (enforced inside the modal using the stored message context).
+        The dropdown is attached to every feed post, so anyone can start the DM flow from any post.
+        The saved image applies to the clicker's future posts only.
         """
         try:
             message = interaction.message
@@ -946,7 +944,28 @@ class GameMonCog(commands.Cog):
                 return
 
             clicker_id = str(interaction.user.id)
-            await interaction.response.send_modal(CustomImageModal(self, user_id=clicker_id, message_id=message.id))
+
+            # Arm the DM flow.
+            self._pending_custom_image[clicker_id] = {"expires_at": self._custom_image_dm_expires_at()}
+
+            # DM the user instructions.
+            try:
+                dm = await interaction.user.create_dm()
+                await dm.send(
+                    "Reply to this DM with the image/GIF you want GameMon to use on your posts (attach the file).\n"
+                    "I will save the first image attachment you send in the next 10 minutes."
+                )
+            except discord.Forbidden:
+                await interaction.response.send_message(
+                    "I couldn't DM you (your DMs might be closed). Please enable DMs from server members and try again.",
+                    ephemeral=True,
+                )
+                return
+
+            await interaction.response.send_message(
+                "Check your DMs — send me an image/GIF attachment there to save it for your future posts.",
+                ephemeral=True,
+            )
         except Exception as e:
             logger.error(f"Error handling custom image select: {e}")
             try:
