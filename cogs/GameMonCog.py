@@ -254,6 +254,24 @@ class GameMonCog(commands.Cog):
             if path.startswith("/m/"):
                 path = path[2:]  # drop leading '/m'
 
+            # If this is a Tenor "gif" URL that uses an AAAP* rendition (often actually mp4),
+            # rewrite it to the common GIF rendition code (AAAAd) which tends to embed.
+            try:
+                parts = path.split("/")
+                if len(parts) >= 2 and parts[0] == "":
+                    # path like /<idcode>/<name>.gif
+                    idcode = parts[1]
+                    filename = parts[2] if len(parts) > 2 else ""
+                    if isinstance(idcode, str) and idcode and isinstance(filename, str) and filename.lower().endswith(".gif"):
+                        if len(idcode) > 5:
+                            base = idcode[:-5]
+                            code = idcode[-5:]
+                            if code.startswith("AAAP"):
+                                parts[1] = base + "AAAAd"
+                                path = "/".join(parts)
+            except Exception:
+                pass
+
             # Prefer the canonical host if it's a tenor media host.
             if host.startswith("media") and host.endswith(".tenor.com"):
                 host = "media.tenor.com"
@@ -333,7 +351,12 @@ class GameMonCog(commands.Cog):
                 except Exception:
                     pass
 
-        # Prefer actual GIFs over still previews.
+        # Prefer Tenor GIF renditions that are likely to be real GIFs.
+        for url in candidates:
+            if url.lower().endswith(".gif") and any(code in url for code in ("AAAAd", "AAAAC")):
+                return url
+
+        # Then prefer any GIF over still previews.
         for url in candidates:
             if url.lower().endswith(".gif"):
                 return url
@@ -439,12 +462,32 @@ class GameMonCog(commands.Cog):
             path = parsed.path or ""
             if path.startswith("/m/"):
                 path = path[2:]
+
+            # Rewrite AAAP* renditions to AAAAd for better embed behavior.
+            try:
+                parts = path.split("/")
+                if len(parts) >= 2 and parts[0] == "":
+                    idcode = parts[1]
+                    filename = parts[2] if len(parts) > 2 else ""
+                    if isinstance(idcode, str) and idcode and isinstance(filename, str) and filename.lower().endswith(".gif"):
+                        if len(idcode) > 5:
+                            base = idcode[:-5]
+                            code = idcode[-5:]
+                            if code.startswith("AAAP"):
+                                parts[1] = base + "AAAAd"
+                                path = "/".join(parts)
+            except Exception:
+                pass
             try:
                 return parsed._replace(netloc=host, path=path).geturl()
             except Exception:
                 return url
 
         gif_matches = [_normalize(m.strip()) for m in gif_matches if isinstance(m, str) and m.strip()]
+        # Prefer GIF renditions likely to be actual GIFs.
+        for m in gif_matches:
+            if m.lower().endswith(".gif") and any(code in m for code in ("AAAAd", "AAAAC")):
+                return m
         for m in gif_matches:
             if m.lower().endswith(".gif") and "/m/" not in m:
                 return m
@@ -765,6 +808,22 @@ class GameMonCog(commands.Cog):
                                 path = parsed.path or ""
                                 if path.startswith("/m/"):
                                     path = path[2:]
+                                # Rewrite AAAP* renditions to AAAAd for better embed behavior.
+                                try:
+                                    parts = path.split("/")
+                                    if len(parts) >= 2 and parts[0] == "":
+                                        idcode = parts[1]
+                                        filename = parts[2] if len(parts) > 2 else ""
+                                        if isinstance(idcode, str) and idcode and isinstance(filename, str) and filename.lower().endswith(".gif"):
+                                            if len(idcode) > 5:
+                                                base = idcode[:-5]
+                                                code = idcode[-5:]
+                                                if code.startswith("AAAP"):
+                                                    parts[1] = base + "AAAAd"
+                                                    path = "/".join(parts)
+                                except Exception:
+                                    pass
+
                                 url = parsed._replace(netloc="media.tenor.com", path=path).geturl()
                         except Exception:
                             pass
