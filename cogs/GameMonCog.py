@@ -6,6 +6,7 @@ import os
 import asyncio
 import logging
 import random
+import re
 from typing import List, Optional
 from urllib.parse import urlparse
 
@@ -97,7 +98,7 @@ class PreferenceView(discord.ui.View):
             discord.SelectOption(
                 label="Set my post image/GIF 🖼️",
                 value="custom_image",
-                description="Send an image/GIF to the bot via DM"
+                description="DM the bot an image/GIF or link"
             ),
             discord.SelectOption(
                 label="Hide me 🚫",
@@ -210,6 +211,43 @@ class GameMonCog(commands.Cog):
                 return url
 
         return None
+
+    def _pick_first_url_from_text(self, text: str) -> Optional[str]:
+        if not isinstance(text, str):
+            return None
+
+        # Split on whitespace; tolerate Discord's <https://...> formatting.
+        for token in text.split():
+            candidate = token.strip().strip("<>").strip()
+            if not candidate:
+                continue
+            if self.is_valid_media_url(candidate):
+                return candidate
+
+        # Fallback: find any http(s) substring.
+        match = re.search(r"https?://\S+", text)
+        if match:
+            candidate = match.group(0).strip().strip("<>").strip()
+            if self.is_valid_media_url(candidate):
+                return candidate
+
+        return None
+
+    async def _clear_user_custom_image(self, user_id: str, channel: discord.abc.Messageable) -> None:
+        user_id = str(user_id)
+        record = self.ensure_user_pref_record(user_id)
+        if "custom_image_url" not in record:
+            await channel.send("You don't currently have a custom post image set.")
+            return
+
+        record.pop("custom_image_url", None)
+        self.prefs[user_id] = record
+        success = await self.save_json(PREFS_FILE, self.prefs)
+        if not success:
+            await channel.send("Error clearing your image. Please try again.")
+            return
+
+        await channel.send("Removed. Your posts will use the default images again.")
 
     # ---------- Preference Helpers ----------
     def ensure_user_pref_record(self, user_id: str) -> dict:
@@ -432,6 +470,10 @@ class GameMonCog(commands.Cog):
         try:
             if getattr(message, "guild", None) is None and message.author and not message.author.bot:
                 user_id = str(message.author.id)
+
+                content = (getattr(message, "content", None) or "").strip()
+                content_lc = content.lower()
+
                 pending = self._pending_custom_image.get(user_id)
                 if pending:
                     now = asyncio.get_running_loop().time()
@@ -443,10 +485,17 @@ class GameMonCog(commands.Cog):
                         )
                         return
 
-                    url = self._pick_first_image_attachment_url(message)
+                    # Only allow clearing during the active pending window.
+                    if content_lc in {"remove", "clear", "reset", "default", "none"}:
+                        self._pending_custom_image.pop(user_id, None)
+                        await self._clear_user_custom_image(user_id, message.channel)
+                        return
+
+                    url = self._pick_first_image_attachment_url(message) or self._pick_first_url_from_text(content)
                     if not url:
                         await message.channel.send(
-                            "Please send an image/GIF as an attachment (not a link).",
+                            "Please send an image/GIF as an attachment, or paste a direct image/GIF link.\n"
+                            "Tip: send `remove` to clear your custom image."
                         )
                         return
 
@@ -952,8 +1001,10 @@ class GameMonCog(commands.Cog):
             try:
                 dm = await interaction.user.create_dm()
                 await dm.send(
-                    "Reply to this DM with the image/GIF you want GameMon to use on your posts (attach the file).\n"
-                    "I will save the first image attachment you send in the next 10 minutes."
+                    "Reply to this DM with the image/GIF you want game monitor to use on all of your future posts.\n"
+                    "- You can attach an image/GIF, OR paste a direct image/GIF link.\n"
+                    "- To remove your custom image and go back to defaults, send: `remove` (within 10 minutes)\n\n"
+                    "I will use the first valid attachment/link you send in the next 10 minutes."
                 )
             except discord.Forbidden:
                 await interaction.response.send_message(
@@ -963,7 +1014,7 @@ class GameMonCog(commands.Cog):
                 return
 
             await interaction.response.send_message(
-                "Check your DMs — send me an image/GIF attachment there to save it for your future posts.",
+                "Check your DMs — send me an image/GIF (attachment or link) to save it for your future posts.",
                 ephemeral=True,
             )
         except Exception as e:
