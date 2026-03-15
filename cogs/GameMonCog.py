@@ -81,6 +81,11 @@ class PreferenceView(discord.ui.View):
         max_values=1,
         options=[
             discord.SelectOption(
+                label="About Game Feed ℹ️",
+                value="about_feed",
+                description="What this is and what the options do"
+            ),
+            discord.SelectOption(
                 label="Show my games 🎮",
                 value="opt_in",
                 description="Post when I start playing"
@@ -110,6 +115,10 @@ class PreferenceView(discord.ui.View):
     )
     async def preference_select(self, interaction: discord.Interaction, select: discord.ui.Select):
         pref = select.values[0]
+        if pref == "about_feed":
+            await self.cog.handle_about_feed_select(interaction)
+            return
+
         if pref == "lfs":
             await self.cog.handle_lfs_select(interaction)
             return
@@ -1049,6 +1058,35 @@ class GameMonCog(commands.Cog):
                 await interaction.followup.send("Something went wrong sending that message.", ephemeral=True)
             else:
                 await interaction.response.send_message("Something went wrong sending that message.", ephemeral=True)
+
+    async def handle_about_feed_select(self, interaction: discord.Interaction) -> None:
+        """Send an ephemeral explanation of the Game Feed and dropdown options."""
+        text = (
+            "**About the Game Feed**\n"
+            "This bot watches your Discord activity (when you start playing a game) and posts it into the <#1412934277133369494> channel or <#1099090838203666474> if the game is Hell Let Loose (only).\n This only works if you have opted-in and have your device/console linked to your Discord account.\n"
+            "**Dropdown options**\n"
+            "• **Show my games 🎮** — Opt in to posting when you start playing.\n"
+            "• **Hide me 🚫** — Opt out so your games are not posted or tracked whatsoever.\n"
+            "• **Looking for squad ⚔️** — If you click this on *your* post, it marks it as looking for a squad. If you click it on someone else’s post, it adds you as looking to join.\n"
+            "• **Set my post image/GIF 🖼️** — Starts a DM flow where you can send an image/GIF (attachment or link). That image will be used as the *main embed image* on your future Game Feed posts.\n"
+            "  - To remove your custom image during the 10‑minute DM window, send a DM back to the bot stating `remove`\n"
+            "• **How to link my console? 🕹️** — Shows official Xbox/PlayStation linking guides."
+        )
+
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(text, ephemeral=True)
+            else:
+                await interaction.response.send_message(text, ephemeral=True)
+        except Exception as e:
+            logger.error(f"Error sending about feed message: {e}")
+            try:
+                if interaction.response.is_done():
+                    await interaction.followup.send("Something went wrong sending that message.", ephemeral=True)
+                else:
+                    await interaction.response.send_message("Something went wrong sending that message.", ephemeral=True)
+            except Exception:
+                pass
 
 async def setup(bot):
     await bot.add_cog(GameMonCog(bot))
