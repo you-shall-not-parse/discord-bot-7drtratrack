@@ -29,6 +29,9 @@ GUILD_ID = 1097913605082579024   # Replace with your guild/server ID
 THREAD_ID = 1412934277133369494  # replace with your thread ID
 IGNORED_GAMES = ["Spotify", "Discord", "Pornhub", "Netflix", "Disney", "Sky TV", "Youtube"]
 
+# For custom image links: Discord embeds generally require a *direct* image URL.
+DIRECT_IMAGE_EXTENSIONS = (".gif", ".png", ".jpg", ".jpeg", ".webp")
+
 # Per-game GIFs (URLs). Keys are treated case-insensitively.
 # (Recommended: use lowercase normalized game names.)
 # Add more games/URLs here.
@@ -81,7 +84,7 @@ class PreferenceView(discord.ui.View):
         max_values=1,
         options=[
             discord.SelectOption(
-                label="About Game Feed ℹ️",
+                label="About Game Feed❓",
                 value="about_feed",
                 description="What this is and what the options do"
             ),
@@ -221,6 +224,49 @@ class GameMonCog(commands.Cog):
 
         return None
 
+    def _pick_first_image_url_from_embeds(self, message: discord.Message) -> Optional[str]:
+        """Try to extract a direct image URL from message embeds.
+
+        This is primarily to support the Discord GIF picker (Tenor), which often
+        sends a message containing an embed preview rather than a file attachment.
+        """
+        embeds = getattr(message, "embeds", None) or []
+        for emb in embeds:
+            try:
+                data = emb.to_dict() if hasattr(emb, "to_dict") else {}
+            except Exception:
+                data = {}
+
+            if not isinstance(data, dict):
+                continue
+
+            for key in ("image", "thumbnail"):
+                try:
+                    url = (data.get(key) or {}).get("url")
+                except Exception:
+                    url = None
+
+                if isinstance(url, str) and url.strip():
+                    candidate = url.strip()
+                    if self.is_valid_direct_image_url(candidate):
+                        return candidate
+
+        return None
+
+    def _pick_first_image_url_from_message(self, message: discord.Message) -> Optional[str]:
+        """Pick the best image/GIF URL from a DM message.
+
+        Priority:
+        1) Image attachment uploads
+        2) GIF picker / rich embeds that contain direct image URLs
+        3) Direct image URL pasted in message content
+        """
+        return (
+            self._pick_first_image_attachment_url(message)
+            or self._pick_first_image_url_from_embeds(message)
+            or self._pick_first_url_from_text((getattr(message, "content", None) or "").strip())
+        )
+
     def _pick_first_url_from_text(self, text: str) -> Optional[str]:
         if not isinstance(text, str):
             return None
@@ -230,14 +276,14 @@ class GameMonCog(commands.Cog):
             candidate = token.strip().strip("<>").strip()
             if not candidate:
                 continue
-            if self.is_valid_media_url(candidate):
+            if self.is_valid_direct_image_url(candidate):
                 return candidate
 
         # Fallback: find any http(s) substring.
         match = re.search(r"https?://\S+", text)
         if match:
             candidate = match.group(0).strip().strip("<>").strip()
-            if self.is_valid_media_url(candidate):
+            if self.is_valid_direct_image_url(candidate):
                 return candidate
 
         return None
@@ -314,6 +360,19 @@ class GameMonCog(commands.Cog):
         if not parsed.netloc:
             return False
         return True
+
+    def is_valid_direct_image_url(self, url: str) -> bool:
+        """True if url is http(s) and looks like a direct image/GIF link."""
+        if not self.is_valid_media_url(url):
+            return False
+
+        try:
+            parsed = urlparse(url.strip())
+        except Exception:
+            return False
+
+        path = (parsed.path or "").lower()
+        return any(path.endswith(ext) for ext in DIRECT_IMAGE_EXTENSIONS)
 
     def cog_unload(self):
         """Clean up when cog is unloaded"""
@@ -500,11 +559,12 @@ class GameMonCog(commands.Cog):
                         await self._clear_user_custom_image(user_id, message.channel)
                         return
 
-                    url = self._pick_first_image_attachment_url(message) or self._pick_first_url_from_text(content)
+                    url = self._pick_first_image_url_from_message(message)
                     if not url:
                         await message.channel.send(
-                            "Please send an image/GIF as an attachment, or paste a direct image/GIF link.\n"
-                            "Tip: send `remove` to clear your custom image."
+                            "Please send an image/GIF as an attachment, use the Discord GIF picker (Tenor), or paste a direct image/GIF link.\n"
+                            "Direct links usually end with .gif/.png/.jpg/.webp.\n"
+                            "Tip: send `remove` to clear your custom image (within the 10 minute window)."
                         )
                         return
 
@@ -661,8 +721,10 @@ class GameMonCog(commands.Cog):
         """Apply the correct media to an embed based on message context."""
         custom_image_url = ctx.get("custom_image_url") if isinstance(ctx, dict) else None
         if isinstance(custom_image_url, str) and custom_image_url.strip():
-            self._apply_custom_image_to_embed(embed, custom_image_url.strip())
-            return
+            candidate = custom_image_url.strip()
+            if self.is_valid_direct_image_url(candidate):
+                self._apply_custom_image_to_embed(embed, candidate)
+                return
         self._apply_gif_to_embed(embed, ctx.get("gif_url") if isinstance(ctx, dict) else None)
 
     async def _get_thread(self):
@@ -688,7 +750,7 @@ class GameMonCog(commands.Cog):
         try:
             # Use a fresh View instance per message; keep persistent handlers registered via bot.add_view(...)
             embed = discord.Embed(description=content, color=discord.Color.green())
-            if custom_image_url:
+            if custom_image_url and self.is_valid_direct_image_url(custom_image_url):
                 self._apply_custom_image_to_embed(embed, custom_image_url)
             else:
                 self._apply_gif_to_embed(embed, gif_url)
@@ -1011,9 +1073,9 @@ class GameMonCog(commands.Cog):
                 dm = await interaction.user.create_dm()
                 await dm.send(
                     "Reply to this DM with the image/GIF you want game monitor to use on all of your future posts.\n"
-                    "- You can attach an image/GIF, OR paste a direct image/GIF link.\n"
+                    "- You can attach an image/GIF, use Discord's GIF picker (Tenor), OR paste a direct image/GIF link (ending in .gif/.png/.jpg/.webp).\n"
                     "- To remove your custom image and go back to defaults, send: `remove` (within 10 minutes)\n\n"
-                    "I will use the first valid attachment/link you send in the next 10 minutes."
+                    "I will use the first valid attachment/GIF-picker/direct-link you send in the next 10 minutes."
                 )
             except discord.Forbidden:
                 await interaction.response.send_message(
@@ -1023,7 +1085,7 @@ class GameMonCog(commands.Cog):
                 return
 
             await interaction.response.send_message(
-                "Check your DMs — send me an image/GIF (attachment or link) to save it for your future posts.",
+                "Check your DMs — send me an image/GIF (attachment, GIF picker, or direct link) to save it for your future posts.",
                 ephemeral=True,
             )
         except Exception as e:
@@ -1062,14 +1124,13 @@ class GameMonCog(commands.Cog):
     async def handle_about_feed_select(self, interaction: discord.Interaction) -> None:
         """Send an ephemeral explanation of the Game Feed and dropdown options."""
         text = (
-            "**About the Game Feed**\n"
-            "This bot watches your Discord activity (when you start playing a game) and posts it into the <#1412934277133369494> channel or <#1099090838203666474> if the game is Hell Let Loose (only).\n This only works if you have opted-in and have your device/console linked to your Discord account.\n"
+            "**About the Game Feed❓**\n"
+            "This bot watches your Discord activity (when you start playing a game) and posts it into the <#1412934277133369494> channel or <#1099090838203666474> if the game is Hell Let Loose (only).\n\n This only works if you have opted-in and have your device/console linked to your Discord account.\n"
             "**Dropdown options**\n"
             "• **Show my games 🎮** — Opt in to posting when you start playing.\n"
             "• **Hide me 🚫** — Opt out so your games are not posted or tracked whatsoever.\n"
             "• **Looking for squad ⚔️** — If you click this on *your* post, it marks it as looking for a squad. If you click it on someone else’s post, it adds you as looking to join.\n"
-            "• **Set my post image/GIF 🖼️** — Starts a DM flow where you can send an image/GIF (attachment or link). That image will be used as the *main embed image* on your future Game Feed posts.\n"
-            "  - To remove your custom image during the 10‑minute DM window, send a DM back to the bot stating `remove`\n"
+            "• **Set my post image/GIF 🖼️** — Starts a DM flow where you can send an image/GIF (attachment or link). That image will be used as the *main embed image* on your future Game Feed posts. To remove your custom image during the 10‑minute DM window, send a DM back to the bot stating `remove`\n"
             "• **How to link my console? 🕹️** — Shows official Xbox/PlayStation linking guides."
         )
 
