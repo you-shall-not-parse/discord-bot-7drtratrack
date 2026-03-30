@@ -42,12 +42,12 @@ def parse_iso_utc(value: str) -> datetime:
 
 
 def format_local(value: datetime) -> str:
-    return value.astimezone(LOCAL_TZ).strftime("%Y-%m-%d %H:%M")
+    return value.astimezone(LOCAL_TZ).strftime("%d/%m/%Y %H:%M")
 
 
 def parse_local_datetime(text: str) -> datetime | None:
     raw = text.strip()
-    for fmt in ("%Y-%m-%d %H:%M", "%d/%m/%Y %H:%M"):
+    for fmt in ("%d/%m/%Y %H:%M", "%d %m %Y %H:%M"):
         try:
             parsed = datetime.strptime(raw, fmt)
             return parsed.replace(tzinfo=LOCAL_TZ).astimezone(timezone.utc)
@@ -211,7 +211,7 @@ class OutOfOffice(commands.Cog):
         if LOA_ROLE_ID in role_ids:
             return (
                 f"{member.display_name} is currently on LOA. "
-                "This person has an LOA tag :( meaning they're on leave of absence but haven't set a custom out-of-office message with the bot."
+                "This person has an LOA tag :( meaning they're on leave of absence."
             )
         if OUT_OF_OFFICE_ROLE_ID in role_ids:
             return (
@@ -313,22 +313,6 @@ class OutOfOffice(commands.Cog):
             except (discord.Forbidden, discord.HTTPException):
                 pass
 
-    async def _send_dm_help(self, channel: discord.DMChannel) -> None:
-        await channel.send(
-            "Out of office setup is active in this DM.\n\n"
-            "Commands while not in setup:\n"
-            "- `list` to show your saved schedules\n"
-            "- `delete <id>` to remove a schedule\n"
-            "- `cancel` to exit a running setup\n\n"
-            "Accepted date/time format for one-off schedules:\n"
-            "- `2026-04-02 10:00`\n"
-            "- `02/04/2026 10:00`\n\n"
-            "Accepted time format for daily schedules:\n"
-            "- `10:00`\n"
-            "- `1pm`\n"
-            "- `1:30pm`"
-        )
-
     async def _start_dm_setup(self, user: discord.abc.User, *, reset: bool = True) -> bool:
         try:
             dm_channel = user.dm_channel or await user.create_dm()
@@ -352,34 +336,6 @@ class OutOfOffice(commands.Cog):
         content = message.content.strip()
         lowered = content.lower()
 
-        if lowered in {"help", "/help"} and message.author.id not in self.dm_sessions:
-            await self._send_dm_help(message.channel)
-            return
-
-        if lowered == "list" and message.author.id not in self.dm_sessions:
-            entries = self.state.get("users", {}).get(str(message.author.id), [])
-            if not entries:
-                await message.channel.send("You do not have any saved out-of-office schedules.")
-                return
-            await message.channel.send("\n\n".join(self._entry_summary(entry) for entry in entries))
-            return
-
-        if lowered.startswith("delete ") and message.author.id not in self.dm_sessions:
-            entry_id = content.split(" ", 1)[1].strip()
-            entries = self.state.get("users", {}).get(str(message.author.id), [])
-            remaining = [entry for entry in entries if entry["id"] != entry_id]
-            if len(remaining) == len(entries):
-                await message.channel.send(f"No schedule found with id `{entry_id}`.")
-                return
-            if remaining:
-                self.state.setdefault("users", {})[str(message.author.id)] = remaining
-            else:
-                self.state.setdefault("users", {}).pop(str(message.author.id), None)
-            self._save_state()
-            await self._sync_member_roles(guild, message.author.id)
-            await message.channel.send(f"Deleted out-of-office schedule `{entry_id}`.")
-            return
-
         if message.author.id not in self.dm_sessions:
             return
 
@@ -400,7 +356,7 @@ class OutOfOffice(commands.Cog):
             if draft["kind"] == "one_off":
                 session["step"] = "one_start"
                 await message.channel.send(
-                    "Send the local start date/time. Example: `2026-04-02 10:00`."
+                    "Send the local start date/time. Example: `30/03/2026 23:28`."
                 )
             else:
                 session["step"] = "daily_start"
@@ -412,7 +368,7 @@ class OutOfOffice(commands.Cog):
         if session["step"] == "one_start":
             start_at = parse_local_datetime(content)
             if start_at is None:
-                await message.channel.send("Invalid date/time. Use `YYYY-MM-DD HH:MM` or `DD/MM/YYYY HH:MM`.")
+                await message.channel.send("Invalid date/time. Use `DD/MM/YYYY HH:MM`.")
                 return
             draft["start_at"] = start_at.isoformat()
             session["step"] = "one_end"
@@ -422,7 +378,7 @@ class OutOfOffice(commands.Cog):
         if session["step"] == "one_end":
             end_at = parse_local_datetime(content)
             if end_at is None:
-                await message.channel.send("Invalid date/time. Use `YYYY-MM-DD HH:MM` or `DD/MM/YYYY HH:MM`.")
+                await message.channel.send("Invalid date/time. Use `DD/MM/YYYY HH:MM`.")
                 return
 
             start_at = parse_iso_utc(draft["start_at"])
@@ -553,6 +509,20 @@ class OutOfOffice(commands.Cog):
         except Exception:
             pass
 
+    async def schedule_id_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        entries = self.state.get("users", {}).get(str(interaction.user.id), [])
+        choices: list[app_commands.Choice[str]] = []
+
+        for entry in entries:
+            entry_id = str(entry.get("id", ""))
+            if current.lower() not in entry_id.lower():
+                continue
+            choices.append(app_commands.Choice(name=self._entry_summary(entry)[:100], value=entry_id))
+
+        return choices[:25]
+
     @app_commands.command(name="outofoffice", description="Start the out-of-office setup in DM.")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.guild_only()
@@ -570,6 +540,54 @@ class OutOfOffice(commands.Cog):
 
         await interaction.followup.send(
             "I sent you a DM to set up your out-of-office period.",
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="outofoffice-list", description="List your saved out-of-office schedules.")
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    @app_commands.guild_only()
+    async def outofoffice_list(self, interaction: discord.Interaction) -> None:
+        entries = self.state.get("users", {}).get(str(interaction.user.id), [])
+        if not entries:
+            await interaction.response.send_message(
+                "You do not have any saved out-of-office schedules.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.send_message(
+            "\n\n".join(self._entry_summary(entry) for entry in entries),
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="outofoffice-delete", description="Delete one of your saved out-of-office schedules.")
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    @app_commands.guild_only()
+    @app_commands.autocomplete(entry_id=schedule_id_autocomplete)
+    async def outofoffice_delete(self, interaction: discord.Interaction, entry_id: str) -> None:
+        entries = self.state.get("users", {}).get(str(interaction.user.id), [])
+        remaining = [entry for entry in entries if entry.get("id") != entry_id]
+
+        if len(remaining) == len(entries):
+            await interaction.response.send_message(
+                f"No schedule found with id `{entry_id}`.",
+                ephemeral=True,
+            )
+            return
+
+        if remaining:
+            self.state.setdefault("users", {})[str(interaction.user.id)] = remaining
+        else:
+            self.state.setdefault("users", {}).pop(str(interaction.user.id), None)
+
+        self._save_state()
+
+        guild = interaction.guild or self.bot.get_guild(GUILD_ID)
+        if guild is not None:
+            await self._sync_member_roles(guild, interaction.user.id)
+
+        await interaction.response.send_message(
+            f"Deleted out-of-office schedule `{entry_id}`.",
             ephemeral=True,
         )
 
@@ -595,7 +613,8 @@ class OutOfOffice(commands.Cog):
             return
 
         if isinstance(message.channel, discord.DMChannel):
-            await self._handle_dm_message(message)
+            if message.author.id in self.dm_sessions:
+                await self._handle_dm_message(message)
             return
 
         if not message.guild or message.guild.id != GUILD_ID:
@@ -608,7 +627,7 @@ class OutOfOffice(commands.Cog):
         seen_ids: set[int] = set()
 
         for member in message.mentions:
-            if member.bot or member.id == message.author.id or member.id in seen_ids:
+            if member.bot or member.id in seen_ids:
                 continue
             seen_ids.add(member.id)
 
