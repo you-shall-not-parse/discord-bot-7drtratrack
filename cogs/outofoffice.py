@@ -274,6 +274,12 @@ class OutOfOffice(commands.Cog):
             return None
         return max(entries, key=self._entry_duration)
 
+    def _entry_is_loa(self, entry: dict) -> bool:
+        return self._entry_duration(entry) > timedelta(days=1)
+
+    def _should_suppress_ooo_reply(self, member: discord.Member) -> bool:
+        return member.status == discord.Status.online
+
     def _entry_summary(self, entry: dict) -> str:
         if entry["kind"] == "one_off":
             role_name = "LOA" if self._entry_duration(entry) > timedelta(days=1) else "OOO"
@@ -316,6 +322,8 @@ class OutOfOffice(commands.Cog):
                 "This person has an LOA tag :( meaning they're on leave of absence."
             )
         if OUT_OF_OFFICE_ROLE_ID in role_ids:
+            if self._should_suppress_ooo_reply(member):
+                return None
             return (
                 f"{member.display_name} is currently out of office. "
                 "This person has an out-of-office tag :( meaning they're out of office on a one-off or regular <1 day absence but haven't set a custom out-of-office message with the bot."
@@ -800,19 +808,22 @@ class OutOfOffice(commands.Cog):
                 continue
             seen_ids.add(member.id)
 
-            if not self._cooldown_allows_reply(message.author.id, member.id, message.channel.id):
-                continue
-
             active_entries = self._active_entries_for_user(member.id)
             if active_entries:
                 entry = self._primary_entry(active_entries)
                 if entry is None:
+                    continue
+                if not self._entry_is_loa(entry) and self._should_suppress_ooo_reply(member):
+                    continue
+                if not self._cooldown_allows_reply(message.author.id, member.id, message.channel.id):
                     continue
                 replies.append(self._build_auto_reply(member, entry))
                 continue
 
             generic_reply = self._build_generic_role_reply(member)
             if generic_reply:
+                if not self._cooldown_allows_reply(message.author.id, member.id, message.channel.id):
+                    continue
                 replies.append(generic_reply)
 
         if replies:
