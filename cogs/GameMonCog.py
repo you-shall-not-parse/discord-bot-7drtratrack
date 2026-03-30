@@ -34,7 +34,7 @@ HLL_CHANNEL_ID = 1099090838203666474
 # Users with any of these roles will never generate GameMon posts.
 # Put role IDs in this list, e.g. [123, 456]. Leave empty to disable.
 EXCLUDED_ROLE_IDS: list[int] = [1098206797900284035, 1103762811491975218]
-IGNORED_GAMES = ["Spotify", "Discord", "Pornhub", "Netflix", "Disney", "Sky TV", "Youtube"]
+IGNORED_GAMES = ["Spotify", "Discord", "Pornhub", "Netflix", "Disney", "Sky TV", "Youtube", "RedTube"]
 
 # For custom image links: Discord embeds generally require a *direct* image URL.
 DIRECT_IMAGE_EXTENSIONS = (".gif", ".png", ".jpg", ".jpeg", ".webp")

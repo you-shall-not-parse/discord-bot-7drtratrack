@@ -35,6 +35,11 @@ SCHEDULE_WEEKDAY = "mon"  # mon/tue/wed/thu/fri/sat/sun
 SCHEDULE_HOUR = 7  # 24h format, local time
 SCHEDULE_MINUTE = 0
 
+# If the bot is offline/restarting at the scheduled time, APScheduler will treat the run as a
+# "misfire" and may skip it if it is too late. Set a generous grace window so weekly rollcalls
+# still get sent after short outages, DST-related restarts, or hosts running in UTC.
+SCHEDULE_MISFIRE_GRACE_SECONDS = 6 * 60 * 60  # 6 hours
+
 # Emoji members should react with to mark attendance.
 ROLLCALL_EMOJI = "✅"
 
@@ -379,7 +384,15 @@ class RollCallCog(commands.Cog):
 			logger.error("RollCall scheduler start requested with no running event loop")
 			return
 
-		self._scheduler = AsyncIOScheduler(timezone=tz, event_loop=loop)
+		self._scheduler = AsyncIOScheduler(
+			timezone=tz,
+			event_loop=loop,
+			job_defaults={
+				"coalesce": True,
+				"max_instances": 1,
+				"misfire_grace_time": int(SCHEDULE_MISFIRE_GRACE_SECONDS),
+			},
+		)
 
 		trigger = CronTrigger(
 			day_of_week=SCHEDULE_WEEKDAY,
@@ -389,7 +402,17 @@ class RollCallCog(commands.Cog):
 		)
 
 		# Schedule the coroutine directly on the asyncio scheduler.
-		self._scheduler.add_job(self._scheduled_send, trigger=trigger, id="weekly_rollcall", replace_existing=True)
+		# Note: misfire_grace_time is also set via job_defaults, but we pass it here explicitly to
+		# make the behavior obvious when inspecting the job.
+		self._scheduler.add_job(
+			self._scheduled_send,
+			trigger=trigger,
+			id="weekly_rollcall",
+			replace_existing=True,
+			coalesce=True,
+			max_instances=1,
+			misfire_grace_time=int(SCHEDULE_MISFIRE_GRACE_SECONDS),
+		)
 		self._scheduler.start()
 
 	async def _backstop_loop(self) -> None:
