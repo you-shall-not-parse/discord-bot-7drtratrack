@@ -14,7 +14,14 @@ GUILD_ID = 1097913605082579024
 
 OUT_OF_OFFICE_ROLE_ID = 1488294029757120613
 LOA_ROLE_ID = 1099610910097686569
-OUT_OF_OFFICE_SETUP_ROLE_ID = 333333333333333333
+OUT_OF_OFFICE_SETUP_ROLE_IDS = {
+    1097946662942560407,
+    1097946543065137183,
+    1213495462632361994,
+    1098342493461942372,
+    1098342675389890670,
+    1098342769468125214,
+}
 
 TIMEZONE_NAME = "Europe/London"
 STATE_FILE = data_path("out_of_office_state.json")
@@ -65,7 +72,7 @@ def _can_manage_out_of_office(interaction: discord.Interaction) -> bool:
         return False
     if not isinstance(interaction.user, discord.Member):
         return False
-    return any(role.id == OUT_OF_OFFICE_SETUP_ROLE_ID for role in interaction.user.roles)
+    return any(role.id in OUT_OF_OFFICE_SETUP_ROLE_IDS for role in interaction.user.roles)
 
 
 @app_commands.guilds(discord.Object(id=GUILD_ID))
@@ -203,12 +210,12 @@ class OutOfOffice(commands.Cog):
         if LOA_ROLE_ID in role_ids:
             return (
                 f"{member.display_name} is currently on LOA. "
-                "They have not set a custom out-of-office message with the bot."
+                "This person has an LOA tag :( meaning they're on leave of absence but haven't set a custom out-of-office message with the bot."
             )
         if OUT_OF_OFFICE_ROLE_ID in role_ids:
             return (
                 f"{member.display_name} is currently out of office. "
-                "They have not set a custom out-of-office message with the bot."
+                "This person has an out-of-office tag :( meaning they're out of office on a one-off or regular <1 day absence but haven't set a custom out-of-office message with the bot."
             )
         return None
 
@@ -558,12 +565,12 @@ class OutOfOffice(commands.Cog):
         if isinstance(error, app_commands.CheckFailure):
             if interaction.response.is_done():
                 await interaction.followup.send(
-                    f"You need the configured role (`{OUT_OF_OFFICE_SETUP_ROLE_ID}`) to use `/outofoffice`.",
+                    "You need one of the configured setup roles to use `/outofoffice`.",
                     ephemeral=True,
                 )
             else:
                 await interaction.response.send_message(
-                    f"You need the configured role (`{OUT_OF_OFFICE_SETUP_ROLE_ID}`) to use `/outofoffice`.",
+                    "You need one of the configured setup roles to use `/outofoffice`.",
                     ephemeral=True,
                 )
             return
@@ -616,208 +623,4 @@ class OutOfOffice(commands.Cog):
 
 
 async def setup(bot: commands.Bot) -> None:
-    await bot.add_cog(OutOfOffice(bot))
-            if lowered not in {"one", "daily"}:
-                await message.channel.send("Reply with `one` or `daily`.")
-                return
-
-            draft["kind"] = "one_off" if lowered == "one" else "daily"
-
-            if draft["kind"] == "one_off":
-                session["step"] = "one_start"
-                await message.channel.send(
-                    "Send the local start date/time.\n"
-                    "Example: `2026-04-02 10:00`"
-                )
-            else:
-                session["step"] = "daily_start"
-                await message.channel.send(
-                    "Send the daily start time.\n"
-                    "Examples: `10:00`, `1pm`, `1:30pm`"
-                )
-            return
-
-        if session["step"] == "one_start":
-            start_at = parse_local_datetime(content)
-            if start_at is None:
-                await message.channel.send("Invalid date/time. Use `YYYY-MM-DD HH:MM`.")
-                return
-            draft["start_at"] = start_at.isoformat()
-            session["step"] = "one_end"
-            await message.channel.send("Send the local end date/time.")
-            return
-
-        if session["step"] == "one_end":
-            end_at = parse_local_datetime(content)
-            if end_at is None:
-                await message.channel.send("Invalid date/time. Use `YYYY-MM-DD HH:MM`.")
-                return
-
-            start_at = parse_iso_utc(draft["start_at"])
-            if end_at <= start_at:
-                await message.channel.send("End must be after start.")
-                return
-
-            draft["end_at"] = end_at.isoformat()
-            session["step"] = "message"
-            await message.channel.send("Send the custom away message people should receive.")
-            return
-
-        if session["step"] == "daily_start":
-            parsed = parse_clock(content)
-            if parsed is None:
-                await message.channel.send("Invalid time. Try `10:00` or `1pm`.")
-                return
-            draft["start_hour"], draft["start_minute"] = parsed
-            session["step"] = "daily_end"
-            await message.channel.send("Send the daily end time.")
-            return
-
-        if session["step"] == "daily_end":
-            parsed = parse_clock(content)
-            if parsed is None:
-                await message.channel.send("Invalid time. Try `13:00` or `6pm`.")
-                return
-
-            end_hour, end_minute = parsed
-            if (end_hour, end_minute) == (draft["start_hour"], draft["start_minute"]):
-                await message.channel.send("Start and end cannot be the same.")
-                return
-
-            draft["end_hour"] = end_hour
-            draft["end_minute"] = end_minute
-            session["step"] = "message"
-            await message.channel.send("Send the custom away message people should receive.")
-            return
-
-        if session["step"] == "message":
-            if not content:
-                await message.channel.send("Message cannot be empty.")
-                return
-
-            draft["message"] = content
-            session["step"] = "confirm"
-
-            if draft["kind"] == "one_off":
-                preview = (
-                    f"One-off schedule\n"
-                    f"Start: {format_local(parse_iso_utc(draft['start_at']))} {TIMEZONE_NAME}\n"
-                    f"End: {format_local(parse_iso_utc(draft['end_at']))} {TIMEZONE_NAME}\n"
-                    f"Role during period: "
-                    f"{'LOA' if (parse_iso_utc(draft['end_at']) - parse_iso_utc(draft['start_at'])) > timedelta(days=1) else 'OOO'}\n"
-                    f"Message: {draft['message']}\n\n"
-                    f"Reply `confirm` to save or `cancel`."
-                )
-            else:
-                preview = (
-                    f"Daily recurring schedule\n"
-                    f"Time: {draft['start_hour']:02d}:{draft['start_minute']:02d} -> "
-                    f"{draft['end_hour']:02d}:{draft['end_minute']:02d} {TIMEZONE_NAME}\n"
-                    f"Role during period: OOO\n"
-                    f"Message: {draft['message']}\n\n"
-                    f"Reply `confirm` to save or `cancel`."
-                )
-
-            await message.channel.send(preview)
-            return
-
-        if session["step"] == "confirm":
-            if lowered != "confirm":
-                await message.channel.send("Reply `confirm` to save or `cancel` to abort.")
-                return
-
-            entry = {
-                "id": uuid.uuid4().hex[:8],
-                "kind": draft["kind"],
-                "message": draft["message"],
-                "enabled": True,
-                "created_at": utc_now().isoformat(),
-            }
-
-            if draft["kind"] == "one_off":
-                entry["start_at"] = draft["start_at"]
-                entry["end_at"] = draft["end_at"]
-            else:
-                entry["start_hour"] = draft["start_hour"]
-                entry["start_minute"] = draft["start_minute"]
-                entry["end_hour"] = draft["end_hour"]
-                entry["end_minute"] = draft["end_minute"]
-
-            self._user_entries(message.author.id).append(entry)
-            self._save_state()
-            self.dm_sessions.pop(message.author.id, None)
-
-            await self._sync_member_roles(guild, message.author.id)
-            await message.channel.send(
-                f"Saved out-of-office schedule `{entry['id']}`.\n"
-                "Send `list` any time to view schedules or `delete <id>` to remove one."
-            )
-
-    @tasks.loop(minutes=1)
-    async def reconcile_roles(self):
-        guild = self.bot.get_guild(GUILD_ID)
-        if guild is None:
-            return
-
-        self._prune_expired_one_offs()
-
-        user_ids = []
-        for raw_user_id in self.state.get("users", {}):
-            try:
-                user_ids.append(int(raw_user_id))
-            except ValueError:
-                continue
-
-        for user_id in user_ids:
-            await self._sync_member_roles(guild, user_id)
-
-    @reconcile_roles.before_loop
-    async def before_reconcile_roles(self):
-        await self.bot.wait_until_ready()
-
-    @commands.Cog.listener()
-    async def on_message(self, message: discord.Message):
-        if message.author.bot:
-            return
-
-        if isinstance(message.channel, discord.DMChannel):
-            await self._handle_dm_message(message)
-            return
-
-        if not message.guild or message.guild.id != GUILD_ID:
-            return
-
-        if message.mention_everyone:
-            return
-
-        away_targets: list[str] = []
-
-        seen_target_ids = set()
-        for member in message.mentions:
-            if member.bot or member.id == message.author.id or member.id in seen_target_ids:
-                continue
-            seen_target_ids.add(member.id)
-
-            active_entries = self._active_entries_for_user(member.id)
-            if not active_entries:
-                continue
-
-            if not self._cooldown_allows_reply(message.author.id, member.id, message.channel.id):
-                continue
-
-            entry = self._primary_active_entry(active_entries)
-            if entry is None:
-                continue
-
-            away_targets.append(self._build_auto_reply(member, entry))
-
-        if away_targets:
-            await message.reply(
-                "\n\n".join(away_targets),
-                mention_author=False,
-                allowed_mentions=discord.AllowedMentions.none(),
-            )
-
-
-async def setup(bot: commands.Bot):
     await bot.add_cog(OutOfOffice(bot))
