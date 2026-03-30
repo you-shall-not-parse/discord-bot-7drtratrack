@@ -26,8 +26,33 @@ OUT_OF_OFFICE_SETUP_ROLE_IDS = {
 TIMEZONE_NAME = "Europe/London"
 STATE_FILE = data_path("out_of_office_state.json")
 REPLY_COOLDOWN_SECONDS = 900
+MAX_OOO_DURATION = timedelta(hours=10)
+MIN_LOA_DURATION = timedelta(days=1)
+LOA_CHANNEL_ID = 1099608133267095612
 
 LOCAL_TZ = ZoneInfo(TIMEZONE_NAME)
+DEFAULT_WEEKDAYS = [0, 1, 2, 3, 4, 5, 6]
+WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+WEEKDAY_ALIASES = {
+    "mon": 0,
+    "monday": 0,
+    "tue": 1,
+    "tues": 1,
+    "tuesday": 1,
+    "wed": 2,
+    "weds": 2,
+    "wednesday": 2,
+    "thu": 3,
+    "thur": 3,
+    "thurs": 3,
+    "thursday": 3,
+    "fri": 4,
+    "friday": 4,
+    "sat": 5,
+    "saturday": 5,
+    "sun": 6,
+    "sunday": 6,
+}
 
 
 def utc_now() -> datetime:
@@ -65,6 +90,53 @@ def parse_clock(text: str) -> tuple[int, int] | None:
         except ValueError:
             continue
     return None
+
+
+def parse_weekdays(text: str) -> list[int] | None:
+    raw = text.strip().lower()
+    if not raw:
+        return None
+
+    compact = raw.replace(" ", "")
+    if compact in {"everyday", "everydays", "daily", "alldays", "all"} or raw == "every day":
+        return list(DEFAULT_WEEKDAYS)
+    if compact == "weekdays":
+        return [0, 1, 2, 3, 4]
+    if compact == "weekends":
+        return [5, 6]
+
+    normalized = raw.replace("/", ",").replace("|", ",")
+    tokens = [token.strip().lower() for token in normalized.split(",")]
+    selected: list[int] = []
+
+    for token in tokens:
+        if not token:
+            continue
+        token = token.replace(" ", "")
+
+        if "-" in token:
+            start_name, end_name = token.split("-", 1)
+            start_day = WEEKDAY_ALIASES.get(start_name)
+            end_day = WEEKDAY_ALIASES.get(end_name)
+            if start_day is None or end_day is None:
+                return None
+
+            day = start_day
+            while True:
+                if day not in selected:
+                    selected.append(day)
+                if day == end_day:
+                    break
+                day = (day + 1) % 7
+            continue
+
+        weekday = WEEKDAY_ALIASES.get(token)
+        if weekday is None:
+            return None
+        if weekday not in selected:
+            selected.append(weekday)
+
+    return sorted(selected) if selected else None
 
 
 def _can_manage_out_of_office(interaction: discord.Interaction) -> bool:
@@ -122,6 +194,35 @@ class OutOfOffice(commands.Cog):
             return timedelta(minutes=end_minutes - start_minutes)
         return timedelta(minutes=(24 * 60 - start_minutes) + end_minutes)
 
+    def _one_off_duration(self, start_at: datetime, end_at: datetime) -> timedelta:
+        return end_at - start_at
+
+    def _one_off_role_name(self, start_at: datetime, end_at: datetime) -> str | None:
+        duration = self._one_off_duration(start_at, end_at)
+        if duration > MIN_LOA_DURATION:
+            return "LOA"
+        if duration < MAX_OOO_DURATION:
+            return "OOO"
+        return None
+
+    def _entry_weekdays(self, entry: dict) -> list[int]:
+        raw_weekdays = entry.get("weekdays")
+        if not isinstance(raw_weekdays, list):
+            return list(DEFAULT_WEEKDAYS)
+
+        cleaned = sorted({int(day) for day in raw_weekdays if isinstance(day, int) and 0 <= day <= 6})
+        return cleaned or list(DEFAULT_WEEKDAYS)
+
+    def _format_weekdays(self, entry: dict) -> str:
+        weekdays = self._entry_weekdays(entry)
+        if weekdays == DEFAULT_WEEKDAYS:
+            return "Every day"
+        if weekdays == [0, 1, 2, 3, 4]:
+            return "Weekdays"
+        if weekdays == [5, 6]:
+            return "Weekends"
+        return ", ".join(WEEKDAY_LABELS[day] for day in weekdays)
+
     def _daily_window(self, entry: dict, now_local: datetime) -> tuple[datetime, datetime]:
         start_local = now_local.replace(
             hour=entry["start_hour"], minute=entry["start_minute"], second=0, microsecond=0
@@ -155,7 +256,7 @@ class OutOfOffice(commands.Cog):
                 continue
 
             start_local, end_local = self._daily_window(entry, now_local)
-            if start_local <= now_local < end_local:
+            if start_local.weekday() in self._entry_weekdays(entry) and start_local <= now_local < end_local:
                 active.append(entry)
 
         return active
@@ -185,6 +286,7 @@ class OutOfOffice(commands.Cog):
 
         return (
             f"[{entry['id']}] daily OOO: "
+            f"{self._format_weekdays(entry)} | "
             f"{entry['start_hour']:02d}:{entry['start_minute']:02d} -> "
             f"{entry['end_hour']:02d}:{entry['end_minute']:02d} ({TIMEZONE_NAME})\n"
             f"Message: {entry['message']}"
@@ -200,7 +302,7 @@ class OutOfOffice(commands.Cog):
             )
 
         return (
-            f"{member.display_name} is currently out of office on a daily schedule from "
+            f"{member.display_name} is currently out of office on a recurring schedule ({self._format_weekdays(entry)}) from "
             f"{entry['start_hour']:02d}:{entry['start_minute']:02d} to "
             f"{entry['end_hour']:02d}:{entry['end_minute']:02d} {TIMEZONE_NAME}.\n"
             f"Message: {entry['message']}"
@@ -313,6 +415,22 @@ class OutOfOffice(commands.Cog):
             except (discord.Forbidden, discord.HTTPException):
                 pass
 
+    async def _post_loa_confirmation(self, guild: discord.Guild, user_id: int, entry: dict) -> None:
+        channel = guild.get_channel(LOA_CHANNEL_ID) or self.bot.get_channel(LOA_CHANNEL_ID)
+        if channel is None or not isinstance(channel, discord.abc.Messageable):
+            return
+
+        member = await self._get_member(guild, user_id)
+        display_name = member.mention if member is not None else f"<@{user_id}>"
+
+        await channel.send(
+            "Automated LOA submission\n"
+            f"Member: {display_name}\n"
+            f"Start: {format_local(parse_iso_utc(entry['start_at']))} {TIMEZONE_NAME}\n"
+            f"End: {format_local(parse_iso_utc(entry['end_at']))} {TIMEZONE_NAME}\n"
+            f"Message: {entry['message']}"
+        )
+
     async def _start_dm_setup(self, user: discord.abc.User, *, reset: bool = True) -> bool:
         try:
             dm_channel = user.dm_channel or await user.create_dm()
@@ -323,7 +441,11 @@ class OutOfOffice(commands.Cog):
             self.dm_sessions[user.id] = {"step": "kind", "draft": {}}
 
         await dm_channel.send(
-            "Out-of-office setup started. Reply with `one` for a one-off schedule or `daily` for a recurring daily schedule."
+            "**Out office** :house_with_garden:  can be applied on a one off daily or weekday basis between specific times, e.g. 8am - 12pm starting 30/03/2026 every weekday. They only apply when the period requested is <10 hours in total length. A confirmation of the out of office will **not** land in the <#1099608133267095612> channel.\n\n"
+            "Nothing sits between the 10 hour and 1 day period, you can either apply another out of office or apply for an LOA.\n\n"
+            "**LOA** :beach:  applies when you're away for >1 day in a block period, e.g. 12pm 30/03/2026 until 1pm 01/05/2026. As a result, just like an LOA form, a confirmation of the period **will** land in the <#1099608133267095612> channel for SNCO review, consider this an automated LOA form.\n\n"
+            "**Manually adding/removing either role** is still completely possible! you can just add it to yourself or other people (on request) and it'll just sent an generic message when people tag that person.\n\n"
+            "Reply with `one` for a one-off schedule or `daily` for a recurring daily or weekday schedule."
         )
         return True
 
@@ -386,6 +508,13 @@ class OutOfOffice(commands.Cog):
                 await message.channel.send("End time must be after the start time.")
                 return
 
+            role_name = self._one_off_role_name(start_at, end_at)
+            if role_name is None:
+                await message.channel.send(
+                    "That period is not allowed. Out of office must be less than 10 hours, and LOA only applies when the block period is more than 1 day."
+                )
+                return
+
             draft["end_at"] = end_at.isoformat()
             session["step"] = "message"
             await message.channel.send("Send the custom away message people should receive.")
@@ -412,6 +541,36 @@ class OutOfOffice(commands.Cog):
                 return
             draft["end_hour"] = end_hour
             draft["end_minute"] = end_minute
+
+            duration = self._entry_duration(
+                {
+                    "kind": "daily",
+                    "start_hour": draft["start_hour"],
+                    "start_minute": draft["start_minute"],
+                    "end_hour": draft["end_hour"],
+                    "end_minute": draft["end_minute"],
+                }
+            )
+            if duration >= MAX_OOO_DURATION:
+                await message.channel.send(
+                    "Recurring out of office periods must be less than 10 hours total length."
+                )
+                return
+
+            session["step"] = "daily_weekdays"
+            await message.channel.send(
+                "Send the weekdays for this recurring schedule. Examples: `Mon, Tue, Wed`, `Mon-Fri`, `weekdays`, `weekends`, or `every day`."
+            )
+            return
+
+        if session["step"] == "daily_weekdays":
+            weekdays = parse_weekdays(content)
+            if weekdays is None:
+                await message.channel.send(
+                    "Invalid weekdays. Use something like `Mon, Tue, Wed`, `Mon-Fri`, `weekdays`, `weekends`, or `every day`."
+                )
+                return
+            draft["weekdays"] = weekdays
             session["step"] = "message"
             await message.channel.send("Send the custom away message people should receive.")
             return
@@ -427,7 +586,7 @@ class OutOfOffice(commands.Cog):
             if draft["kind"] == "one_off":
                 start_at = parse_iso_utc(draft["start_at"])
                 end_at = parse_iso_utc(draft["end_at"])
-                role_name = "LOA" if end_at - start_at > timedelta(days=1) else "OOO"
+                role_name = self._one_off_role_name(start_at, end_at)
                 preview = (
                     "One-off out-of-office preview\n"
                     f"Start: {format_local(start_at)} {TIMEZONE_NAME}\n"
@@ -437,8 +596,10 @@ class OutOfOffice(commands.Cog):
                     "Reply `confirm` to save or `cancel` to abort."
                 )
             else:
+                weekday_labels = self._format_weekdays({"weekdays": draft.get("weekdays", DEFAULT_WEEKDAYS)})
                 preview = (
                     "Daily out-of-office preview\n"
+                    f"Days: {weekday_labels}\n"
                     f"Time: {draft['start_hour']:02d}:{draft['start_minute']:02d} -> "
                     f"{draft['end_hour']:02d}:{draft['end_minute']:02d} {TIMEZONE_NAME}\n"
                     "Role during period: OOO\n"
@@ -470,13 +631,21 @@ class OutOfOffice(commands.Cog):
                 entry["start_minute"] = draft["start_minute"]
                 entry["end_hour"] = draft["end_hour"]
                 entry["end_minute"] = draft["end_minute"]
+                entry["weekdays"] = draft.get("weekdays", list(DEFAULT_WEEKDAYS))
 
             self._user_entries(message.author.id).append(entry)
             self._save_state()
             self.dm_sessions.pop(message.author.id, None)
             await self._sync_member_roles(guild, message.author.id)
+
+            if draft["kind"] == "one_off":
+                start_at = parse_iso_utc(entry["start_at"])
+                end_at = parse_iso_utc(entry["end_at"])
+                if self._one_off_duration(start_at, end_at) > MIN_LOA_DURATION:
+                    await self._post_loa_confirmation(guild, message.author.id, entry)
+
             await message.channel.send(
-                f"Saved out-of-office schedule `{entry['id']}`. Send `list` to review schedules or `delete <id>` to remove one."
+                f"Saved out-of-office schedule `{entry['id']}`."
             )
 
     @tasks.loop(minutes=1)
