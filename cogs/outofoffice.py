@@ -82,6 +82,7 @@ class OutOfOffice(commands.Cog):
         self.state = self._load_state()
         self.dm_sessions: dict[int, dict] = {}
         self.reply_cooldowns: dict[str, str] = {}
+        self._guild_sync_done = False
         self.reconcile_roles.start()
 
     def cog_unload(self) -> None:
@@ -541,7 +542,19 @@ class OutOfOffice(commands.Cog):
     async def before_reconcile_roles(self) -> None:
         await self.bot.wait_until_ready()
 
+    @commands.Cog.listener()
+    async def on_ready(self) -> None:
+        if self._guild_sync_done:
+            return
+
+        try:
+            await self.bot.tree.sync(guild=discord.Object(id=GUILD_ID))
+            self._guild_sync_done = True
+        except Exception:
+            pass
+
     @app_commands.command(name="outofoffice", description="Start the out-of-office setup in DM.")
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.guild_only()
     @app_commands.check(_can_manage_out_of_office)
     async def outofoffice(self, interaction: discord.Interaction) -> None:
