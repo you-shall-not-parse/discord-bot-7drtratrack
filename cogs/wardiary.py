@@ -435,14 +435,9 @@ class WarDiaryCog(commands.Cog):
 		clans = self.load_clans()
 		embed = discord.Embed(
 			title="War Diary Match Submission",
-			description=(
-				"Use the button below to submit a new match result.\n\n"
-				"The bot will create a new forum post titled with the final score and attach a result image."
-			),
 			colour=discord.Colour.green(),
 			timestamp=_utcnow(),
 		)
-		embed.add_field(name="Home clan", value=HOME_CLAN_NAME, inline=False)
 		embed.add_field(
 			name="How To Submit",
 			value=(
@@ -654,7 +649,7 @@ class WarDiaryCog(commands.Cog):
 			return None
 
 		thread_name = _truncate_thread_name(
-			f"{clan_name} {submitter_score} - {opponent_score} {opponent_clan_name} {match_date}"
+			f"{clan_name} {submitter_score} - {opponent_score} {opponent_clan_name}"
 		)
 		filename = f"wardiary_{submitter_score}_{opponent_score}.png"
 		image_bytes = self._render_result_image(
