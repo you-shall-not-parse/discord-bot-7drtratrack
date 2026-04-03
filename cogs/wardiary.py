@@ -21,13 +21,13 @@ log = logging.getLogger(__name__)
 # -----------------------------
 
 # Only members with one of these roles can use the submission button.
-ALLOWED_ROLE_IDS: list[int] = [1213495462632361994]
+ALLOWED_ROLE_IDS: list[int] = [1213495462632361994, 1097946543065137183, 1097946662942560407]
 
 # Target Discord forum channel where war diary posts should live.
 WAR_DIARY_FORUM_CHANNEL_ID: int = 1489703502426018002
 
 # The persistent submission post created inside the forum.
-SUBMISSION_POST_NAME: str = "Match Submission"
+SUBMISSION_POST_NAME: str = "Result Submission"
 SUBMISSION_POST_AUTO_ARCHIVE_MINUTES: int = 10080
 
 # Clan names are loaded from this file.
@@ -147,7 +147,7 @@ class OpponentSelect(discord.ui.Select):
 			placeholder="Select the opposing clan...",
 			min_values=1,
 			max_values=1,
-			options=[discord.SelectOption(label="Pick the first clan first", value="")],
+			options=[discord.SelectOption(label="Pick the first clan first", value="__pending__")],
 			disabled=True,
 		)
 
@@ -155,7 +155,7 @@ class OpponentSelect(discord.ui.Select):
 		if not clan_name:
 			self.disabled = True
 			self.placeholder = "Select the opposing clan..."
-			self.options = [discord.SelectOption(label="Pick the first clan first", value="", default=True)]
+			self.options = [discord.SelectOption(label="Pick the first clan first", value="__pending__", default=True)]
 			return
 
 		self.disabled = False
@@ -169,7 +169,7 @@ class OpponentSelect(discord.ui.Select):
 				selected_label = clan.name
 			options.append(discord.SelectOption(label=clan.name, value=clan.name, default=is_default))
 
-		self.options = options[:25] or [discord.SelectOption(label="No opposing clans configured", value="", default=True)]
+		self.options = options[:25] or [discord.SelectOption(label="No opposing clans configured", value="__none__", default=True)]
 		self.placeholder = selected_label or "Select the opposing clan..."
 		self.disabled = not bool(options)
 
