@@ -598,89 +598,89 @@ class WarDiaryCog(commands.Cog):
 				self._state["submission_message_id"] = message.id
 			self._save_state()
 
-		def _extract_table_headers(self, table: Any) -> list[str]:
-			head_row = table.find("thead")
-			if head_row is not None:
-				row = head_row.find("tr")
-				if row is not None:
-					return [_normalize_header(cell.get_text(" ", strip=True)) for cell in row.find_all(["th", "td"])]
-			first_row = table.find("tr")
-			if first_row is None:
-				return []
-			return [_normalize_header(cell.get_text(" ", strip=True)) for cell in first_row.find_all(["th", "td"])]
+	def _extract_table_headers(self, table: Any) -> list[str]:
+		head_row = table.find("thead")
+		if head_row is not None:
+			row = head_row.find("tr")
+			if row is not None:
+				return [_normalize_header(cell.get_text(" ", strip=True)) for cell in row.find_all(["th", "td"])]
+		first_row = table.find("tr")
+		if first_row is None:
+			return []
+		return [_normalize_header(cell.get_text(" ", strip=True)) for cell in first_row.find_all(["th", "td"])]
 
-		def _find_scoreboard_column_map(self, headers: list[str]) -> Optional[dict[str, int]]:
-			aliases = {
-				"name": {"player", "playername", "name", "soldier"},
-				"kills": {"kills", "kill"},
-				"kdr": {"kdr", "kd", "killsdeathratio", "killdeathratio", "killdeath"},
-				"deaths": {"deaths", "death"},
-			}
-			mapping: dict[str, int] = {}
-			for wanted, names in aliases.items():
-				for index, header in enumerate(headers):
-					if header in names:
-						mapping[wanted] = index
-						break
-			if len(mapping) == len(aliases):
-				return mapping
-			return None
+	def _find_scoreboard_column_map(self, headers: list[str]) -> Optional[dict[str, int]]:
+		aliases = {
+			"name": {"player", "playername", "name", "soldier"},
+			"kills": {"kills", "kill"},
+			"kdr": {"kdr", "kd", "killsdeathratio", "killdeathratio", "killdeath"},
+			"deaths": {"deaths", "death"},
+		}
+		mapping: dict[str, int] = {}
+		for wanted, names in aliases.items():
+			for index, header in enumerate(headers):
+				if header in names:
+					mapping[wanted] = index
+					break
+		if len(mapping) == len(aliases):
+			return mapping
+		return None
 
-		def _parse_top_players_from_html(self, html: str) -> list[PlayerScoreLine]:
-			soup = BeautifulSoup(html, "html.parser")
-			for table in soup.find_all("table"):
-				headers = self._extract_table_headers(table)
-				column_map = self._find_scoreboard_column_map(headers)
-				if column_map is None:
+	def _parse_top_players_from_html(self, html: str) -> list[PlayerScoreLine]:
+		soup = BeautifulSoup(html, "html.parser")
+		for table in soup.find_all("table"):
+			headers = self._extract_table_headers(table)
+			column_map = self._find_scoreboard_column_map(headers)
+			if column_map is None:
+				continue
+
+			players: list[PlayerScoreLine] = []
+			for row in table.find_all("tr"):
+				cells = row.find_all(["td", "th"])
+				if len(cells) <= max(column_map.values()):
 					continue
 
-				players: list[PlayerScoreLine] = []
-				for row in table.find_all("tr"):
-					cells = row.find_all(["td", "th"])
-					if len(cells) <= max(column_map.values()):
-						continue
+				name = " ".join(cells[column_map["name"]].get_text(" ", strip=True).split())
+				kills = _safe_float(cells[column_map["kills"]].get_text(" ", strip=True))
+				kdr = _safe_float(cells[column_map["kdr"]].get_text(" ", strip=True))
+				deaths = _safe_float(cells[column_map["deaths"]].get_text(" ", strip=True))
 
-					name = " ".join(cells[column_map["name"]].get_text(" ", strip=True).split())
-					kills = _safe_float(cells[column_map["kills"]].get_text(" ", strip=True))
-					kdr = _safe_float(cells[column_map["kdr"]].get_text(" ", strip=True))
-					deaths = _safe_float(cells[column_map["deaths"]].get_text(" ", strip=True))
+				if not name or kills is None or deaths is None:
+					continue
+				if _normalize_header(name) in {"player", "name", "soldier"}:
+					continue
 
-					if not name or kills is None or deaths is None:
-						continue
-					if _normalize_header(name) in {"player", "name", "soldier"}:
-						continue
-
-					players.append(
-						PlayerScoreLine(
-							name=name,
-							kills=kills,
-							kdr=kdr if kdr is not None else _safe_ratio(kills, deaths),
-							deaths=deaths,
-						)
+				players.append(
+					PlayerScoreLine(
+						name=name,
+						kills=kills,
+						kdr=kdr if kdr is not None else _safe_ratio(kills, deaths),
+						deaths=deaths,
 					)
+				)
 
-				if players:
-					players.sort(key=lambda player: (-player.kills, -player.kdr, player.deaths, player.name.lower()))
-					return players[:10]
+			if players:
+				players.sort(key=lambda player: (-player.kills, -player.kdr, player.deaths, player.name.lower()))
+				return players[:10]
 
-			return []
+		return []
 
-		async def _fetch_top_players(self, stats_link: str) -> list[PlayerScoreLine]:
-			timeout = aiohttp.ClientTimeout(total=20)
-			headers = {"User-Agent": "Mozilla/5.0 WarDiaryBot/1.0"}
-			async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-				async with session.get(stats_link) as response:
-					response.raise_for_status()
-					html = await response.text()
-			return self._parse_top_players_from_html(html)
+	async def _fetch_top_players(self, stats_link: str) -> list[PlayerScoreLine]:
+		timeout = aiohttp.ClientTimeout(total=20)
+		headers = {"User-Agent": "Mozilla/5.0 WarDiaryBot/1.0"}
+		async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+			async with session.get(stats_link) as response:
+				response.raise_for_status()
+				html = await response.text()
+		return self._parse_top_players_from_html(html)
 
-		def _format_top_players(self, players: list[PlayerScoreLine]) -> Optional[str]:
-			if not players:
-				return None
-			return "\n".join(
-				f"{index}. {_truncate_player_name(player.name)} | {_format_stat_number(player.kills)} K | {player.kdr:.1f} K/D | {_format_stat_number(player.deaths)} D"
-				for index, player in enumerate(players[:10], start=1)
-			)
+	def _format_top_players(self, players: list[PlayerScoreLine]) -> Optional[str]:
+		if not players:
+			return None
+		return "\n".join(
+			f"{index}. {_truncate_player_name(player.name)} | {_format_stat_number(player.kills)} K | {player.kdr:.1f} K/D | {_format_stat_number(player.deaths)} D"
+			for index, player in enumerate(players[:10], start=1)
+		)
 
 	def _build_result_embed(
 		self,
@@ -752,9 +752,7 @@ class WarDiaryCog(commands.Cog):
 			return load_font(min_size)
 
 		text_fill = (255, 255, 255, 255)
-		accent_fill = (120, 190, 255, 255)
 
-		label_font = fit_font("WAR DIARY", width - 120, 56, 20)
 		score_font = fit_font(f"{submitter_score} - {opponent_score}", int(width * 0.35), 170, 48)
 		clan_font = fit_font(
 			submitter_clan_name if len(submitter_clan_name) >= len(opponent_clan_name) else opponent_clan_name,
@@ -765,7 +763,6 @@ class WarDiaryCog(commands.Cog):
 		date_font = fit_font(match_date, width - 120, 32, 16)
 
 		center_y = height // 2
-		draw.text((width // 2, 110), "WAR DIARY", font=label_font, fill=accent_fill, anchor="mm")
 		draw.text((width * 0.24, center_y), submitter_clan_name, font=clan_font, fill=text_fill, anchor="lm")
 		draw.text((width // 2, center_y), f"{submitter_score} - {opponent_score}", font=score_font, fill=text_fill, anchor="mm")
 		draw.text((width * 0.76, center_y), opponent_clan_name, font=clan_font, fill=text_fill, anchor="rm")
