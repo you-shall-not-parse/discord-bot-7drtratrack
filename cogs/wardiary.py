@@ -3,13 +3,10 @@ import io
 import json
 import logging
 import os
-import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-import aiohttp
-from bs4 import BeautifulSoup
 import discord
 from discord.ext import commands
 
@@ -53,23 +50,6 @@ BACKGROUND_IMAGE_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboard
 def _safe_int(value: Any) -> Optional[int]:
 	try:
 		return int(value)
-	except Exception:
-		return None
-
-
-def _safe_float(value: Any) -> Optional[float]:
-	if value is None:
-		return None
-	if isinstance(value, (int, float)):
-		return float(value)
-	text = str(value).strip().replace(",", "")
-	if not text:
-		return None
-	match = re.search(r"-?\d+(?:\.\d+)?", text)
-	if not match:
-		return None
-	try:
-		return float(match.group(0))
 	except Exception:
 		return None
 
@@ -128,42 +108,17 @@ def _truncate_thread_name(name: str) -> str:
 	return clean[:97] + "..."
 
 
-def _normalize_header(text: str) -> str:
-	return "".join(ch.lower() for ch in str(text) if ch.isalnum())
-
-
-def _safe_ratio(kills: Optional[float], deaths: Optional[float]) -> float:
-	if kills is None:
-		return 0.0
-	if deaths is None or deaths <= 0:
-		return float(kills)
-	return float(kills) / float(deaths)
-
-
-def _format_stat_number(value: float) -> str:
-	if float(value).is_integer():
-		return str(int(value))
-	return f"{value:.1f}"
-
-
-def _truncate_player_name(name: str, limit: int = 18) -> str:
-	clean = " ".join(name.split())
-	if len(clean) <= limit:
-		return clean
-	return clean[: limit - 3] + "..."
-
-
 @dataclass(frozen=True)
 class ClanConfig:
 	name: str
 
 
 @dataclass(frozen=True)
-class PlayerScoreLine:
-	name: str
-	kills: float
-	kdr: float
-	deaths: float
+class MatchThreadRecord:
+	thread_id: int
+	clan_name: str
+	opponent_clan_name: str
+	match_date: str
 
 
 def _can_submit_member(member: discord.Member) -> bool:
@@ -309,7 +264,7 @@ class StatsLinkModal(discord.ui.Modal, title="Match Details"):
 
 		await interaction.response.defer(ephemeral=True)
 
-		thread = await self.cog.create_result_post(
+		thread, error_message = await self.cog.create_result_post(
 			guild=interaction.guild,
 			submitter=interaction.user,
 			clan_name=self.clan_name,
@@ -320,7 +275,7 @@ class StatsLinkModal(discord.ui.Modal, title="Match Details"):
 			stats_link=stats_link,
 		)
 		if thread is None:
-			await interaction.followup.send("Failed to create the war diary post. Check the forum channel config.", ephemeral=True)
+			await interaction.followup.send(error_message or "Failed to create the war diary post. Check the forum channel config.", ephemeral=True)
 			return
 
 		await interaction.followup.send(f"Posted to {thread.mention}", ephemeral=True)
@@ -420,6 +375,7 @@ class WarDiaryCog(commands.Cog):
 		self._did_initial_ensure = False
 		self._state = self._load_state()
 		self._ensure_lock = asyncio.Lock()
+		self._match_lock = asyncio.Lock()
 
 	def _load_state(self) -> dict[str, Any]:
 		try:
@@ -442,6 +398,86 @@ class WarDiaryCog(commands.Cog):
 			os.replace(tmp_path, STATE_PATH)
 		except Exception:
 			log.warning("Failed to save war diary state.", exc_info=True)
+
+	def _get_match_records(self) -> list[dict[str, Any]]:
+		records = self._state.get("match_threads")
+		if isinstance(records, list):
+			return records
+		records = []
+		self._state["match_threads"] = records
+		return records
+
+	def _match_identity(self, clan_name: str, opponent_clan_name: str, match_date: str) -> tuple[str, str, str]:
+		return (clan_name.casefold(), opponent_clan_name.casefold(), match_date)
+
+	def _find_match_record(self, clan_name: str, opponent_clan_name: str, match_date: str) -> Optional[dict[str, Any]]:
+		identity = self._match_identity(clan_name, opponent_clan_name, match_date)
+		for record in self._get_match_records():
+			record_identity = self._match_identity(
+				str(record.get("clan_name") or ""),
+				str(record.get("opponent_clan_name") or ""),
+				str(record.get("match_date") or ""),
+			)
+			if record_identity == identity:
+				return record
+		return None
+
+	def _remove_match_record_by_thread_id(self, thread_id: int) -> bool:
+		records = self._get_match_records()
+		original_len = len(records)
+		records[:] = [record for record in records if _safe_int(record.get("thread_id")) != thread_id]
+		return len(records) != original_len
+
+	def _store_match_record(self, *, thread_id: int, clan_name: str, opponent_clan_name: str, match_date: str) -> None:
+		records = self._get_match_records()
+		records[:] = [
+			record for record in records
+			if self._match_identity(
+				str(record.get("clan_name") or ""),
+				str(record.get("opponent_clan_name") or ""),
+				str(record.get("match_date") or ""),
+			) != self._match_identity(clan_name, opponent_clan_name, match_date)
+		]
+		records.append(
+			{
+				"thread_id": thread_id,
+				"clan_name": clan_name,
+				"opponent_clan_name": opponent_clan_name,
+				"match_date": match_date,
+			}
+		)
+
+	async def _find_existing_match_thread(
+		self,
+		*,
+		clan_name: str,
+		opponent_clan_name: str,
+		match_date: str,
+	) -> Optional[discord.Thread]:
+		record = self._find_match_record(clan_name, opponent_clan_name, match_date)
+		if record is None:
+			return None
+		thread_id = _safe_int(record.get("thread_id"))
+		if thread_id is None:
+			return None
+		thread = await self._get_thread(thread_id)
+		if thread is not None:
+			return thread
+		if self._remove_match_record_by_thread_id(thread_id):
+			self._save_state()
+		return None
+
+	def _clear_deleted_thread_state(self, thread_id: int) -> bool:
+		changed = False
+		if _safe_int(self._state.get("submission_thread_id")) == thread_id:
+			self._state.pop("submission_thread_id", None)
+			self._state.pop("submission_message_id", None)
+			changed = True
+		if self._remove_match_record_by_thread_id(thread_id):
+			changed = True
+		if changed:
+			self._save_state()
+		return changed
 
 	def load_clans(self) -> list[ClanConfig]:
 		try:
@@ -485,6 +521,10 @@ class WarDiaryCog(commands.Cog):
 			return
 		self._did_initial_ensure = True
 		await self.ensure_submission_post()
+
+	@commands.Cog.listener()
+	async def on_thread_delete(self, thread: discord.Thread) -> None:
+		self._clear_deleted_thread_state(thread.id)
 
 	def _submission_embed(self) -> discord.Embed:
 		clans = self.load_clans()
@@ -600,113 +640,6 @@ class WarDiaryCog(commands.Cog):
 				self._state["submission_message_id"] = message.id
 			self._save_state()
 
-	def _extract_table_headers(self, table: Any) -> list[str]:
-		head_row = table.find("thead")
-		if head_row is not None:
-			row = head_row.find("tr")
-			if row is not None:
-				return [_normalize_header(cell.get_text(" ", strip=True)) for cell in row.find_all(["th", "td"])]
-		first_row = table.find("tr")
-		if first_row is None:
-			return []
-		return [_normalize_header(cell.get_text(" ", strip=True)) for cell in first_row.find_all(["th", "td"])]
-
-	def _find_scoreboard_column_map(self, headers: list[str]) -> Optional[dict[str, int]]:
-		aliases = {
-			"name": {"player", "playername", "name", "soldier"},
-			"kills": {"kills", "kill"},
-			"kdr": {"kdr", "kd", "killsdeathratio", "killdeathratio", "killdeath"},
-			"deaths": {"deaths", "death"},
-		}
-		mapping: dict[str, int] = {}
-		for wanted, names in aliases.items():
-			for index, header in enumerate(headers):
-				if header in names:
-					mapping[wanted] = index
-					break
-		if len(mapping) == len(aliases):
-			return mapping
-		return None
-
-	def _row_looks_like_stats_player(self, cells: list[Any]) -> bool:
-		if len(cells) < 9:
-			return False
-		rank = _safe_int(cells[0].get_text(" ", strip=True))
-		name = " ".join(cells[3].get_text(" ", strip=True).split()) if len(cells) > 3 else ""
-		kills = _safe_float(cells[6].get_text(" ", strip=True)) if len(cells) > 6 else None
-		kdr = _safe_float(cells[7].get_text(" ", strip=True)) if len(cells) > 7 else None
-		deaths = _safe_float(cells[8].get_text(" ", strip=True)) if len(cells) > 8 else None
-		return rank is not None and bool(name) and kills is not None and kdr is not None and deaths is not None
-
-	def _parse_top_players_from_cells(self, rows: list[Any], column_map: dict[str, int]) -> list[PlayerScoreLine]:
-		players: list[PlayerScoreLine] = []
-		for row in rows:
-			cells = row.find_all(["td", "th"])
-			if len(cells) <= max(column_map.values()):
-				continue
-
-			name = " ".join(cells[column_map["name"]].get_text(" ", strip=True).split())
-			kills = _safe_float(cells[column_map["kills"]].get_text(" ", strip=True))
-			kdr = _safe_float(cells[column_map["kdr"]].get_text(" ", strip=True))
-			deaths = _safe_float(cells[column_map["deaths"]].get_text(" ", strip=True))
-
-			if not name or kills is None or deaths is None:
-				continue
-			if _normalize_header(name) in {"player", "name", "soldier"}:
-				continue
-
-			players.append(
-				PlayerScoreLine(
-					name=name,
-					kills=kills,
-					kdr=kdr if kdr is not None else _safe_ratio(kills, deaths),
-					deaths=deaths,
-				)
-			)
-		players.sort(key=lambda player: (-player.kills, -player.kdr, player.deaths, player.name.lower()))
-		return players[:10]
-
-	def _parse_top_players_from_html(self, html: str) -> list[PlayerScoreLine]:
-		soup = BeautifulSoup(html, "html.parser")
-		for table in soup.find_all("table"):
-			rows = table.find_all("tr")
-			if not rows:
-				continue
-			headers = self._extract_table_headers(table)
-			column_map = self._find_scoreboard_column_map(headers)
-			if column_map is not None:
-				players = self._parse_top_players_from_cells(rows, column_map)
-				if players:
-					return players
-
-			for row in rows:
-				cells = row.find_all(["td", "th"])
-				if self._row_looks_like_stats_player(cells):
-					fallback_map = {"name": 3, "kills": 6, "kdr": 7, "deaths": 8}
-					players = self._parse_top_players_from_cells(rows, fallback_map)
-					if players:
-						return players
-					break
-
-		return []
-
-	async def _fetch_top_players(self, stats_link: str) -> list[PlayerScoreLine]:
-		timeout = aiohttp.ClientTimeout(total=20)
-		headers = {"User-Agent": "Mozilla/5.0 WarDiaryBot/1.0"}
-		async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-			async with session.get(stats_link) as response:
-				response.raise_for_status()
-				html = await response.text()
-		return self._parse_top_players_from_html(html)
-
-	def _format_top_players(self, players: list[PlayerScoreLine]) -> Optional[str]:
-		if not players:
-			return None
-		return "\n".join(
-			f"{index}. {_truncate_player_name(player.name)} | {_format_stat_number(player.kills)} K | {player.kdr:.1f} K/D | {_format_stat_number(player.deaths)} D"
-			for index, player in enumerate(players[:10], start=1)
-		)
-
 	def _build_result_embed(
 		self,
 		*,
@@ -718,7 +651,6 @@ class WarDiaryCog(commands.Cog):
 		filename: str,
 		submitter: discord.Member,
 		stats_link: Optional[str],
-		top_players: list[PlayerScoreLine],
 	) -> discord.Embed:
 		embed = discord.Embed(
 			title="War Diary Result",
@@ -732,9 +664,6 @@ class WarDiaryCog(commands.Cog):
 		embed.add_field(name="Submitted by", value=submitter.mention, inline=False)
 		if stats_link:
 			embed.add_field(name="Stats link", value=f"[Open match stats]({stats_link})", inline=False)
-		top_player_lines = self._format_top_players(top_players)
-		if top_player_lines:
-			embed.add_field(name="Top 10 Players", value=top_player_lines, inline=False)
 		embed.set_image(url=f"attachment://{filename}")
 		return embed
 
@@ -785,13 +714,13 @@ class WarDiaryCog(commands.Cog):
 			80,
 			24,
 		)
-		date_font = fit_font(match_date, width - 120, 32, 16)
+		date_font = fit_font(match_date, int(width * 0.28), 80, 24)
 
 		center_y = height // 2
 		draw.text((width * 0.24, center_y), submitter_clan_name, font=clan_font, fill=text_fill, anchor="lm")
 		draw.text((width // 2, center_y), f"{submitter_score} - {opponent_score}", font=score_font, fill=text_fill, anchor="mm")
 		draw.text((width * 0.76, center_y), opponent_clan_name, font=clan_font, fill=text_fill, anchor="rm")
-		draw.text((width // 2, height - 90), match_date, font=date_font, fill=text_fill, anchor="mm")
+		draw.text((width // 2, center_y + 140), match_date, font=date_font, fill=text_fill, anchor="mm")
 
 		out = io.BytesIO()
 		base.save(out, format="PNG")
@@ -809,59 +738,70 @@ class WarDiaryCog(commands.Cog):
 		opponent_score: int,
 		match_date: str,
 		stats_link: Optional[str],
-	) -> Optional[discord.Thread]:
+	) -> tuple[Optional[discord.Thread], Optional[str]]:
 		forum = await self._get_forum_channel()
 		if forum is None:
-			return None
+			return None, "Failed to create the war diary post. Check the forum channel config."
 
-		thread_name = _truncate_thread_name(
-			f"{clan_name} {submitter_score} - {opponent_score} {opponent_clan_name}"
-		)
-		filename = f"wardiary_{submitter_score}_{opponent_score}.png"
-		image_bytes = self._render_result_image(
-			submitter_clan_name=clan_name,
-			opponent_clan_name=opponent_clan_name,
-			submitter_score=submitter_score,
-			opponent_score=opponent_score,
-			match_date=match_date,
-		)
-		file = discord.File(io.BytesIO(image_bytes), filename=filename)
-		top_players: list[PlayerScoreLine] = []
-		if stats_link:
-			try:
-				top_players = await self._fetch_top_players(stats_link)
-			except Exception:
-				log.exception("Failed to fetch or parse war diary stats page: %s", stats_link)
-		embed = self._build_result_embed(
-			submitter_clan_name=clan_name,
-			opponent_clan_name=opponent_clan_name,
-			submitter_score=submitter_score,
-			opponent_score=opponent_score,
-			match_date=match_date,
-			filename=filename,
-			submitter=submitter,
-			stats_link=stats_link,
-			top_players=top_players,
-		)
-
-		content_lines: list[str] = []
-		content_lines.append(f"Match date: {match_date}")
-		content = "\n".join(content_lines) if content_lines else None
-
-		try:
-			created = await forum.create_thread(
-				name=thread_name,
-				content=content,
-				embed=embed,
-				file=file,
-				allowed_mentions=discord.AllowedMentions.none(),
+		async with self._match_lock:
+			existing_thread = await self._find_existing_match_thread(
+				clan_name=clan_name,
+				opponent_clan_name=opponent_clan_name,
+				match_date=match_date,
 			)
-		except Exception:
-			log.exception("Failed creating war diary result post")
-			return None
+			if existing_thread is not None:
+				return None, f"A match thread already exists for {opponent_clan_name} on {match_date}: {existing_thread.mention}"
 
-		thread, _message = self._extract_created_post(created)
-		return thread
+			thread_name = _truncate_thread_name(
+				f"{clan_name} {submitter_score} - {opponent_score} {opponent_clan_name}"
+			)
+			filename = f"wardiary_{submitter_score}_{opponent_score}.png"
+			image_bytes = self._render_result_image(
+				submitter_clan_name=clan_name,
+				opponent_clan_name=opponent_clan_name,
+				submitter_score=submitter_score,
+				opponent_score=opponent_score,
+				match_date=match_date,
+			)
+			file = discord.File(io.BytesIO(image_bytes), filename=filename)
+			embed = self._build_result_embed(
+				submitter_clan_name=clan_name,
+				opponent_clan_name=opponent_clan_name,
+				submitter_score=submitter_score,
+				opponent_score=opponent_score,
+				match_date=match_date,
+				filename=filename,
+				submitter=submitter,
+				stats_link=stats_link,
+			)
+
+			content_lines: list[str] = []
+			content_lines.append(f"Match date: {match_date}")
+			content = "\n".join(content_lines) if content_lines else None
+
+			try:
+				created = await forum.create_thread(
+					name=thread_name,
+					content=content,
+					embed=embed,
+					file=file,
+					allowed_mentions=discord.AllowedMentions.none(),
+				)
+			except Exception:
+				log.exception("Failed creating war diary result post")
+				return None, "Failed to create the war diary post. Check the forum channel config."
+
+			thread, _message = self._extract_created_post(created)
+			if thread is None:
+				return None, "Failed to create the war diary post. Check the forum channel config."
+			self._store_match_record(
+				thread_id=thread.id,
+				clan_name=clan_name,
+				opponent_clan_name=opponent_clan_name,
+				match_date=match_date,
+			)
+			self._save_state()
+			return thread, None
 
 
 async def setup(bot: commands.Bot):
