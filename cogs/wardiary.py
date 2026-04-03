@@ -44,6 +44,8 @@ STATE_PATH: str = data_path("wardiary_state.json")
 
 # Optional font/background assets for the generated result image.
 FONT_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboard_font.ttf")
+RESULT_BACKGROUND_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboard_gif.gif")
+BACKGROUND_GIF_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboard_gif.gif")
 BACKGROUND_IMAGE_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboard_blank.jpg")
 
 
@@ -106,6 +108,10 @@ def _truncate_thread_name(name: str) -> str:
 	if len(clean) <= 100:
 		return clean
 	return clean[:97] + "..."
+
+
+def _media_extension(path: str) -> str:
+	return os.path.splitext(path)[1].lower()
 
 
 @dataclass(frozen=True)
@@ -667,6 +673,21 @@ class WarDiaryCog(commands.Cog):
 		embed.set_image(url=f"attachment://{filename}")
 		return embed
 
+	def _select_result_background(self) -> tuple[str, str]:
+		configured_path = RESULT_BACKGROUND_PATH
+		configured_ext = _media_extension(configured_path)
+		if configured_ext == ".gif":
+			if os.path.exists(configured_path):
+				return configured_path, ".gif"
+			if os.path.exists(BACKGROUND_IMAGE_PATH):
+				return BACKGROUND_IMAGE_PATH, ".png"
+			return configured_path, ".gif"
+		if os.path.exists(configured_path):
+			return configured_path, ".png"
+		if os.path.exists(BACKGROUND_GIF_PATH):
+			return BACKGROUND_GIF_PATH, ".gif"
+		return configured_path, ".png"
+
 	def _render_result_image(
 		self,
 		*,
@@ -675,21 +696,31 @@ class WarDiaryCog(commands.Cog):
 		submitter_score: int,
 		opponent_score: int,
 		match_date: str,
-	) -> bytes:
-		from PIL import Image, ImageDraw, ImageFont, ImageOps
+	) -> tuple[bytes, str]:
+		from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageSequence
 
 		width = 1600
 		height = 900
+		background_path, output_extension = self._select_result_background()
+		use_gif_background = _media_extension(background_path) == ".gif"
 
-		if os.path.exists(BACKGROUND_IMAGE_PATH):
-			base = Image.open(BACKGROUND_IMAGE_PATH).convert("RGBA")
-			base = ImageOps.fit(base, (width, height), method=Image.Resampling.LANCZOS)
-			overlay = Image.new("RGBA", (width, height), (8, 12, 20, 140))
-			base = Image.alpha_composite(base, overlay)
+		if use_gif_background and os.path.exists(background_path):
+			with Image.open(background_path) as source_gif:
+				source_frames = [frame.copy() for frame in ImageSequence.Iterator(source_gif)]
+				durations = [frame.info.get("duration", source_gif.info.get("duration", 100)) for frame in ImageSequence.Iterator(source_gif)]
 		else:
-			base = Image.new("RGBA", (width, height), (18, 24, 38, 255))
+			source_frames = []
+			durations = []
 
-		draw = ImageDraw.Draw(base)
+		if not source_frames:
+			if os.path.exists(background_path) and not use_gif_background:
+				base = Image.open(background_path).convert("RGBA")
+				base = ImageOps.fit(base, (width, height), method=Image.Resampling.LANCZOS)
+				source_frames = [base]
+				durations = [100]
+			else:
+				source_frames = [Image.new("RGBA", (width, height), (18, 24, 38, 255))]
+				durations = [100]
 
 		def load_font(size: int):
 			try:
@@ -700,11 +731,13 @@ class WarDiaryCog(commands.Cog):
 		def fit_font(text: str, max_width: int, start_size: int, min_size: int):
 			for size in range(start_size, min_size - 1, -2):
 				font = load_font(size)
-				bbox = draw.textbbox((0, 0), text, font=font)
+				bbox = reference_draw.textbbox((0, 0), text, font=font)
 				if (bbox[2] - bbox[0]) <= max_width:
 					return font
 			return load_font(min_size)
 
+		reference_frame = ImageOps.fit(source_frames[0].convert("RGBA"), (width, height), method=Image.Resampling.LANCZOS)
+		reference_draw = ImageDraw.Draw(reference_frame)
 		text_fill = (255, 255, 255, 255)
 
 		score_font = fit_font(f"{submitter_score} - {opponent_score}", int(width * 0.35), 170, 48)
@@ -717,15 +750,34 @@ class WarDiaryCog(commands.Cog):
 		date_font = fit_font(match_date, int(width * 0.28), 80, 24)
 
 		center_y = height // 2
-		draw.text((width * 0.24, center_y), submitter_clan_name, font=clan_font, fill=text_fill, anchor="lm")
-		draw.text((width // 2, center_y), f"{submitter_score} - {opponent_score}", font=score_font, fill=text_fill, anchor="mm")
-		draw.text((width * 0.76, center_y), opponent_clan_name, font=clan_font, fill=text_fill, anchor="rm")
-		draw.text((width // 2, center_y + 140), match_date, font=date_font, fill=text_fill, anchor="mm")
+		rendered_frames: list[Image.Image] = []
+		for frame in source_frames:
+			base = ImageOps.fit(frame.convert("RGBA"), (width, height), method=Image.Resampling.LANCZOS)
+			overlay = Image.new("RGBA", (width, height), (8, 12, 20, 140))
+			base = Image.alpha_composite(base, overlay)
+			draw = ImageDraw.Draw(base)
+			draw.text((width * 0.24, center_y), submitter_clan_name, font=clan_font, fill=text_fill, anchor="lm")
+			draw.text((width // 2, center_y), f"{submitter_score} - {opponent_score}", font=score_font, fill=text_fill, anchor="mm")
+			draw.text((width * 0.76, center_y), opponent_clan_name, font=clan_font, fill=text_fill, anchor="rm")
+			draw.text((width // 2, center_y + 190), match_date, font=date_font, fill=text_fill, anchor="mm")
+			rendered_frames.append(base)
 
 		out = io.BytesIO()
-		base.save(out, format="PNG")
+		first_frame = rendered_frames[0]
+		if output_extension == ".gif":
+			first_frame.save(
+				out,
+				format="GIF",
+				save_all=True,
+				append_images=rendered_frames[1:],
+				duration=durations[: len(rendered_frames)] or 100,
+				loop=0,
+				disposal=2,
+			)
+		else:
+			first_frame.save(out, format="PNG")
 		out.seek(0)
-		return out.getvalue()
+		return out.getvalue(), output_extension
 
 	async def create_result_post(
 		self,
@@ -755,14 +807,14 @@ class WarDiaryCog(commands.Cog):
 			thread_name = _truncate_thread_name(
 				f"{clan_name} {submitter_score} - {opponent_score} {opponent_clan_name}"
 			)
-			filename = f"wardiary_{submitter_score}_{opponent_score}.png"
-			image_bytes = self._render_result_image(
+			image_bytes, output_extension = self._render_result_image(
 				submitter_clan_name=clan_name,
 				opponent_clan_name=opponent_clan_name,
 				submitter_score=submitter_score,
 				opponent_score=opponent_score,
 				match_date=match_date,
 			)
+			filename = f"wardiary_{submitter_score}_{opponent_score}{output_extension}"
 			file = discord.File(io.BytesIO(image_bytes), filename=filename)
 			embed = self._build_result_embed(
 				submitter_clan_name=clan_name,
