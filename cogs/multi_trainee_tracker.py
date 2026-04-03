@@ -20,9 +20,9 @@ logger = logging.getLogger(__name__)
 # =============================
 GUILD_ID = 1097913605082579024
 
-# All HTML table uploads go to this single channel (shared across tracks).
+# All HTML table uploads go to this single channel or thread (shared across tracks).
 # Embeds still post in each track's configured channel.
-HTML_CHANNEL_ID = 1098525492631572567
+HTML_CHANNEL_ID = 1489700363970936994
 
 # Trainees are considered "Behind" once they've been in the server longer than this.
 BEHIND_AFTER_DAYS = 14
@@ -160,6 +160,16 @@ class MultiTraineeTracker(commands.Cog):
         except Exception:
             return None
 
+    async def _get_message_channel(self, channel_id: int) -> Optional[discord.TextChannel | discord.Thread]:
+        ch = self.bot.get_channel(channel_id)
+        if isinstance(ch, (discord.TextChannel, discord.Thread)):
+            return ch
+        try:
+            fetched = await self.bot.fetch_channel(channel_id)
+            return fetched if isinstance(fetched, (discord.TextChannel, discord.Thread)) else None
+        except Exception:
+            return None
+
     async def _backstop_refresh_loop(self) -> None:
         await self.bot.wait_until_ready()
         # Initial refresh on startup
@@ -237,9 +247,9 @@ class MultiTraineeTracker(commands.Cog):
             logger.warning("Track %s: channel not found or not a text channel", cfg.key)
             return
 
-        html_channel = await self._get_text_channel(HTML_CHANNEL_ID) if HTML_CHANNEL_ID else None
+        html_channel = await self._get_message_channel(HTML_CHANNEL_ID) if HTML_CHANNEL_ID else None
         if HTML_CHANNEL_ID and not html_channel:
-            logger.warning("Track %s: HTML channel not found or not a text channel", cfg.key)
+            logger.warning("Track %s: HTML channel not found or not a message channel", cfg.key)
             html_channel = None
 
         rows = self._collect_rows(guild, cfg)
@@ -275,7 +285,7 @@ class MultiTraineeTracker(commands.Cog):
         rows.sort(key=lambda r: r["join_date"])
         return rows
 
-    async def _post_html(self, channel: discord.TextChannel, cfg: TrackConfig, rows: list[dict]) -> Optional[str]:
+    async def _post_html(self, channel: discord.TextChannel | discord.Thread, cfg: TrackConfig, rows: list[dict]) -> Optional[str]:
         state = self._track_state(cfg.key)
 
         # Delete previous HTML message to keep the channel clean (attachments can't be edited reliably).
@@ -285,7 +295,7 @@ class MultiTraineeTracker(commands.Cog):
                 old_channel = channel
                 old_channel_id = state.get("html_channel_id")
                 if isinstance(old_channel_id, int) and old_channel_id != channel.id:
-                    fetched_old = await self._get_text_channel(old_channel_id)
+                    fetched_old = await self._get_message_channel(old_channel_id)
                     if fetched_old:
                         old_channel = fetched_old
 
