@@ -90,6 +90,17 @@ def _normalize_stats_link(text: str) -> Optional[str]:
 	return value
 
 
+def _normalize_match_date(text: str) -> str:
+	value = (text or "").strip()
+	if not value:
+		raise ValueError("Match date is required")
+	try:
+		parsed = datetime.strptime(value, "%d/%m/%y")
+	except ValueError:
+		raise ValueError("Match date must be in DD/MM/YY format") from None
+	return parsed.strftime("%d/%m/%y")
+
+
 def _truncate_thread_name(name: str) -> str:
 	clean = " ".join(name.split())
 	if len(clean) <= 100:
@@ -208,7 +219,14 @@ class ScoreSelect(discord.ui.Select):
 		await interaction.response.edit_message(view=view)
 
 
-class StatsLinkModal(discord.ui.Modal, title="Optional Match Stats"):
+class StatsLinkModal(discord.ui.Modal, title="Match Details"):
+	match_date = discord.ui.TextInput(
+		label="Match date (DD/MM/YY)",
+		placeholder="03/04/26",
+		required=True,
+		max_length=8,
+	)
+
 	stats_link = discord.ui.TextInput(
 		label="Stats link",
 		placeholder="https://...",
@@ -230,6 +248,7 @@ class StatsLinkModal(discord.ui.Modal, title="Optional Match Stats"):
 
 		try:
 			left, right = _parse_score(self.selected_score)
+			match_date = _normalize_match_date(str(self.match_date))
 			stats_link = _normalize_stats_link(str(self.stats_link))
 		except ValueError as exc:
 			await interaction.response.send_message(str(exc), ephemeral=True)
@@ -242,6 +261,7 @@ class StatsLinkModal(discord.ui.Modal, title="Optional Match Stats"):
 			opponent_clan_name=self.opponent_clan_name,
 			submitter_score=left,
 			opponent_score=right,
+			match_date=match_date,
 			stats_link=stats_link,
 		)
 		if thread is None:
@@ -537,12 +557,16 @@ class WarDiaryCog(commands.Cog):
 		opponent_clan_name: str,
 		submitter_score: int,
 		opponent_score: int,
+		match_date: str,
 		filename: str,
 		submitter: discord.Member,
 	) -> discord.Embed:
 		embed = discord.Embed(
 			title="War Diary Result",
-			description=f"**{submitter_clan_name}** {submitter_score}-{opponent_score} **{opponent_clan_name}**",
+			description=(
+				f"**{submitter_clan_name}** {submitter_score}-{opponent_score} **{opponent_clan_name}**\n"
+				f"**Date:** {match_date}"
+			),
 			colour=discord.Colour.blurple(),
 			timestamp=_utcnow(),
 		)
@@ -557,6 +581,7 @@ class WarDiaryCog(commands.Cog):
 		opponent_clan_name: str,
 		submitter_score: int,
 		opponent_score: int,
+		match_date: str,
 	) -> bytes:
 		from PIL import Image, ImageDraw, ImageFont, ImageOps
 
@@ -598,14 +623,14 @@ class WarDiaryCog(commands.Cog):
 			80,
 			24,
 		)
-		date_font = fit_font(_utcnow().strftime("%d/%m/%Y"), width - 120, 32, 16)
+		date_font = fit_font(match_date, width - 120, 32, 16)
 
 		center_y = height // 2
 		draw.text((width // 2, 110), "WAR DIARY", font=label_font, fill=accent_fill, anchor="mm")
 		draw.text((width * 0.24, center_y), submitter_clan_name, font=clan_font, fill=text_fill, anchor="lm")
 		draw.text((width // 2, center_y), f"{submitter_score} - {opponent_score}", font=score_font, fill=text_fill, anchor="mm")
 		draw.text((width * 0.76, center_y), opponent_clan_name, font=clan_font, fill=text_fill, anchor="rm")
-		draw.text((width // 2, height - 90), _utcnow().strftime("%d/%m/%Y"), font=date_font, fill=text_fill, anchor="mm")
+		draw.text((width // 2, height - 90), match_date, font=date_font, fill=text_fill, anchor="mm")
 
 		out = io.BytesIO()
 		base.save(out, format="PNG")
@@ -621,6 +646,7 @@ class WarDiaryCog(commands.Cog):
 		opponent_clan_name: str,
 		submitter_score: int,
 		opponent_score: int,
+		match_date: str,
 		stats_link: Optional[str],
 	) -> Optional[discord.Thread]:
 		forum = await self._get_forum_channel()
@@ -628,7 +654,7 @@ class WarDiaryCog(commands.Cog):
 			return None
 
 		thread_name = _truncate_thread_name(
-			f"{clan_name} {submitter_score} - {opponent_score} {opponent_clan_name}"
+			f"{clan_name} {submitter_score} - {opponent_score} {opponent_clan_name} {match_date}"
 		)
 		filename = f"wardiary_{submitter_score}_{opponent_score}.png"
 		image_bytes = self._render_result_image(
@@ -636,6 +662,7 @@ class WarDiaryCog(commands.Cog):
 			opponent_clan_name=opponent_clan_name,
 			submitter_score=submitter_score,
 			opponent_score=opponent_score,
+			match_date=match_date,
 		)
 		file = discord.File(io.BytesIO(image_bytes), filename=filename)
 		embed = self._build_result_embed(
@@ -643,11 +670,13 @@ class WarDiaryCog(commands.Cog):
 			opponent_clan_name=opponent_clan_name,
 			submitter_score=submitter_score,
 			opponent_score=opponent_score,
+			match_date=match_date,
 			filename=filename,
 			submitter=submitter,
 		)
 
 		content_lines: list[str] = []
+		content_lines.append(f"Match date: {match_date}")
 		if stats_link:
 			content_lines.append(f"Stats link: {stats_link}")
 		content = "\n".join(content_lines) if content_lines else None
