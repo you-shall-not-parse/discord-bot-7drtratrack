@@ -105,6 +105,7 @@ async def main():
         await bot.load_extension("cogs.rollcall")
         await bot.load_extension("cogs.nameshame")
         await bot.load_extension("cogs.outofoffice")
+        await bot.load_extension("cogs.wardiary")
         await bot.start(TOKEN)
 
 if __name__ == "__main__":
