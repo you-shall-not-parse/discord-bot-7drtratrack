@@ -34,7 +34,7 @@ SUBMISSION_POST_AUTO_ARCHIVE_MINUTES: int = 10080
 HOME_CLAN_NAME: str = "7DR"
 
 # GIF shown on the persistent submission embed.
-SUBMISSION_EMBED_GIF_URL: str = "https://cdn.discordapp.com/attachments/1098976074852999261/1489752326179786924/ezgif.com-cut.gif?ex=69d18f78&is=69d03df8&hm=383a2bd472837bed1916a5ec3c6e2772378f086e11dd58c6a25ede0267e4accd"
+SUBMISSION_EMBED_GIF_URL: str = "https://cdn.discordapp.com/attachments/1098976074852999261/1449844246348824757/file_00000000f2886246a918d715405f88e4-1.png?ex=69d0bc6d&is=69cf6aed&hm=0ed873d346e5eb80dc9f28907c70fe800842bb78d738efe3f0e09764712e9910"
 
 # Clan names are loaded from this file.
 CLAN_CONFIG_PATH: str = data_path("clannames.json")
