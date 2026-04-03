@@ -626,42 +626,65 @@ class WarDiaryCog(commands.Cog):
 			return mapping
 		return None
 
+	def _row_looks_like_stats_player(self, cells: list[Any]) -> bool:
+		if len(cells) < 9:
+			return False
+		rank = _safe_int(cells[0].get_text(" ", strip=True))
+		name = " ".join(cells[3].get_text(" ", strip=True).split()) if len(cells) > 3 else ""
+		kills = _safe_float(cells[6].get_text(" ", strip=True)) if len(cells) > 6 else None
+		kdr = _safe_float(cells[7].get_text(" ", strip=True)) if len(cells) > 7 else None
+		deaths = _safe_float(cells[8].get_text(" ", strip=True)) if len(cells) > 8 else None
+		return rank is not None and bool(name) and kills is not None and kdr is not None and deaths is not None
+
+	def _parse_top_players_from_cells(self, rows: list[Any], column_map: dict[str, int]) -> list[PlayerScoreLine]:
+		players: list[PlayerScoreLine] = []
+		for row in rows:
+			cells = row.find_all(["td", "th"])
+			if len(cells) <= max(column_map.values()):
+				continue
+
+			name = " ".join(cells[column_map["name"]].get_text(" ", strip=True).split())
+			kills = _safe_float(cells[column_map["kills"]].get_text(" ", strip=True))
+			kdr = _safe_float(cells[column_map["kdr"]].get_text(" ", strip=True))
+			deaths = _safe_float(cells[column_map["deaths"]].get_text(" ", strip=True))
+
+			if not name or kills is None or deaths is None:
+				continue
+			if _normalize_header(name) in {"player", "name", "soldier"}:
+				continue
+
+			players.append(
+				PlayerScoreLine(
+					name=name,
+					kills=kills,
+					kdr=kdr if kdr is not None else _safe_ratio(kills, deaths),
+					deaths=deaths,
+				)
+			)
+		players.sort(key=lambda player: (-player.kills, -player.kdr, player.deaths, player.name.lower()))
+		return players[:10]
+
 	def _parse_top_players_from_html(self, html: str) -> list[PlayerScoreLine]:
 		soup = BeautifulSoup(html, "html.parser")
 		for table in soup.find_all("table"):
+			rows = table.find_all("tr")
+			if not rows:
+				continue
 			headers = self._extract_table_headers(table)
 			column_map = self._find_scoreboard_column_map(headers)
-			if column_map is None:
-				continue
+			if column_map is not None:
+				players = self._parse_top_players_from_cells(rows, column_map)
+				if players:
+					return players
 
-			players: list[PlayerScoreLine] = []
-			for row in table.find_all("tr"):
+			for row in rows:
 				cells = row.find_all(["td", "th"])
-				if len(cells) <= max(column_map.values()):
-					continue
-
-				name = " ".join(cells[column_map["name"]].get_text(" ", strip=True).split())
-				kills = _safe_float(cells[column_map["kills"]].get_text(" ", strip=True))
-				kdr = _safe_float(cells[column_map["kdr"]].get_text(" ", strip=True))
-				deaths = _safe_float(cells[column_map["deaths"]].get_text(" ", strip=True))
-
-				if not name or kills is None or deaths is None:
-					continue
-				if _normalize_header(name) in {"player", "name", "soldier"}:
-					continue
-
-				players.append(
-					PlayerScoreLine(
-						name=name,
-						kills=kills,
-						kdr=kdr if kdr is not None else _safe_ratio(kills, deaths),
-						deaths=deaths,
-					)
-				)
-
-			if players:
-				players.sort(key=lambda player: (-player.kills, -player.kdr, player.deaths, player.name.lower()))
-				return players[:10]
+				if self._row_looks_like_stats_player(cells):
+					fallback_map = {"name": 3, "kills": 6, "kdr": 7, "deaths": 8}
+					players = self._parse_top_players_from_cells(rows, fallback_map)
+					if players:
+						return players
+					break
 
 		return []
 
