@@ -443,10 +443,10 @@ class WarDiaryCog(commands.Cog):
 			value=(
 				"1. Click the Submit Match Result button.\n"
 				"2. Select the opposing clan, click 'other' if it is not listed.\n"
-				"3. Select the result\n"
+				"3. Select the result.\n"
 				"4. Before you go to the next step, check you have the stats link for the match, if you want to include that.\n"
-				"5. Click 'Add Optional Stats Link & Submit'\n"
-				"6. Paste the stats ink and click Submit!"
+				"5. Click 'Add Optional Stats Link & Submit'.\n"
+				"6. Enter the date, paste the stats link and click Submit!."
 			),
 			inline=False,
 		)
@@ -555,6 +555,7 @@ class WarDiaryCog(commands.Cog):
 		match_date: str,
 		filename: str,
 		submitter: discord.Member,
+		stats_link: Optional[str],
 	) -> discord.Embed:
 		embed = discord.Embed(
 			title="War Diary Result",
@@ -566,6 +567,8 @@ class WarDiaryCog(commands.Cog):
 			timestamp=_utcnow(),
 		)
 		embed.add_field(name="Submitted by", value=submitter.mention, inline=False)
+		if stats_link:
+			embed.add_field(name="Stats link", value=f"[Open match stats]({stats_link})", inline=False)
 		embed.set_image(url=f"attachment://{filename}")
 		return embed
 
@@ -668,12 +671,11 @@ class WarDiaryCog(commands.Cog):
 			match_date=match_date,
 			filename=filename,
 			submitter=submitter,
+			stats_link=stats_link,
 		)
 
 		content_lines: list[str] = []
 		content_lines.append(f"Match date: {match_date}")
-		if stats_link:
-			content_lines.append(f"Stats link: {stats_link}")
 		content = "\n".join(content_lines) if content_lines else None
 
 		try:
