@@ -586,6 +586,45 @@ class WarDiaryCog(commands.Cog):
 			return None
 		return fetched if isinstance(fetched, discord.Thread) else None
 
+	def _normalize_tag_name(self, value: str) -> str:
+		return " ".join((value or "").split()).casefold()
+
+	def _find_forum_tag(
+		self,
+		forum: discord.ForumChannel,
+		*,
+		opponent_clan_name: str,
+	) -> Optional[discord.ForumTag]:
+		target = self._normalize_tag_name(opponent_clan_name)
+		if not target:
+			return None
+
+		for tag in forum.available_tags:
+			if self._normalize_tag_name(tag.name) == target:
+				return tag
+		return None
+
+	async def _get_or_create_forum_tag(
+		self,
+		forum: discord.ForumChannel,
+		*,
+		opponent_clan_name: str,
+	) -> Optional[discord.ForumTag]:
+		existing_tag = self._find_forum_tag(forum, opponent_clan_name=opponent_clan_name)
+		if existing_tag is not None:
+			return existing_tag
+
+		tag_name = " ".join((opponent_clan_name or "").split())
+		if not tag_name:
+			return None
+
+		try:
+			created_tag = await forum.create_tag(name=tag_name)
+		except Exception:
+			log.warning("Failed to create forum tag for opposing clan '%s'", tag_name, exc_info=True)
+			return self._find_forum_tag(forum, opponent_clan_name=opponent_clan_name)
+		return created_tag
+
 	def _extract_created_post(self, created: Any) -> tuple[Optional[discord.Thread], Optional[discord.Message]]:
 		thread = getattr(created, "thread", None)
 		message = getattr(created, "message", None)
@@ -843,6 +882,10 @@ class WarDiaryCog(commands.Cog):
 			content_lines: list[str] = []
 			content_lines.append(f"Match date: {match_date}")
 			content = "\n".join(content_lines) if content_lines else None
+			applied_tags: list[discord.ForumTag] = []
+			opponent_tag = await self._get_or_create_forum_tag(forum, opponent_clan_name=opponent_clan_name)
+			if opponent_tag is not None:
+				applied_tags.append(opponent_tag)
 
 			try:
 				created = await forum.create_thread(
@@ -850,6 +893,7 @@ class WarDiaryCog(commands.Cog):
 					content=content,
 					embed=embed,
 					file=file,
+					applied_tags=applied_tags,
 					allowed_mentions=discord.AllowedMentions.none(),
 				)
 			except Exception:
