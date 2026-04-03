@@ -30,6 +30,12 @@ WAR_DIARY_FORUM_CHANNEL_ID: int = 1489703502426018002
 SUBMISSION_POST_NAME: str = "Result Submission"
 SUBMISSION_POST_AUTO_ARCHIVE_MINUTES: int = 10080
 
+# 7DR is always the home clan for submissions.
+HOME_CLAN_NAME: str = "7DR"
+
+# GIF shown on the persistent submission embed.
+SUBMISSION_EMBED_GIF_URL: str = "https://cdn.discordapp.com/attachments/1098976074852999261/1489717665923862748/YouCut_20250324_130038097-ezgif.com-optimize_1.gif?ex=69d16f31&is=69d01db1&hm=3362336f1497cb538a1331e6f374112e6c15f6fbb34f0a0bdb5402bf01b52da5"
+
 # Clan names are loaded from this file.
 CLAN_CONFIG_PATH: str = data_path("clannames.json")
 
@@ -38,7 +44,7 @@ STATE_PATH: str = data_path("wardiary_state.json")
 
 # Optional font/background assets for the generated result image.
 FONT_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboard_font.ttf")
-BACKGROUND_IMAGE_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboard_blank1.jpg")
+BACKGROUND_IMAGE_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboard_blank.jpg")
 
 
 def _safe_int(value: Any) -> Optional[int]:
@@ -103,43 +109,6 @@ def _can_submit_member(member: discord.Member) -> bool:
 	return any(role_id in member_role_ids for role_id in ALLOWED_ROLE_IDS)
 
 
-class ClanSelect(discord.ui.Select):
-	def __init__(self, clans: list[ClanConfig]):
-		options = [discord.SelectOption(label=clan.name, value=clan.name) for clan in clans]
-		super().__init__(
-			placeholder="Select the first clan...",
-			min_values=1,
-			max_values=1,
-			options=options[:25],
-		)
-
-	async def callback(self, interaction: discord.Interaction):
-		view = self.view
-		if not isinstance(view, WarDiarySubmissionView):
-			return
-		if not view.is_owner(interaction.user.id):
-			await interaction.response.send_message("This submission form is not yours.", ephemeral=True)
-			return
-
-		selected = str(self.values[0])
-		view.clan_name = selected
-
-		refreshed: list[discord.SelectOption] = []
-		selected_label: Optional[str] = None
-		for option in self.options:
-			is_default = str(option.value) == selected
-			if is_default:
-				selected_label = option.label
-			refreshed.append(
-				discord.SelectOption(label=option.label, value=str(option.value), default=is_default)
-			)
-		self.options = refreshed
-		self.placeholder = selected_label or "Select the first clan..."
-
-		view.refresh_opponent_options()
-		await interaction.response.edit_message(view=view)
-
-
 class OpponentSelect(discord.ui.Select):
 	def __init__(self, clans: list[ClanConfig]):
 		self.clans = clans
@@ -147,22 +116,16 @@ class OpponentSelect(discord.ui.Select):
 			placeholder="Select the opposing clan...",
 			min_values=1,
 			max_values=1,
-			options=[discord.SelectOption(label="Pick the first clan first", value="__pending__")],
+			options=[discord.SelectOption(label="Loading opponents...", value="__pending__")],
 			disabled=True,
 		)
 
 	def set_options(self, clan_name: Optional[str], selected_opponent: Optional[str]) -> None:
-		if not clan_name:
-			self.disabled = True
-			self.placeholder = "Select the opposing clan..."
-			self.options = [discord.SelectOption(label="Pick the first clan first", value="__pending__", default=True)]
-			return
-
 		self.disabled = False
 		options: list[discord.SelectOption] = []
 		selected_label: Optional[str] = None
 		for clan in self.clans:
-			if clan.name == clan_name:
+			if clan.name == HOME_CLAN_NAME:
 				continue
 			is_default = clan.name == selected_opponent
 			if is_default:
@@ -210,11 +173,11 @@ class ScoreSelect(discord.ui.Select):
 			disabled=True,
 		)
 
-	def set_matchup(self, clan_name: Optional[str], opponent_clan_name: Optional[str], selected_score: Optional[str]) -> None:
-		if not clan_name or not opponent_clan_name:
+	def set_matchup(self, opponent_clan_name: Optional[str], selected_score: Optional[str]) -> None:
+		if not opponent_clan_name:
 			self.disabled = True
 			self.placeholder = "Select the result..."
-			self.options = [discord.SelectOption(label="Pick both clans first", value="5-0", default=True)]
+			self.options = [discord.SelectOption(label="Pick an opponent first", value="5-0", default=True)]
 			return
 
 		self.disabled = False
@@ -222,7 +185,7 @@ class ScoreSelect(discord.ui.Select):
 		selected_label: Optional[str] = None
 		for left, right in _score_options():
 			value = f"{left}-{right}"
-			label = f"{clan_name} {left}-{right} {opponent_clan_name}"
+			label = f"{HOME_CLAN_NAME} {left}-{right} {opponent_clan_name}"
 			is_default = selected_score == value
 			if is_default:
 				selected_label = label
@@ -240,7 +203,7 @@ class ScoreSelect(discord.ui.Select):
 			return
 
 		view.selected_score = str(self.values[0])
-		self.set_matchup(view.clan_name, view.opponent_clan_name, view.selected_score)
+		self.set_matchup(view.opponent_clan_name, view.selected_score)
 		view.refresh_submit_state()
 		await interaction.response.edit_message(view=view)
 
@@ -293,14 +256,12 @@ class WarDiarySubmissionView(discord.ui.View):
 		super().__init__(timeout=300)
 		self.cog = cog
 		self.owner_id = owner_id
-		self.clan_name: Optional[str] = None
+		self.clan_name: str = HOME_CLAN_NAME
 		self.opponent_clan_name: Optional[str] = None
 		self.selected_score: Optional[str] = None
 
-		self.clan_select = ClanSelect(clans)
-		self.add_item(self.clan_select)
-
 		self.opponent_select = OpponentSelect(clans)
+		self.opponent_select.set_options(self.clan_name, self.opponent_clan_name)
 		self.add_item(self.opponent_select)
 
 		self.score_select = ScoreSelect()
@@ -313,12 +274,12 @@ class WarDiarySubmissionView(discord.ui.View):
 		self.opponent_clan_name = None
 		self.selected_score = None
 		self.opponent_select.set_options(self.clan_name, self.opponent_clan_name)
-		self.score_select.set_matchup(self.clan_name, self.opponent_clan_name, self.selected_score)
+		self.score_select.set_matchup(self.opponent_clan_name, self.selected_score)
 		self.refresh_submit_state()
 
 	def refresh_score_options(self) -> None:
 		self.selected_score = None
-		self.score_select.set_matchup(self.clan_name, self.opponent_clan_name, self.selected_score)
+		self.score_select.set_matchup(self.opponent_clan_name, self.selected_score)
 		self.refresh_submit_state()
 
 	def refresh_submit_state(self) -> None:
@@ -331,8 +292,8 @@ class WarDiarySubmissionView(discord.ui.View):
 		if not self.is_owner(interaction.user.id):
 			await interaction.response.send_message("This submission form is not yours.", ephemeral=True)
 			return
-		if not self.clan_name or not self.opponent_clan_name or not self.selected_score:
-			await interaction.response.send_message("Pick both clans and the result first.", ephemeral=True)
+		if not self.opponent_clan_name or not self.selected_score:
+			await interaction.response.send_message("Pick the opposing clan and the result first.", ephemeral=True)
 			return
 
 		await interaction.response.send_modal(
@@ -370,7 +331,7 @@ class WarDiaryMainView(discord.ui.View):
 		embed = discord.Embed(
 			title="Submit War Diary Result",
 			description=(
-				"Pick both clans and the result, then optionally paste a stats link in the next step."
+				f"Home clan is fixed as **{HOME_CLAN_NAME}**. Pick the opposing clan and the result, then optionally paste a stats link in the next step."
 			),
 			colour=discord.Colour.blurple(),
 		)
@@ -452,10 +413,6 @@ class WarDiaryCog(commands.Cog):
 
 	def _submission_embed(self) -> discord.Embed:
 		clans = self.load_clans()
-		clan_names = ", ".join(clan.name for clan in clans[:10])
-		if len(clans) > 10:
-			clan_names += ", ..."
-
 		embed = discord.Embed(
 			title="War Diary Match Submission",
 			description=(
@@ -465,16 +422,20 @@ class WarDiaryCog(commands.Cog):
 			colour=discord.Colour.green(),
 			timestamp=_utcnow(),
 		)
-		if clan_names:
-			embed.add_field(name="Configured clans", value=clan_names, inline=False)
+		embed.add_field(name="Home clan", value=HOME_CLAN_NAME, inline=False)
 		embed.add_field(
-			name="Requirements",
+			name="How To Submit",
 			value=(
-				"Only configured submitter roles can use the button.\n"
-				"The stats link is optional and will be posted above the result image when provided."
+				"1. Click the Submit Match Result button.\n"
+				"2. Select the opposing clan, click 'other' if it is not listed.\n"
+				"3. Select the result\n"
+				"4. Before you go to the next step, check you have the stats link for the match, if you want to include that.\n"
+				"5. Click 'Add Optional Stats Link & Submit'\n"
+				"6. Paste the stats ink and click Submit!"
 			),
 			inline=False,
 		)
+		embed.set_image(url=SUBMISSION_EMBED_GIF_URL)
 		embed.set_footer(text=os.path.basename(CLAN_CONFIG_PATH))
 		return embed
 
@@ -641,9 +602,9 @@ class WarDiaryCog(commands.Cog):
 
 		center_y = height // 2
 		draw.text((width // 2, 110), "WAR DIARY", font=label_font, fill=accent_fill, anchor="mm")
-		draw.text((width * 0.18, center_y), submitter_clan_name, font=clan_font, fill=text_fill, anchor="lm")
+		draw.text((width * 0.24, center_y), submitter_clan_name, font=clan_font, fill=text_fill, anchor="lm")
 		draw.text((width // 2, center_y), f"{submitter_score} - {opponent_score}", font=score_font, fill=text_fill, anchor="mm")
-		draw.text((width * 0.82, center_y), opponent_clan_name, font=clan_font, fill=text_fill, anchor="rm")
+		draw.text((width * 0.76, center_y), opponent_clan_name, font=clan_font, fill=text_fill, anchor="rm")
 		draw.text((width // 2, height - 90), _utcnow().strftime("%d/%m/%Y"), font=date_font, fill=text_fill, anchor="mm")
 
 		out = io.BytesIO()
