@@ -494,6 +494,18 @@ class WarDiaryCog(commands.Cog):
 			self._save_state()
 		return changed
 
+	def _is_submission_thread_message(self, message: discord.Message) -> bool:
+		channel = message.channel
+		if not isinstance(channel, discord.Thread):
+			return False
+		submission_thread_id = _safe_int(self._state.get("submission_thread_id"))
+		if submission_thread_id is None or channel.id != submission_thread_id:
+			return False
+		submission_message_id = _safe_int(self._state.get("submission_message_id"))
+		if submission_message_id is not None and message.id == submission_message_id:
+			return False
+		return True
+
 	def load_clans(self) -> list[ClanConfig]:
 		try:
 			if not os.path.exists(CLAN_CONFIG_PATH):
@@ -540,6 +552,22 @@ class WarDiaryCog(commands.Cog):
 	@commands.Cog.listener()
 	async def on_thread_delete(self, thread: discord.Thread) -> None:
 		self._clear_deleted_thread_state(thread.id)
+
+	@commands.Cog.listener()
+	async def on_message(self, message: discord.Message) -> None:
+		if message.author.bot:
+			return
+		if not self._is_submission_thread_message(message):
+			return
+
+		try:
+			await message.delete()
+		except discord.Forbidden:
+			log.info("Could not delete a message in the war diary submission thread because the bot lacks Manage Messages")
+		except discord.NotFound:
+			return
+		except Exception:
+			log.warning("Failed to delete a message from the war diary submission thread", exc_info=True)
 
 	def _submission_embed(self) -> discord.Embed:
 		clans = self.load_clans()
@@ -604,6 +632,16 @@ class WarDiaryCog(commands.Cog):
 				return tag
 		return None
 
+	def _can_create_forum_tags(self, forum: discord.ForumChannel) -> bool:
+		bot_user = self.bot.user
+		if bot_user is None:
+			return False
+		member = forum.guild.get_member(bot_user.id)
+		if member is None:
+			return False
+		permissions = forum.permissions_for(member)
+		return permissions.manage_channels
+
 	async def _get_or_create_forum_tag(
 		self,
 		forum: discord.ForumChannel,
@@ -617,9 +655,15 @@ class WarDiaryCog(commands.Cog):
 		tag_name = " ".join((opponent_clan_name or "").split())
 		if not tag_name:
 			return None
+		if not self._can_create_forum_tags(forum):
+			log.info("Skipping forum tag creation for '%s' because the bot lacks Manage Channels in the forum", tag_name)
+			return None
 
 		try:
 			created_tag = await forum.create_tag(name=tag_name)
+		except discord.Forbidden:
+			log.info("Skipping forum tag creation for '%s' because Discord denied permission", tag_name)
+			return None
 		except Exception:
 			log.warning("Failed to create forum tag for opposing clan '%s'", tag_name, exc_info=True)
 			return self._find_forum_tag(forum, opponent_clan_name=opponent_clan_name)
