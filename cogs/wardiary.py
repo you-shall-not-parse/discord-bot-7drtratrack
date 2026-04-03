@@ -47,6 +47,7 @@ FONT_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboard_font.ttf")
 RESULT_BACKGROUND_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboard_gif.gif")
 BACKGROUND_GIF_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboard_gif.gif")
 BACKGROUND_IMAGE_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboard_blank.jpg")
+GIF_WIN_INTERVAL: int = 5
 
 
 def _safe_int(value: Any) -> Optional[int]:
@@ -124,6 +125,7 @@ class MatchThreadRecord:
 	clan_name: str
 	opponent_clan_name: str
 	match_date: str
+	is_7dr_win: bool = False
 
 
 def _can_submit_member(member: discord.Member) -> bool:
@@ -433,7 +435,7 @@ class WarDiaryCog(commands.Cog):
 		records[:] = [record for record in records if _safe_int(record.get("thread_id")) != thread_id]
 		return len(records) != original_len
 
-	def _store_match_record(self, *, thread_id: int, clan_name: str, opponent_clan_name: str, match_date: str) -> None:
+	def _store_match_record(self, *, thread_id: int, clan_name: str, opponent_clan_name: str, match_date: str, is_7dr_win: bool) -> None:
 		records = self._get_match_records()
 		records[:] = [
 			record for record in records
@@ -449,8 +451,16 @@ class WarDiaryCog(commands.Cog):
 				"clan_name": clan_name,
 				"opponent_clan_name": opponent_clan_name,
 				"match_date": match_date,
+				"is_7dr_win": is_7dr_win,
 			}
 		)
+
+	def _count_recorded_7dr_wins(self) -> int:
+		count = 0
+		for record in self._get_match_records():
+			if bool(record.get("is_7dr_win")):
+				count += 1
+		return count
 
 	async def _find_existing_match_thread(
 		self,
@@ -546,7 +556,7 @@ class WarDiaryCog(commands.Cog):
 				"3. Select the result.\n"
 				"4. Before you go to the next step, check you have the stats link for the match, if you want to include that.\n"
 				"5. Click 'Add Optional Stats Link & Submit'.\n"
-				"6. Enter the date, paste the stats link and click Submit! Wait 20/30 seconds."
+				"6. Enter the date, paste the stats link and click Submit! Wait 20/30 seconds for the thread to appear, especially the GIF ones."
 			),
 			inline=False,
 		)
@@ -672,20 +682,18 @@ class WarDiaryCog(commands.Cog):
 		embed.set_image(url=f"attachment://{filename}")
 		return embed
 
-	def _select_result_background(self) -> tuple[str, str]:
+	def _select_result_background(self, *, prefer_gif: bool) -> tuple[str, str]:
+		preferred_path = BACKGROUND_GIF_PATH if prefer_gif else BACKGROUND_IMAGE_PATH
+		fallback_path = BACKGROUND_IMAGE_PATH if prefer_gif else BACKGROUND_GIF_PATH
+
+		if os.path.exists(preferred_path):
+			return preferred_path, ".gif" if _media_extension(preferred_path) == ".gif" else ".png"
+		if os.path.exists(fallback_path):
+			return fallback_path, ".gif" if _media_extension(fallback_path) == ".gif" else ".png"
+
 		configured_path = RESULT_BACKGROUND_PATH
 		configured_ext = _media_extension(configured_path)
-		if configured_ext == ".gif":
-			if os.path.exists(configured_path):
-				return configured_path, ".gif"
-			if os.path.exists(BACKGROUND_IMAGE_PATH):
-				return BACKGROUND_IMAGE_PATH, ".png"
-			return configured_path, ".gif"
-		if os.path.exists(configured_path):
-			return configured_path, ".png"
-		if os.path.exists(BACKGROUND_GIF_PATH):
-			return BACKGROUND_GIF_PATH, ".gif"
-		return configured_path, ".png"
+		return configured_path, ".gif" if configured_ext == ".gif" else ".png"
 
 	def _render_result_image(
 		self,
@@ -695,12 +703,13 @@ class WarDiaryCog(commands.Cog):
 		submitter_score: int,
 		opponent_score: int,
 		match_date: str,
+		prefer_gif: bool,
 	) -> tuple[bytes, str]:
 		from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageSequence
 
 		width = 1600
 		height = 900
-		background_path, output_extension = self._select_result_background()
+		background_path, output_extension = self._select_result_background(prefer_gif=prefer_gif)
 		use_gif_background = _media_extension(background_path) == ".gif"
 
 		if use_gif_background and os.path.exists(background_path):
@@ -803,6 +812,10 @@ class WarDiaryCog(commands.Cog):
 			if existing_thread is not None:
 				return None, f"A match thread already exists for {opponent_clan_name} on {match_date}: {existing_thread.mention}"
 
+			is_7dr_win = submitter_score > opponent_score
+			next_win_count = self._count_recorded_7dr_wins() + 1 if is_7dr_win else self._count_recorded_7dr_wins()
+			prefer_gif = is_7dr_win and GIF_WIN_INTERVAL > 0 and next_win_count % GIF_WIN_INTERVAL == 0
+
 			thread_name = _truncate_thread_name(
 				f"{clan_name} {submitter_score} - {opponent_score} {opponent_clan_name}"
 			)
@@ -812,6 +825,7 @@ class WarDiaryCog(commands.Cog):
 				submitter_score=submitter_score,
 				opponent_score=opponent_score,
 				match_date=match_date,
+				prefer_gif=prefer_gif,
 			)
 			filename = f"wardiary_{submitter_score}_{opponent_score}{output_extension}"
 			file = discord.File(io.BytesIO(image_bytes), filename=filename)
@@ -850,6 +864,7 @@ class WarDiaryCog(commands.Cog):
 				clan_name=clan_name,
 				opponent_clan_name=opponent_clan_name,
 				match_date=match_date,
+				is_7dr_win=is_7dr_win,
 			)
 			self._save_state()
 			return thread, None
