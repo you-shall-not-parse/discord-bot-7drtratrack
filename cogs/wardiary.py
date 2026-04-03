@@ -3,10 +3,13 @@ import io
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+import aiohttp
+from bs4 import BeautifulSoup
 import discord
 from discord.ext import commands
 
@@ -50,6 +53,23 @@ BACKGROUND_IMAGE_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboard
 def _safe_int(value: Any) -> Optional[int]:
 	try:
 		return int(value)
+	except Exception:
+		return None
+
+
+def _safe_float(value: Any) -> Optional[float]:
+	if value is None:
+		return None
+	if isinstance(value, (int, float)):
+		return float(value)
+	text = str(value).strip().replace(",", "")
+	if not text:
+		return None
+	match = re.search(r"-?\d+(?:\.\d+)?", text)
+	if not match:
+		return None
+	try:
+		return float(match.group(0))
 	except Exception:
 		return None
 
@@ -108,9 +128,42 @@ def _truncate_thread_name(name: str) -> str:
 	return clean[:97] + "..."
 
 
+def _normalize_header(text: str) -> str:
+	return "".join(ch.lower() for ch in str(text) if ch.isalnum())
+
+
+def _safe_ratio(kills: Optional[float], deaths: Optional[float]) -> float:
+	if kills is None:
+		return 0.0
+	if deaths is None or deaths <= 0:
+		return float(kills)
+	return float(kills) / float(deaths)
+
+
+def _format_stat_number(value: float) -> str:
+	if float(value).is_integer():
+		return str(int(value))
+	return f"{value:.1f}"
+
+
+def _truncate_player_name(name: str, limit: int = 18) -> str:
+	clean = " ".join(name.split())
+	if len(clean) <= limit:
+		return clean
+	return clean[: limit - 3] + "..."
+
+
 @dataclass(frozen=True)
 class ClanConfig:
 	name: str
+
+
+@dataclass(frozen=True)
+class PlayerScoreLine:
+	name: str
+	kills: float
+	kdr: float
+	deaths: float
 
 
 def _can_submit_member(member: discord.Member) -> bool:
@@ -545,6 +598,90 @@ class WarDiaryCog(commands.Cog):
 				self._state["submission_message_id"] = message.id
 			self._save_state()
 
+		def _extract_table_headers(self, table: Any) -> list[str]:
+			head_row = table.find("thead")
+			if head_row is not None:
+				row = head_row.find("tr")
+				if row is not None:
+					return [_normalize_header(cell.get_text(" ", strip=True)) for cell in row.find_all(["th", "td"])]
+			first_row = table.find("tr")
+			if first_row is None:
+				return []
+			return [_normalize_header(cell.get_text(" ", strip=True)) for cell in first_row.find_all(["th", "td"])]
+
+		def _find_scoreboard_column_map(self, headers: list[str]) -> Optional[dict[str, int]]:
+			aliases = {
+				"name": {"player", "playername", "name", "soldier"},
+				"kills": {"kills", "kill"},
+				"kdr": {"kdr", "kd", "killsdeathratio", "killdeathratio", "killdeath"},
+				"deaths": {"deaths", "death"},
+			}
+			mapping: dict[str, int] = {}
+			for wanted, names in aliases.items():
+				for index, header in enumerate(headers):
+					if header in names:
+						mapping[wanted] = index
+						break
+			if len(mapping) == len(aliases):
+				return mapping
+			return None
+
+		def _parse_top_players_from_html(self, html: str) -> list[PlayerScoreLine]:
+			soup = BeautifulSoup(html, "html.parser")
+			for table in soup.find_all("table"):
+				headers = self._extract_table_headers(table)
+				column_map = self._find_scoreboard_column_map(headers)
+				if column_map is None:
+					continue
+
+				players: list[PlayerScoreLine] = []
+				for row in table.find_all("tr"):
+					cells = row.find_all(["td", "th"])
+					if len(cells) <= max(column_map.values()):
+						continue
+
+					name = " ".join(cells[column_map["name"]].get_text(" ", strip=True).split())
+					kills = _safe_float(cells[column_map["kills"]].get_text(" ", strip=True))
+					kdr = _safe_float(cells[column_map["kdr"]].get_text(" ", strip=True))
+					deaths = _safe_float(cells[column_map["deaths"]].get_text(" ", strip=True))
+
+					if not name or kills is None or deaths is None:
+						continue
+					if _normalize_header(name) in {"player", "name", "soldier"}:
+						continue
+
+					players.append(
+						PlayerScoreLine(
+							name=name,
+							kills=kills,
+							kdr=kdr if kdr is not None else _safe_ratio(kills, deaths),
+							deaths=deaths,
+						)
+					)
+
+				if players:
+					players.sort(key=lambda player: (-player.kills, -player.kdr, player.deaths, player.name.lower()))
+					return players[:10]
+
+			return []
+
+		async def _fetch_top_players(self, stats_link: str) -> list[PlayerScoreLine]:
+			timeout = aiohttp.ClientTimeout(total=20)
+			headers = {"User-Agent": "Mozilla/5.0 WarDiaryBot/1.0"}
+			async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+				async with session.get(stats_link) as response:
+					response.raise_for_status()
+					html = await response.text()
+			return self._parse_top_players_from_html(html)
+
+		def _format_top_players(self, players: list[PlayerScoreLine]) -> Optional[str]:
+			if not players:
+				return None
+			return "\n".join(
+				f"{index}. {_truncate_player_name(player.name)} | {_format_stat_number(player.kills)} K | {player.kdr:.1f} K/D | {_format_stat_number(player.deaths)} D"
+				for index, player in enumerate(players[:10], start=1)
+			)
+
 	def _build_result_embed(
 		self,
 		*,
@@ -556,6 +693,7 @@ class WarDiaryCog(commands.Cog):
 		filename: str,
 		submitter: discord.Member,
 		stats_link: Optional[str],
+		top_players: list[PlayerScoreLine],
 	) -> discord.Embed:
 		embed = discord.Embed(
 			title="War Diary Result",
@@ -569,6 +707,9 @@ class WarDiaryCog(commands.Cog):
 		embed.add_field(name="Submitted by", value=submitter.mention, inline=False)
 		if stats_link:
 			embed.add_field(name="Stats link", value=f"[Open match stats]({stats_link})", inline=False)
+		top_player_lines = self._format_top_players(top_players)
+		if top_player_lines:
+			embed.add_field(name="Top 10 Players", value=top_player_lines, inline=False)
 		embed.set_image(url=f"attachment://{filename}")
 		return embed
 
@@ -663,6 +804,12 @@ class WarDiaryCog(commands.Cog):
 			match_date=match_date,
 		)
 		file = discord.File(io.BytesIO(image_bytes), filename=filename)
+		top_players: list[PlayerScoreLine] = []
+		if stats_link:
+			try:
+				top_players = await self._fetch_top_players(stats_link)
+			except Exception:
+				log.exception("Failed to fetch or parse war diary stats page: %s", stats_link)
 		embed = self._build_result_embed(
 			submitter_clan_name=clan_name,
 			opponent_clan_name=opponent_clan_name,
@@ -672,6 +819,7 @@ class WarDiaryCog(commands.Cog):
 			filename=filename,
 			submitter=submitter,
 			stats_link=stats_link,
+			top_players=top_players,
 		)
 
 		content_lines: list[str] = []
