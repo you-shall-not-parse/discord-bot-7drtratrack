@@ -59,7 +59,7 @@ IMPORT_LEGACY_XLS_PATH: Optional[str] = None
 # Optional: post HTML table uploads to a single channel.
 # If None, HTML is posted to each rollcall channel.
 # Can be a text channel or a thread ID.
-HTML_CHANNEL_ID: Optional[int] = 1489697143227945121
+HTML_CHANNEL_ID: Optional[int] = 1489693862476906636
 
 # Whether to regenerate HTML on reaction add/remove.
 # If False, HTML will still update on the backstop refresh (BACKSTOP_REFRESH_MINUTES) and on non-reaction refreshes.
@@ -75,7 +75,7 @@ REACTION_REFRESH_DEBOUNCE_SECONDS = 30.0
 # Optional: where to upload the rollcall.xlsx file so users can download it.
 # Can be a text channel or a thread ID.
 # If None, falls back to HTML_CHANNEL_ID (if set) or the first configured rollcall channel.
-WORKBOOK_UPLOAD_CHANNEL_ID: Optional[int] = 1489697143227945121
+WORKBOOK_UPLOAD_CHANNEL_ID: Optional[int] = 1489693862476906636
 
 # Backstop refresh for embeds/html in case of missed reaction events
 BACKSTOP_REFRESH_MINUTES = 1440
