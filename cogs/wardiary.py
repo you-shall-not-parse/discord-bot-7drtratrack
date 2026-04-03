@@ -307,6 +307,8 @@ class StatsLinkModal(discord.ui.Modal, title="Match Details"):
 			await interaction.response.send_message(str(exc), ephemeral=True)
 			return
 
+		await interaction.response.defer(ephemeral=True)
+
 		thread = await self.cog.create_result_post(
 			guild=interaction.guild,
 			submitter=interaction.user,
@@ -318,10 +320,10 @@ class StatsLinkModal(discord.ui.Modal, title="Match Details"):
 			stats_link=stats_link,
 		)
 		if thread is None:
-			await interaction.response.send_message("Failed to create the war diary post. Check the forum channel config.", ephemeral=True)
+			await interaction.followup.send("Failed to create the war diary post. Check the forum channel config.", ephemeral=True)
 			return
 
-		await interaction.response.send_message(f"Posted to {thread.mention}", ephemeral=True)
+		await interaction.followup.send(f"Posted to {thread.mention}", ephemeral=True)
 
 
 class WarDiarySubmissionView(discord.ui.View):
