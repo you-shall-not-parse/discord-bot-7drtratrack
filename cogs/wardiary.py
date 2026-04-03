@@ -560,7 +560,7 @@ class WarDiaryCog(commands.Cog):
 			),
 			inline=False,
 		)
-		embed.setA_image(url=SUBMISSION_EMBED_GIF_URL)
+		embed.set_image(url=SUBMISSION_EMBED_GIF_URL)
 		embed.set_footer(text=os.path.basename(CLAN_CONFIG_PATH))
 		return embed
 
