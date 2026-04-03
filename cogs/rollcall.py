@@ -58,7 +58,8 @@ IMPORT_LEGACY_XLS_PATH: Optional[str] = None
 
 # Optional: post HTML table uploads to a single channel.
 # If None, HTML is posted to each rollcall channel.
-HTML_CHANNEL_ID: Optional[int] = 1098525492631572567
+# Can be a text channel or a thread ID.
+HTML_CHANNEL_ID: Optional[int] = 1489697143227945121
 
 # Whether to regenerate HTML on reaction add/remove.
 # If False, HTML will still update on the backstop refresh (BACKSTOP_REFRESH_MINUTES) and on non-reaction refreshes.
@@ -72,8 +73,9 @@ UPLOAD_WORKBOOK_ON_REACTION = False
 REACTION_REFRESH_DEBOUNCE_SECONDS = 30.0
 
 # Optional: where to upload the rollcall.xlsx file so users can download it.
+# Can be a text channel or a thread ID.
 # If None, falls back to HTML_CHANNEL_ID (if set) or the first configured rollcall channel.
-WORKBOOK_UPLOAD_CHANNEL_ID: Optional[int] = 1098525492631572567
+WORKBOOK_UPLOAD_CHANNEL_ID: Optional[int] = 1489697143227945121
 
 # Backstop refresh for embeds/html in case of missed reaction events
 BACKSTOP_REFRESH_MINUTES = 1440
@@ -83,12 +85,6 @@ STATE_PATH = data_path("rollcall_state.json")
 
 # Role allowed to use /forcerollcall
 FORCE_ROLLCALL_ROLE_ID = 1213495462632361994
-
-# Excluded statuses (shown at bottom of HTML, and excluded from "expected" list)
-# Fill these with your server's role IDs.
-HOMEGUARD_ROLE_ID: Optional[int] = 1103762811491975218
-AWOL_ROLE_ID: Optional[int] = 1439416251687637044
-
 
 @dataclass(frozen=True)
 class RollCallConfig:
@@ -164,35 +160,6 @@ class RollCallCog(commands.Cog):
 		if isinstance(user, discord.Member):
 			return any(r.id == FORCE_ROLLCALL_ROLE_ID for r in user.roles)
 		return False
-
-	def _excluded_role_markers(self) -> list[tuple[int, str]]:
-		pairs: list[tuple[int, str]] = []
-		if HOMEGUARD_ROLE_ID:
-			pairs.append((int(HOMEGUARD_ROLE_ID), "HG"))
-		if AWOL_ROLE_ID:
-			pairs.append((int(AWOL_ROLE_ID), "AWOL"))
-		return pairs
-
-	def _member_exclusion_markers(self, member: discord.Member) -> list[str]:
-		role_ids = {r.id for r in member.roles}
-		markers: list[str] = []
-		for rid, marker in self._excluded_role_markers():
-			if rid in role_ids:
-				markers.append(marker)
-		return markers
-
-	def _is_member_excluded(self, member: discord.Member) -> bool:
-		return bool(self._member_exclusion_markers(member))
-
-	def _excluded_members(self, guild: discord.Guild) -> list[discord.Member]:
-		members: dict[int, discord.Member] = {}
-		for rid, _marker in self._excluded_role_markers():
-			role = guild.get_role(rid)
-			if not role:
-				continue
-			for m in role.members:
-				members[m.id] = m
-		return sorted(members.values(), key=lambda m: (m.display_name or "").lower())
 
 	@app_commands.command(name="forcerollcall", description="Force-run all configured roll calls now.")
 	@app_commands.guilds(discord.Object(id=GUILD_ID))
@@ -322,7 +289,7 @@ class RollCallCog(commands.Cog):
 		channel_id = self._workbook_upload_channel_id()
 		if not channel_id:
 			return state.get("url")
-		channel = await self._get_text_channel(channel_id)
+		channel = await self._get_message_channel(channel_id)
 		if not channel:
 			return state.get("url")
 		if not os.path.exists(WORKBOOK_PATH):
@@ -334,7 +301,7 @@ class RollCallCog(commands.Cog):
 			try:
 				old_channel = channel
 				if isinstance(old_channel_id, int) and old_channel_id != channel.id:
-					fetched_old = await self._get_text_channel(old_channel_id)
+					fetched_old = await self._get_message_channel(old_channel_id)
 					if fetched_old:
 						old_channel = fetched_old
 				old_msg = await old_channel.fetch_message(old_id)
@@ -555,13 +522,13 @@ class RollCallCog(commands.Cog):
 					ws.cell(row=row, column=week_col, value=PARTIAL)
 				elif cur_s == PARTIAL and m.id not in ticked_anywhere:
 					ws.cell(row=row, column=week_col, value="❌")
-	async def _get_text_channel(self, channel_id: int) -> Optional[discord.TextChannel]:
+	async def _get_message_channel(self, channel_id: int) -> Optional[discord.TextChannel | discord.Thread]:
 		ch = self.bot.get_channel(channel_id)
-		if isinstance(ch, discord.TextChannel):
+		if isinstance(ch, (discord.TextChannel, discord.Thread)):
 			return ch
 		try:
 			fetched = await self.bot.fetch_channel(channel_id)
-			return fetched if isinstance(fetched, discord.TextChannel) else None
+			return fetched if isinstance(fetched, (discord.TextChannel, discord.Thread)) else None
 		except Exception:
 			return None
 
@@ -855,7 +822,7 @@ class RollCallCog(commands.Cog):
 		rollcall_d: date,
 		reason: str,
 	) -> None:
-		channel = await self._get_text_channel(cfg.channel_id)
+		channel = await self._get_message_channel(cfg.channel_id)
 		if not channel:
 			logger.warning("RollCall %s: channel not found", cfg.key)
 			return
@@ -883,10 +850,6 @@ class RollCallCog(commands.Cog):
 		for m in expected_members:
 			row = self._upsert_member_row(ws, m.id, m.display_name)
 			self._set_cell(ws, row, week_col, "❌")
-
-		# Keep excluded members visible in the table (bottom section), but don't mark them ❌.
-		for m in self._excluded_members(guild):
-			self._upsert_member_row(ws, m.id, m.display_name)
 
 		ping = self._ping_mentions(cfg)
 		workbook_url = self._workbook_state().get("url")
@@ -923,8 +886,6 @@ class RollCallCog(commands.Cog):
 				if not role:
 					continue
 				for m in role.members:
-					if self._is_member_excluded(m):
-						continue
 					members[m.id] = m
 			return sorted(members.values(), key=lambda m: (m.display_name or "").lower())
 		# fallback: nobody "expected" (we'll still record reactions)
@@ -941,7 +902,7 @@ class RollCallCog(commands.Cog):
 		update_html: bool,
 	) -> None:
 		state = self._rc_state(cfg.key)
-		channel = await self._get_text_channel(cfg.channel_id)
+		channel = await self._get_message_channel(cfg.channel_id)
 		if not channel:
 			return
 
@@ -950,8 +911,6 @@ class RollCallCog(commands.Cog):
 
 		# Ensure member nicknames stay up to date in the sheet.
 		for m in self._expected_members(guild, cfg):
-			self._upsert_member_row(ws, m.id, m.display_name)
-		for m in self._excluded_members(guild):
 			self._upsert_member_row(ws, m.id, m.display_name)
 
 		if update_html:
@@ -1104,7 +1063,7 @@ class RollCallCog(commands.Cog):
 	async def _post_html_for_cfg(self, guild: discord.Guild, ws, cfg: RollCallConfig, *, week_label: str) -> None:
 		state = self._rc_state(cfg.key)
 		target_channel_id = HTML_CHANNEL_ID if HTML_CHANNEL_ID else cfg.channel_id
-		channel = await self._get_text_channel(int(target_channel_id))
+		channel = await self._get_message_channel(int(target_channel_id))
 		if not channel:
 			return
 
@@ -1115,7 +1074,7 @@ class RollCallCog(commands.Cog):
 			try:
 				old_channel = channel
 				if isinstance(old_channel_id, int) and old_channel_id != channel.id:
-					fetched_old = await self._get_text_channel(old_channel_id)
+					fetched_old = await self._get_message_channel(old_channel_id)
 					if fetched_old:
 						old_channel = fetched_old
 				old_msg = await old_channel.fetch_message(old_id)
@@ -1160,7 +1119,7 @@ class RollCallCog(commands.Cog):
 			m = guild.get_member(uid_int)
 			if not m:
 				return ["LEFT"]
-			return self._member_exclusion_markers(m)
+			return []
 
 		main_rows: list[str] = []
 		excluded_rows: list[str] = []
@@ -1186,9 +1145,6 @@ class RollCallCog(commands.Cog):
 			is_excluded = False
 			if "LEFT" in flags:
 				is_excluded = True
-			if any(f in ("HG", "AWOL") for f in flags):
-				is_excluded = True
-
 			if is_excluded:
 				excluded_rows.append(row_html)
 			else:
@@ -1224,7 +1180,7 @@ class RollCallCog(commands.Cog):
 </head>
 <body>
   <h1>{html.escape(cfg.title)}</h1>
-	  <p><strong>Flags:</strong> HG = Homeguard, AWOL = AWOL, LEFT = left server</p>
+	  <p><strong>Flags:</strong> LEFT = left server</p>
   <p>Last updated: {datetime.utcnow().strftime('%d/%m/%Y %H:%M UTC')}</p>
 	  <h2>Roll call</h2>
 	  <table>
@@ -1232,7 +1188,7 @@ class RollCallCog(commands.Cog):
 	    <tbody>{main_table}</tbody>
 	  </table>
 
-	  <h2 style="margin-top: 24px;">Excluded / Inactive</h2>
+	  <h2 style="margin-top: 24px;">Inactive</h2>
 	  <table>
 	    <thead><tr>{head_html}</tr></thead>
 	    <tbody>{excluded_table}</tbody>
@@ -1275,7 +1231,7 @@ class RollCallCog(commands.Cog):
 
 				# Best-effort: remove the reaction they added.
 				try:
-					ch = await self._get_text_channel(payload.channel_id) if payload.channel_id else None
+					ch = await self._get_message_channel(payload.channel_id) if payload.channel_id else None
 					if ch and isinstance(member, discord.Member):
 						msg = await ch.fetch_message(payload.message_id)
 						await msg.remove_reaction(payload.emoji, member)
@@ -1305,7 +1261,7 @@ class RollCallCog(commands.Cog):
 
 		# Best-effort: remove the invalid reaction.
 		try:
-			ch = await self._get_text_channel(payload.channel_id) if payload.channel_id else None
+			ch = await self._get_message_channel(payload.channel_id) if payload.channel_id else None
 			if ch and isinstance(member, discord.Member):
 				msg = await ch.fetch_message(payload.message_id)
 				await msg.remove_reaction(payload.emoji, member)
@@ -1368,7 +1324,7 @@ class RollCallCog(commands.Cog):
 				if marked:
 					# Best-effort: remove the reaction they added.
 					try:
-						ch = await self._get_text_channel(payload.channel_id) if payload.channel_id else None
+						ch = await self._get_message_channel(payload.channel_id) if payload.channel_id else None
 						if ch:
 							msg = await ch.fetch_message(payload.message_id)
 							await msg.remove_reaction(payload.emoji, member)
