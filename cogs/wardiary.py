@@ -47,7 +47,6 @@ FONT_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboard_font.ttf")
 RESULT_BACKGROUND_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboard_gif.gif")
 BACKGROUND_GIF_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboard_gif.gif")
 BACKGROUND_IMAGE_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboard_blank.jpg")
-RESULT_MAX_OUTPUT_BYTES: int = 950 * 1024
 
 
 def _safe_int(value: Any) -> Optional[int]:
@@ -109,7 +108,6 @@ def _truncate_thread_name(name: str) -> str:
 	if len(clean) <= 100:
 		return clean
 	return clean[:97] + "..."
-
 
 def _media_extension(path: str) -> str:
 	return os.path.splitext(path)[1].lower()
@@ -548,11 +546,11 @@ class WarDiaryCog(commands.Cog):
 				"3. Select the result.\n"
 				"4. Before you go to the next step, check you have the stats link for the match, if you want to include that.\n"
 				"5. Click 'Add Optional Stats Link & Submit'.\n"
-				"6. Enter the date, paste the stats link and click Submit!."
+				"6. Enter the date, paste the stats link and click Submit! Wait 20/30 seconds."
 			),
 			inline=False,
 		)
-		embed.set_image(url=SUBMISSION_EMBED_GIF_URL)
+		embed.setA_image(url=SUBMISSION_EMBED_GIF_URL)
 		embed.set_footer(text=os.path.basename(CLAN_CONFIG_PATH))
 		return embed
 
@@ -766,70 +764,17 @@ class WarDiaryCog(commands.Cog):
 		out = io.BytesIO()
 		first_frame = rendered_frames[0]
 		if output_extension == ".gif":
-			def encode_gif_bytes(
-				frames: list[Image.Image],
-				frame_durations: list[int],
-				*,
-				max_size: tuple[int, int],
-				frame_step: int,
-				color_count: int,
-			) -> bytes:
-				selected_frames = frames[::frame_step] or [frames[0]]
-				selected_durations = [
-					max(20, sum(frame_durations[index:index + frame_step]))
-					for index in range(0, len(frame_durations), frame_step)
-				][: len(selected_frames)] or [100]
-				processed_frames: list[Image.Image] = []
-				for frame in selected_frames:
-					resized = ImageOps.fit(frame.convert("RGB"), max_size, method=Image.Resampling.LANCZOS)
-					processed_frames.append(
-						resized.quantize(colors=color_count, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
-					)
-				encoded = io.BytesIO()
-				processed_frames[0].save(
-					encoded,
-					format="GIF",
-					save_all=True,
-					append_images=processed_frames[1:],
-					duration=selected_durations,
-					loop=0,
-					disposal=2,
-					optimize=True,
-				)
-				return encoded.getvalue()
-
-			best_bytes: Optional[bytes] = None
-			for max_size in [(960, 540), (800, 450), (640, 360), (512, 288), (426, 240), (320, 180)]:
-				for frame_step in [1, 2, 3, 4, 6, 8, 10, 12]:
-					for color_count in [64, 48, 32, 24, 16]:
-						candidate = encode_gif_bytes(
-							rendered_frames,
-							durations[: len(rendered_frames)] or [100],
-							max_size=max_size,
-							frame_step=frame_step,
-							color_count=color_count,
-						)
-						if best_bytes is None or len(candidate) < len(best_bytes):
-							best_bytes = candidate
-						if len(candidate) <= RESULT_MAX_OUTPUT_BYTES:
-							out.write(candidate)
-							out.seek(0)
-							return out.getvalue(), output_extension
-			if best_bytes is not None:
-				out.write(best_bytes)
-			else:
-				first_frame.save(
-					out,
-					format="GIF",
-					save_all=True,
-					append_images=rendered_frames[1:],
-					duration=durations[: len(rendered_frames)] or 100,
-					loop=0,
-					disposal=2,
-					optimize=True,
-				)
+			first_frame.save(
+				out,
+				format="GIF",
+				save_all=True,
+				append_images=rendered_frames[1:],
+				duration=durations[: len(rendered_frames)] or 100,
+				loop=0,
+				disposal=2,
+			)
 		else:
-			first_frame.save(out, format="PNG", optimize=True)
+			first_frame.save(out, format="PNG")
 		out.seek(0)
 		return out.getvalue(), output_extension
 
