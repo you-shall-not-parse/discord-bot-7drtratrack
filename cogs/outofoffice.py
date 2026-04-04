@@ -264,10 +264,7 @@ class OutOfOffice(commands.Cog):
     def _role_for_active_entries(self, entries: list[dict]) -> int | None:
         if not entries:
             return None
-        longest_duration = max((self._entry_duration(entry) for entry in entries), default=timedelta())
-        if longest_duration > timedelta(days=1):
-            return LOA_ROLE_ID
-        return OUT_OF_OFFICE_ROLE_ID
+        return LOA_ROLE_ID
 
     def _primary_entry(self, entries: list[dict]) -> dict | None:
         if not entries:
@@ -282,7 +279,7 @@ class OutOfOffice(commands.Cog):
 
     def _entry_summary(self, entry: dict) -> str:
         if entry["kind"] == "one_off":
-            role_name = "LOA" if self._entry_duration(entry) > timedelta(days=1) else "OOO"
+            role_name = "LOA"
             return (
                 f"[{entry['id']}] one-off {role_name}: "
                 f"{format_local(parse_iso_utc(entry['start_at']))} -> "
@@ -291,7 +288,7 @@ class OutOfOffice(commands.Cog):
             )
 
         return (
-            f"[{entry['id']}] daily OOO: "
+            f"[{entry['id']}] daily LOA: "
             f"{self._format_weekdays(entry)} | "
             f"{entry['start_hour']:02d}:{entry['start_minute']:02d} -> "
             f"{entry['end_hour']:02d}:{entry['end_minute']:02d} ({TIMEZONE_NAME})\n"
@@ -317,16 +314,11 @@ class OutOfOffice(commands.Cog):
     def _build_generic_role_reply(self, member: discord.Member) -> str | None:
         role_ids = {role.id for role in member.roles}
         if LOA_ROLE_ID in role_ids:
-            return (
-                f"{member.display_name} is currently on LOA. "
-                "This person has an LOA tag :( meaning they're on leave of absence."
-            )
-        if OUT_OF_OFFICE_ROLE_ID in role_ids:
             if self._should_suppress_ooo_reply(member):
                 return None
             return (
-                f"{member.display_name} is currently out of office. "
-                "This person has an out-of-office tag :( meaning they're out of office on a one-off or regular <1 day absence but haven't set a custom out-of-office message with the bot."
+                f"{member.display_name} is currently away. "
+                "This person has the LOA tag :( meaning they're on leave of absence or out of office, but they haven't set a custom away message with the bot."
             )
         return None
 
@@ -395,12 +387,7 @@ class OutOfOffice(commands.Cog):
         to_add: list[discord.Role] = []
         to_remove: list[discord.Role] = []
 
-        if desired_role_id == OUT_OF_OFFICE_ROLE_ID:
-            if loa_role and loa_role in member.roles:
-                to_remove.append(loa_role)
-            if ooo_role and ooo_role not in member.roles:
-                to_add.append(ooo_role)
-        elif desired_role_id == LOA_ROLE_ID:
+        if desired_role_id == LOA_ROLE_ID:
             if ooo_role and ooo_role in member.roles:
                 to_remove.append(ooo_role)
             if loa_role and loa_role not in member.roles:
@@ -452,7 +439,7 @@ class OutOfOffice(commands.Cog):
             "**Out office** :house_with_garden:  can be applied on a one off daily or weekday basis between specific times, e.g. 8am - 12pm starting 30/03/2026 every weekday. They only apply when the period requested is <10 hours in total length. A confirmation of the out of office will **not** land in the <#1099608133267095612> channel.\n\n"
             "Nothing sits between the 10 hour and 1 day period, you can either apply another out of office or apply for an LOA.\n\n"
             "**LOA** :beach:  applies when you're away for >1 day in a block period, e.g. 12pm 30/03/2026 until 1pm 01/05/2026. As a result, just like an LOA form, a confirmation of the period **will** land in the <#1099608133267095612> channel for SNCO review, consider this an automated LOA form.\n\n"
-            "**Manually adding/removing either role** is still completely possible! you can just add it to yourself or other people (on request) and it'll just sent an generic message when people tag that person.\n\n"
+            "**Manually adding/removing the LOA role** is still completely possible! you can just add it to yourself or other people (on request) and it'll just send a generic message when people tag that person.\n\n"
             "Reply with `one` for a one-off schedule or `daily` for a recurring daily or weekday schedule."
         )
         return True
@@ -599,7 +586,7 @@ class OutOfOffice(commands.Cog):
                     "One-off out-of-office preview\n"
                     f"Start: {format_local(start_at)} {TIMEZONE_NAME}\n"
                     f"End: {format_local(end_at)} {TIMEZONE_NAME}\n"
-                    f"Role during period: {role_name}\n"
+                    f"Role during period: LOA\n"
                     f"Message: {draft['message']}\n\n"
                     "Reply `confirm` to save or `cancel` to abort."
                 )
@@ -610,7 +597,7 @@ class OutOfOffice(commands.Cog):
                     f"Days: {weekday_labels}\n"
                     f"Time: {draft['start_hour']:02d}:{draft['start_minute']:02d} -> "
                     f"{draft['end_hour']:02d}:{draft['end_minute']:02d} {TIMEZONE_NAME}\n"
-                    "Role during period: OOO\n"
+                    "Role during period: LOA\n"
                     f"Message: {draft['message']}\n\n"
                     "Reply `confirm` to save or `cancel` to abort."
                 )
@@ -700,7 +687,7 @@ class OutOfOffice(commands.Cog):
 
         return choices[:25]
 
-    @app_commands.command(name="outofoffice", description="Start the out-of-office setup in DM.")
+    @app_commands.command(name="loa", description="Start the out-of-office setup in DM.")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.guild_only()
     @app_commands.check(_can_manage_out_of_office)
@@ -720,7 +707,7 @@ class OutOfOffice(commands.Cog):
             ephemeral=True,
         )
 
-    @app_commands.command(name="outofoffice-list", description="List your saved out-of-office schedules.")
+    @app_commands.command(name="loa-list", description="List your saved out-of-office schedules.")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.guild_only()
     async def outofoffice_list(self, interaction: discord.Interaction) -> None:
@@ -737,7 +724,7 @@ class OutOfOffice(commands.Cog):
             ephemeral=True,
         )
 
-    @app_commands.command(name="outofoffice-delete", description="Delete one of your saved out-of-office schedules.")
+    @app_commands.command(name="loa-delete", description="Delete one of your saved out-of-office schedules.")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.guild_only()
     @app_commands.autocomplete(entry_id=schedule_id_autocomplete)
@@ -773,12 +760,12 @@ class OutOfOffice(commands.Cog):
         if isinstance(error, app_commands.CheckFailure):
             if interaction.response.is_done():
                 await interaction.followup.send(
-                    "You need one of the configured setup roles to use `/outofoffice`.",
+                    "You need one of the configured setup roles to use `/loa`.",
                     ephemeral=True,
                 )
             else:
                 await interaction.response.send_message(
-                    "You need one of the configured setup roles to use `/outofoffice`.",
+                    "You need one of the configured setup roles to use `/loa`.",
                     ephemeral=True,
                 )
             return
@@ -813,7 +800,7 @@ class OutOfOffice(commands.Cog):
                 entry = self._primary_entry(active_entries)
                 if entry is None:
                     continue
-                if not self._entry_is_loa(entry) and self._should_suppress_ooo_reply(member):
+                if self._should_suppress_ooo_reply(member):
                     continue
                 if not self._cooldown_allows_reply(message.author.id, member.id, message.channel.id):
                     continue
