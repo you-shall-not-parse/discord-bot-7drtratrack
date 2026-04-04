@@ -12,7 +12,6 @@ from data_paths import data_path
 
 GUILD_ID = 1097913605082579024
 
-OUT_OF_OFFICE_ROLE_ID = 1488294029757120613
 LOA_ROLE_ID = 1099610910097686569
 OUT_OF_OFFICE_SETUP_ROLE_IDS = {
     1097946662942560407,
@@ -26,8 +25,8 @@ OUT_OF_OFFICE_SETUP_ROLE_IDS = {
 TIMEZONE_NAME = "Europe/London"
 STATE_FILE = data_path("out_of_office_state.json")
 REPLY_COOLDOWN_SECONDS = 900
-MAX_OOO_DURATION = timedelta(hours=10)
-MIN_LOA_DURATION = timedelta(days=1)
+MAX_SHORT_LOA_DURATION = timedelta(hours=10)
+MIN_FORM_LOA_DURATION = timedelta(hours=10)
 LOA_CHANNEL_ID = 1099608133267095612
 
 LOCAL_TZ = ZoneInfo(TIMEZONE_NAME)
@@ -197,13 +196,9 @@ class OutOfOffice(commands.Cog):
     def _one_off_duration(self, start_at: datetime, end_at: datetime) -> timedelta:
         return end_at - start_at
 
-    def _one_off_role_name(self, start_at: datetime, end_at: datetime) -> str | None:
+    def _is_allowed_one_off_loa(self, start_at: datetime, end_at: datetime) -> bool:
         duration = self._one_off_duration(start_at, end_at)
-        if duration > MIN_LOA_DURATION:
-            return "LOA"
-        if duration < MAX_OOO_DURATION:
-            return "OOO"
-        return None
+        return duration <= MAX_SHORT_LOA_DURATION or duration > MIN_FORM_LOA_DURATION
 
     def _entry_weekdays(self, entry: dict) -> list[int]:
         raw_weekdays = entry.get("weekdays")
@@ -271,10 +266,10 @@ class OutOfOffice(commands.Cog):
             return None
         return max(entries, key=self._entry_duration)
 
-    def _entry_is_loa(self, entry: dict) -> bool:
-        return self._entry_duration(entry) > timedelta(days=1)
+    def _entry_is_long_loa(self, entry: dict) -> bool:
+        return self._entry_duration(entry) > MIN_FORM_LOA_DURATION
 
-    def _should_suppress_ooo_reply(self, member: discord.Member) -> bool:
+    def _should_suppress_reply(self, member: discord.Member) -> bool:
         return member.status == discord.Status.online
 
     def _entry_summary(self, entry: dict) -> str:
@@ -297,7 +292,7 @@ class OutOfOffice(commands.Cog):
 
     def _build_auto_reply(self, member: discord.Member, entry: dict) -> str:
         if entry["kind"] == "one_off":
-            status_label = "LOA" if self._entry_duration(entry) > timedelta(days=1) else "out of office"
+            status_label = "LOA"
             end_text = format_local(parse_iso_utc(entry["end_at"]))
             return (
                 f"{member.display_name} is currently {status_label} until {end_text} {TIMEZONE_NAME}.\n"
@@ -305,7 +300,7 @@ class OutOfOffice(commands.Cog):
             )
 
         return (
-            f"{member.display_name} is currently out of office on a recurring schedule ({self._format_weekdays(entry)}) from "
+            f"{member.display_name} is currently on LOA on a recurring schedule ({self._format_weekdays(entry)}) from "
             f"{entry['start_hour']:02d}:{entry['start_minute']:02d} to "
             f"{entry['end_hour']:02d}:{entry['end_minute']:02d} {TIMEZONE_NAME}.\n"
             f"Message: {entry['message']}"
@@ -314,11 +309,11 @@ class OutOfOffice(commands.Cog):
     def _build_generic_role_reply(self, member: discord.Member) -> str | None:
         role_ids = {role.id for role in member.roles}
         if LOA_ROLE_ID in role_ids:
-            if self._should_suppress_ooo_reply(member):
+            if self._should_suppress_reply(member):
                 return None
             return (
                 f"{member.display_name} is currently away. "
-                "This person has the LOA tag :( meaning they're on leave of absence or out of office, but they haven't set a custom away message with the bot."
+                "This person has the LOA tag :( meaning they're away, but they haven't set a custom away message with the bot."
             )
         return None
 
@@ -382,31 +377,26 @@ class OutOfOffice(commands.Cog):
             return
 
         desired_role_id = self._role_for_active_entries(self._active_entries_for_user(user_id))
-        ooo_role = guild.get_role(OUT_OF_OFFICE_ROLE_ID)
         loa_role = guild.get_role(LOA_ROLE_ID)
         to_add: list[discord.Role] = []
         to_remove: list[discord.Role] = []
 
         if desired_role_id == LOA_ROLE_ID:
-            if ooo_role and ooo_role in member.roles:
-                to_remove.append(ooo_role)
             if loa_role and loa_role not in member.roles:
                 to_add.append(loa_role)
         else:
-            if ooo_role and ooo_role in member.roles:
-                to_remove.append(ooo_role)
             if loa_role and loa_role in member.roles:
                 to_remove.append(loa_role)
 
         if to_remove:
             try:
-                await member.remove_roles(*to_remove, reason="Out of office reconciliation")
+                await member.remove_roles(*to_remove, reason="LOA reconciliation")
             except (discord.Forbidden, discord.HTTPException):
                 pass
 
         if to_add:
             try:
-                await member.add_roles(*to_add, reason="Out of office reconciliation")
+                await member.add_roles(*to_add, reason="LOA reconciliation")
             except (discord.Forbidden, discord.HTTPException):
                 pass
 
@@ -436,10 +426,10 @@ class OutOfOffice(commands.Cog):
             self.dm_sessions[user.id] = {"step": "kind", "draft": {}}
 
         await dm_channel.send(
-            "**Out office** :house_with_garden:  can be applied on a one off daily or weekday basis between specific times, e.g. 8am - 12pm starting 30/03/2026 every weekday. They only apply when the period requested is <10 hours in total length. A confirmation of the out of office will **not** land in the <#1099608133267095612> channel.\n\n"
-            "Nothing sits between the 10 hour and 1 day period, you can either apply another out of office or apply for an LOA.\n\n"
-            "**LOA** :beach:  applies when you're away for >1 day in a block period, e.g. 12pm 30/03/2026 until 1pm 01/05/2026. As a result, just like an LOA form, a confirmation of the period **will** land in the <#1099608133267095612> channel for SNCO review, consider this an automated LOA form.\n\n"
-            "**Manually adding/removing the LOA role** is still completely possible! you can just add it to yourself or other people (on request) and it'll just send a generic message when people tag that person.\n\n"
+            "**LOA** :beach: can be set up here in two ways.\n\n"
+            "**Short LOA**: this covers one-off, daily, or weekday-based absences that are **10 hours total or less**. Example: `8am - 12pm` starting `30/03/2026` every weekday. Short LOAs still use the **LOA role**, but they do **not** post a confirmation in <#1099608133267095612>.\n\n"
+            "**Long LOA**: this covers a single continuous block that is **more than 10 hours** long. Example: `12pm 30/03/2026` until `1pm 01/05/2026`. Long LOAs **do** post a confirmation in <#1099608133267095612> for SNCO review, so treat this as an automated LOA form.\n\n"
+            "**Manually adding/removing the LOA role** is still completely possible. You can add it to yourself or other people (on request), and the bot will send a generic message when that person is tagged if they have not set a custom away message.\n\n"
             "Reply with `one` for a one-off schedule or `daily` for a recurring daily or weekday schedule."
         )
         return True
@@ -458,7 +448,7 @@ class OutOfOffice(commands.Cog):
 
         if lowered == "cancel":
             self.dm_sessions.pop(message.author.id, None)
-            await message.channel.send("Out-of-office setup cancelled.")
+            await message.channel.send("LOA setup cancelled.")
             return
 
         session = self.dm_sessions[message.author.id]
@@ -503,10 +493,9 @@ class OutOfOffice(commands.Cog):
                 await message.channel.send("End time must be after the start time.")
                 return
 
-            role_name = self._one_off_role_name(start_at, end_at)
-            if role_name is None:
+            if not self._is_allowed_one_off_loa(start_at, end_at):
                 await message.channel.send(
-                    "That period is not allowed. Out of office must be less than 10 hours, and LOA only applies when the block period is more than 1 day."
+                    "That period is not allowed. LOAs in this system must be 10 hours or less, or more than 10 hours."
                 )
                 return
 
@@ -546,9 +535,9 @@ class OutOfOffice(commands.Cog):
                     "end_minute": draft["end_minute"],
                 }
             )
-            if duration >= MAX_OOO_DURATION:
+            if duration > MAX_SHORT_LOA_DURATION:
                 await message.channel.send(
-                    "Recurring out of office periods must be less than 10 hours total length."
+                    "Recurring LOAs must be 10 hours total length or less."
                 )
                 return
 
@@ -581,19 +570,18 @@ class OutOfOffice(commands.Cog):
             if draft["kind"] == "one_off":
                 start_at = parse_iso_utc(draft["start_at"])
                 end_at = parse_iso_utc(draft["end_at"])
-                role_name = self._one_off_role_name(start_at, end_at)
                 preview = (
-                    "One-off out-of-office preview\n"
+                    "One-off LOA preview\n"
                     f"Start: {format_local(start_at)} {TIMEZONE_NAME}\n"
                     f"End: {format_local(end_at)} {TIMEZONE_NAME}\n"
-                    f"Role during period: LOA\n"
+                    "Role during period: LOA\n"
                     f"Message: {draft['message']}\n\n"
                     "Reply `confirm` to save or `cancel` to abort."
                 )
             else:
                 weekday_labels = self._format_weekdays({"weekdays": draft.get("weekdays", DEFAULT_WEEKDAYS)})
                 preview = (
-                    "Daily out-of-office preview\n"
+                    "Daily LOA preview\n"
                     f"Days: {weekday_labels}\n"
                     f"Time: {draft['start_hour']:02d}:{draft['start_minute']:02d} -> "
                     f"{draft['end_hour']:02d}:{draft['end_minute']:02d} {TIMEZONE_NAME}\n"
@@ -636,11 +624,11 @@ class OutOfOffice(commands.Cog):
             if draft["kind"] == "one_off":
                 start_at = parse_iso_utc(entry["start_at"])
                 end_at = parse_iso_utc(entry["end_at"])
-                if self._one_off_duration(start_at, end_at) > MIN_LOA_DURATION:
+                if self._one_off_duration(start_at, end_at) > MIN_FORM_LOA_DURATION:
                     await self._post_loa_confirmation(guild, message.author.id, entry)
 
             await message.channel.send(
-                f"Saved out-of-office schedule `{entry['id']}`."
+                f"Saved LOA schedule `{entry['id']}`."
             )
 
     @tasks.loop(minutes=1)
@@ -687,7 +675,7 @@ class OutOfOffice(commands.Cog):
 
         return choices[:25]
 
-    @app_commands.command(name="loa", description="Start the out-of-office setup in DM.")
+    @app_commands.command(name="loa", description="Start the LOA setup in DM.")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.guild_only()
     @app_commands.check(_can_manage_out_of_office)
@@ -703,18 +691,18 @@ class OutOfOffice(commands.Cog):
             return
 
         await interaction.followup.send(
-            "I sent you a DM to set up your out-of-office period.",
+            "I sent you a DM to set up your LOA.",
             ephemeral=True,
         )
 
-    @app_commands.command(name="loa-list", description="List your saved out-of-office schedules.")
+    @app_commands.command(name="loa-list", description="List your saved LOA schedules.")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.guild_only()
     async def outofoffice_list(self, interaction: discord.Interaction) -> None:
         entries = self.state.get("users", {}).get(str(interaction.user.id), [])
         if not entries:
             await interaction.response.send_message(
-                "You do not have any saved out-of-office schedules.",
+                "You do not have any saved LOA schedules.",
                 ephemeral=True,
             )
             return
@@ -724,7 +712,7 @@ class OutOfOffice(commands.Cog):
             ephemeral=True,
         )
 
-    @app_commands.command(name="loa-delete", description="Delete one of your saved out-of-office schedules.")
+    @app_commands.command(name="loa-delete", description="Delete one of your saved LOA schedules.")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.guild_only()
     @app_commands.autocomplete(entry_id=schedule_id_autocomplete)
@@ -751,7 +739,7 @@ class OutOfOffice(commands.Cog):
             await self._sync_member_roles(guild, interaction.user.id)
 
         await interaction.response.send_message(
-            f"Deleted out-of-office schedule `{entry_id}`.",
+            f"Deleted LOA schedule `{entry_id}`.",
             ephemeral=True,
         )
 
@@ -800,7 +788,7 @@ class OutOfOffice(commands.Cog):
                 entry = self._primary_entry(active_entries)
                 if entry is None:
                     continue
-                if self._should_suppress_ooo_reply(member):
+                if self._should_suppress_reply(member):
                     continue
                 if not self._cooldown_allows_reply(message.author.id, member.id, message.channel.id):
                     continue
