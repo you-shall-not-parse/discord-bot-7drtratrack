@@ -6,8 +6,6 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
-from urllib.parse import urlparse
-from urllib.request import urlopen
 
 import discord
 from discord.ext import commands
@@ -43,6 +41,7 @@ CLAN_CONFIG_PATH: str = data_path("clannames.json")
 
 # Persistent state for the submission post.
 STATE_PATH: str = data_path("wardiary_state.json")
+MAP_IMAGES_DIR: str = data_path("map_images")
 
 # Optional font/background assets for the generated result image.
 FONT_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboard_font.ttf")
@@ -52,29 +51,29 @@ BACKGROUND_IMAGE_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboard
 GIF_WIN_INTERVAL: int = 5
 OTHER_MAP_OPTION: str = "Other"
 
-WAR_DIARY_MAP_IMAGE_URLS: dict[str, str] = {
-	"Elsenborn Ridge Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444494673149300796/ChatGPT_Image_Nov_30_2025_01_05_17_AM.png?ex=69381ebf&is=6936cd3f&hm=cdb114a6a2550d2d83318d3b3c1d6717022fa0c8665c645818fb8c78b8f71fa3",
-	"Carentan Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444515451727253544/file_00000000e5f871f488f94dd458b30c09.png?ex=69383219&is=6936e099&hm=40998a104cbffc2fe0b37c515f6158c9722606b7c1ec5d33bdc03e5eb4341e2a",
-	"Foy Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444492145913499800/ChatGPT_Image_Nov_30_2025_12_55_43_AM.png?ex=69400564&is=693eb3e4&hm=b9c95afd2e8cb88158af73e707f8dbae744e4458be20369029dd92e8a8a467ab",
-	"Hill 400 Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444497579210707004/ChatGPT_Image_Nov_30_2025_01_15_52_AM.png?ex=69382174&is=6936cff4&hm=f9e16ba8d2b9f20dd799bd5970c11f38c1f427689585e2d139cfd1294888a612",
-	"St. Marie Du Mont Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444515451727253544/file_00000000e5f871f488f94dd458b30c09.png?ex=69383219&is=6936e099&hm=40998a104cbffc2fe0b37c515f6158c9722606b7c1ec5d33bdc03e5eb4341e2a",
-	"Utah Beach Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1449831598160740402/ChatGPT_Image_Dec_14_2025_06_32_36_PM.png?ex=69405465&is=693f02e5&hm=ec9dbcc1d930df308756a775714ce19d26bebf261a42f384d20af05dc0014004",
-	"St. Mere Eglise Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1447681599117463692/file_000000009b64720e96132fbd67f95f72.png?ex=6938820d&is=6937308d&hm=148aca7f2e9de99f00b1f2cb6c55660ae5ece263e62afa83fbece2f9193610ef",
-	"El Alamein Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1448462224795373588/file_00000000627c71f4bbc1994fb582be8c.png?ex=693ff651&is=693ea4d1&hm=e6096c26fb8a2c74e9347ebd8477d3b5956521829486e7b192e18f92cffe8830",
-	"Mortain Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1448462040632004802/76807A80-FA7B-4965-9A21-0798CEA11042.png?ex=693ff625&is=693ea4a5&hm=3a05171a2a203ba1487a324a893829466e68342cebd2659215d53ab9bc93f4b4",
-	"Smolensk Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1449390736989491363/file_0000000022f071f4a9771a3645023ed5.png?ex=69400b50&is=693eb9d0&hm=5d2d3dffc888d136aacd11c3525e1e3070907f147277785651ef3c79ee2dae7f&",
-	"Driel Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444671257730744360/file_00000000d254720eb1ce02f6506ae926.png?ex=69381a74&is=6936c8f4&hm=e2772de15b5aa855d3abad443e614d5b2280f7a4f529aaf759f515c70d3ca7cc&",
-	"Kursk Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1449501011214598214/Screenshot_20251213_221442_Discord.jpg?ex=693fc943&is=693e77c3&hm=a80dc5533d1f73573ea6d3b0bb1adfa1f51cbd936d81a3fefd5535a1fd3dce67",
-	"Hurtgen Forest Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444676650653450411/file_000000005384720e8f124201b4e379a9.png?ex=69381f7a&is=6936cdfa&hm=e2d5ea8302bfd2744a5be5a199388945c8eb60218216aae29a5b2ea71aa1e302",
-	"Remagen Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1449390736003960889/file_00000000aa3071f492f35b0111fed5e2.png?ex=69400b4f&is=693eb9cf&hm=d776d5f87f3d73a1b1fdcb782c3204a29a055677368edfbc1aac18e04f53bc94&",
-	"Omaha Beach Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1448106330052362301/ChatGPT_Image_Dec_10_2025_12_16_56_AM.png?ex=693a0d9d&is=6938bc1d&hm=6614c98b63a7c58eaea7638a718ef854e5c074796001808cb6faf0557b46ea2a",
-	"Kharkov Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444687960845979780/file_0000000068b47208b053f27323047cda.png?ex=69382a02&is=6936d882&hm=5c7745f15e886825b5b26d3ed4b18a33808332cd2dbedc71e5dba0f8bd9bda8c&",
-	"Purple Heart Lane Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1442258185137295380/file_000000009ba871f4b7700cb80af3a3f3.png?ex=6937e4db&is=6936935b&hm=ffcf7d5e580476b6af6f2c5a1a1055ed656aa86034c14094d9434b0d2019f8cc&g",
-	"Tobruk Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1449390737593602259/file_00000000735871f4bb2cbbbced7ffbf7.png?ex=69400b50&is=693eb9d0&hm=5ec261995e8bb89a059a686f41ef8da731a5cbdd44dddb4bc356ddec9f368309&",
-	"Stalingrad Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1449396751206191364/file_00000000d4c871f4ac3d6d200f6a92ca_1.png?ex=694010e9&is=693ebf69&hm=1a90a0b6c9af30b6d400cc70d89d36ad778d88fb759d125abffc669b8511acf2&",
+WAR_DIARY_MAP_IMAGE_FILES: dict[str, str] = {
+	"Elsenborn Ridge Warfare": "Elsenborn Ridge.png",
+	"Carentan Warfare": "Carentan.png",
+	"Foy Warfare": "Foy.png",
+	"Hill 400 Warfare": "Hill 400.png",
+	"St. Marie Du Mont Warfare": "St. Marie Du Mont.png",
+	"Utah Beach Warfare": "Utah Beach.png",
+	"St. Mere Eglise Warfare": "St. Mere Eglise.png",
+	"El Alamein Warfare": "El Alamein.png",
+	"Mortain Warfare": "Mortain.png",
+	"Smolensk Warfare": "Smolensk.png",
+	"Driel Warfare": "Driel.png",
+	"Kursk Warfare": "Kursk.png",
+	"Hurtgen Forest Warfare": "Hurtgen Forest.png",
+	"Remagen Warfare": "Remagen.png",
+	"Omaha Beach Warfare": "Omaha Beach.png",
+	"Kharkov Warfare": "Kharkov.png",
+	"Purple Heart Lane Warfare": "Purple Heart Lane.png",
+	"Tobruk Warfare": "Tobruk.png",
+	"Stalingrad Warfare": "Stalingrad.png",
 }
 
-WAR_DIARY_MAP_OPTIONS: list[str] = [*WAR_DIARY_MAP_IMAGE_URLS.keys(), OTHER_MAP_OPTION]
+WAR_DIARY_MAP_OPTIONS: list[str] = [*WAR_DIARY_MAP_IMAGE_FILES.keys(), OTHER_MAP_OPTION]
 
 
 def _safe_int(value: Any) -> Optional[int]:
@@ -138,8 +137,7 @@ def _truncate_thread_name(name: str) -> str:
 	return clean[:97] + "..."
 
 def _media_extension(path: str) -> str:
-	parsed = urlparse(path)
-	return os.path.splitext(parsed.path or path)[1].lower()
+	return os.path.splitext(path)[1].lower()
 
 
 @dataclass(frozen=True)
@@ -462,6 +460,7 @@ class WarDiaryCog(commands.Cog):
 		self._ensure_lock = asyncio.Lock()
 		self._match_lock = asyncio.Lock()
 		self._background_cache: dict[str, bytes] = {}
+		self._missing_background_sources: set[str] = set()
 
 	def _load_state(self) -> dict[str, Any]:
 		try:
@@ -701,9 +700,9 @@ class WarDiaryCog(commands.Cog):
 		self,
 		forum: discord.ForumChannel,
 		*,
-		opponent_clan_name: str,
+		tag_name: str,
 	) -> Optional[discord.ForumTag]:
-		target = self._normalize_tag_name(opponent_clan_name)
+		target = self._normalize_tag_name(tag_name)
 		if not target:
 			return None
 
@@ -726,13 +725,13 @@ class WarDiaryCog(commands.Cog):
 		self,
 		forum: discord.ForumChannel,
 		*,
-		opponent_clan_name: str,
+		tag_name: str,
 	) -> Optional[discord.ForumTag]:
-		existing_tag = self._find_forum_tag(forum, opponent_clan_name=opponent_clan_name)
+		existing_tag = self._find_forum_tag(forum, tag_name=tag_name)
 		if existing_tag is not None:
 			return existing_tag
 
-		tag_name = " ".join((opponent_clan_name or "").split())
+		tag_name = " ".join((tag_name or "").split())
 		if not tag_name:
 			return None
 		if not self._can_create_forum_tags(forum):
@@ -745,8 +744,8 @@ class WarDiaryCog(commands.Cog):
 			log.info("Skipping forum tag creation for '%s' because Discord denied permission", tag_name)
 			return None
 		except Exception:
-			log.warning("Failed to create forum tag for opposing clan '%s'", tag_name, exc_info=True)
-			return self._find_forum_tag(forum, opponent_clan_name=opponent_clan_name)
+			log.warning("Failed to create forum tag '%s'", tag_name, exc_info=True)
+			return self._find_forum_tag(forum, tag_name=tag_name)
 		return created_tag
 
 	def _extract_created_post(self, created: Any) -> tuple[Optional[discord.Thread], Optional[discord.Message]]:
@@ -854,29 +853,43 @@ class WarDiaryCog(commands.Cog):
 		cached = self._background_cache.get(source)
 		if cached is not None:
 			return cached
+		if source in self._missing_background_sources:
+			return None
 
 		try:
-			if source.startswith(("http://", "https://")):
-				with urlopen(source, timeout=15) as response:
-					data = response.read()
-			else:
-				with open(source, "rb") as handle:
-					data = handle.read()
+			with open(source, "rb") as handle:
+				data = handle.read()
+		except FileNotFoundError:
+			self._missing_background_sources.add(source)
+			log.info("War diary background file not found at %s; falling back to local background.", source)
+			return None
 		except Exception:
-			log.warning("Failed to load war diary background from %s", source, exc_info=True)
+			self._missing_background_sources.add(source)
+			log.warning("Failed to load war diary background from %s; falling back to local background.", source, exc_info=True)
 			return None
 
 		self._background_cache[source] = data
 		return data
+
+	def _fallback_background_sources(self) -> list[str]:
+		sources: list[str] = []
+		if os.path.exists(BACKGROUND_IMAGE_PATH):
+			sources.append(BACKGROUND_IMAGE_PATH)
+		if os.path.exists(BACKGROUND_GIF_PATH):
+			sources.append(BACKGROUND_GIF_PATH)
+		if RESULT_BACKGROUND_PATH not in sources:
+			sources.append(RESULT_BACKGROUND_PATH)
+		return sources
 
 	def _select_result_background(self, *, prefer_gif: bool, map_name: str) -> tuple[str, str]:
 		if prefer_gif and os.path.exists(BACKGROUND_GIF_PATH):
 			return BACKGROUND_GIF_PATH, ".gif"
 
 		if map_name != OTHER_MAP_OPTION:
-			map_image_url = WAR_DIARY_MAP_IMAGE_URLS.get(map_name)
-			if map_image_url:
-				return map_image_url, ".png"
+			map_image_file = WAR_DIARY_MAP_IMAGE_FILES.get(map_name)
+			if map_image_file:
+				map_image_path = os.path.join(MAP_IMAGES_DIR, map_image_file)
+				return map_image_path, _media_extension(map_image_path) or ".png"
 
 		if os.path.exists(BACKGROUND_IMAGE_PATH):
 			return BACKGROUND_IMAGE_PATH, ".png"
@@ -904,6 +917,16 @@ class WarDiaryCog(commands.Cog):
 		background_source, output_extension = self._select_result_background(prefer_gif=prefer_gif, map_name=map_name)
 		use_gif_background = _media_extension(background_source) == ".gif"
 		background_bytes = self._load_background_bytes(background_source)
+		if background_bytes is None:
+			for fallback_source in self._fallback_background_sources():
+				if fallback_source == background_source:
+					continue
+				background_bytes = self._load_background_bytes(fallback_source)
+				if background_bytes is not None:
+					background_source = fallback_source
+					use_gif_background = _media_extension(background_source) == ".gif"
+					output_extension = ".gif" if use_gif_background else ".png"
+					break
 
 		source_frames = []
 		durations = []
@@ -1042,9 +1065,13 @@ class WarDiaryCog(commands.Cog):
 				content_lines.append(f"Map: {map_name}")
 			content = "\n".join(content_lines) if content_lines else None
 			applied_tags: list[discord.ForumTag] = []
-			opponent_tag = await self._get_or_create_forum_tag(forum, opponent_clan_name=opponent_clan_name)
+			opponent_tag = await self._get_or_create_forum_tag(forum, tag_name=opponent_clan_name)
 			if opponent_tag is not None:
 				applied_tags.append(opponent_tag)
+			if map_name != OTHER_MAP_OPTION:
+				map_tag = await self._get_or_create_forum_tag(forum, tag_name=map_name)
+				if map_tag is not None and all(existing.id != map_tag.id for existing in applied_tags):
+					applied_tags.append(map_tag)
 
 			try:
 				created = await forum.create_thread(
