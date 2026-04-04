@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
+from urllib.parse import urlparse
+from urllib.request import urlopen
 
 import discord
 from discord.ext import commands
@@ -48,6 +50,31 @@ RESULT_BACKGROUND_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboar
 BACKGROUND_GIF_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboard_gif.gif")
 BACKGROUND_IMAGE_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboard_blank.jpg")
 GIF_WIN_INTERVAL: int = 5
+OTHER_MAP_OPTION: str = "Other"
+
+WAR_DIARY_MAP_IMAGE_URLS: dict[str, str] = {
+	"Elsenborn Ridge Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444494673149300796/ChatGPT_Image_Nov_30_2025_01_05_17_AM.png?ex=69381ebf&is=6936cd3f&hm=cdb114a6a2550d2d83318d3b3c1d6717022fa0c8665c645818fb8c78b8f71fa3",
+	"Carentan Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444515451727253544/file_00000000e5f871f488f94dd458b30c09.png?ex=69383219&is=6936e099&hm=40998a104cbffc2fe0b37c515f6158c9722606b7c1ec5d33bdc03e5eb4341e2a",
+	"Foy Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444492145913499800/ChatGPT_Image_Nov_30_2025_12_55_43_AM.png?ex=69400564&is=693eb3e4&hm=b9c95afd2e8cb88158af73e707f8dbae744e4458be20369029dd92e8a8a467ab",
+	"Hill 400 Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444497579210707004/ChatGPT_Image_Nov_30_2025_01_15_52_AM.png?ex=69382174&is=6936cff4&hm=f9e16ba8d2b9f20dd799bd5970c11f38c1f427689585e2d139cfd1294888a612",
+	"St. Marie Du Mont Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444515451727253544/file_00000000e5f871f488f94dd458b30c09.png?ex=69383219&is=6936e099&hm=40998a104cbffc2fe0b37c515f6158c9722606b7c1ec5d33bdc03e5eb4341e2a",
+	"Utah Beach Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1449831598160740402/ChatGPT_Image_Dec_14_2025_06_32_36_PM.png?ex=69405465&is=693f02e5&hm=ec9dbcc1d930df308756a775714ce19d26bebf261a42f384d20af05dc0014004",
+	"St. Mere Eglise Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1447681599117463692/file_000000009b64720e96132fbd67f95f72.png?ex=6938820d&is=6937308d&hm=148aca7f2e9de99f00b1f2cb6c55660ae5ece263e62afa83fbece2f9193610ef",
+	"El Alamein Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1448462224795373588/file_00000000627c71f4bbc1994fb582be8c.png?ex=693ff651&is=693ea4d1&hm=e6096c26fb8a2c74e9347ebd8477d3b5956521829486e7b192e18f92cffe8830",
+	"Mortain Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1448462040632004802/76807A80-FA7B-4965-9A21-0798CEA11042.png?ex=693ff625&is=693ea4a5&hm=3a05171a2a203ba1487a324a893829466e68342cebd2659215d53ab9bc93f4b4",
+	"Smolensk Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1449390736989491363/file_0000000022f071f4a9771a3645023ed5.png?ex=69400b50&is=693eb9d0&hm=5d2d3dffc888d136aacd11c3525e1e3070907f147277785651ef3c79ee2dae7f&",
+	"Driel Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444671257730744360/file_00000000d254720eb1ce02f6506ae926.png?ex=69381a74&is=6936c8f4&hm=e2772de15b5aa855d3abad443e614d5b2280f7a4f529aaf759f515c70d3ca7cc&",
+	"Kursk Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1449501011214598214/Screenshot_20251213_221442_Discord.jpg?ex=693fc943&is=693e77c3&hm=a80dc5533d1f73573ea6d3b0bb1adfa1f51cbd936d81a3fefd5535a1fd3dce67",
+	"Hurtgen Forest Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444676650653450411/file_000000005384720e8f124201b4e379a9.png?ex=69381f7a&is=6936cdfa&hm=e2d5ea8302bfd2744a5be5a199388945c8eb60218216aae29a5b2ea71aa1e302",
+	"Remagen Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1449390736003960889/file_00000000aa3071f492f35b0111fed5e2.png?ex=69400b4f&is=693eb9cf&hm=d776d5f87f3d73a1b1fdcb782c3204a29a055677368edfbc1aac18e04f53bc94&",
+	"Omaha Beach Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1448106330052362301/ChatGPT_Image_Dec_10_2025_12_16_56_AM.png?ex=693a0d9d&is=6938bc1d&hm=6614c98b63a7c58eaea7638a718ef854e5c074796001808cb6faf0557b46ea2a",
+	"Kharkov Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444687960845979780/file_0000000068b47208b053f27323047cda.png?ex=69382a02&is=6936d882&hm=5c7745f15e886825b5b26d3ed4b18a33808332cd2dbedc71e5dba0f8bd9bda8c&",
+	"Purple Heart Lane Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1442258185137295380/file_000000009ba871f4b7700cb80af3a3f3.png?ex=6937e4db&is=6936935b&hm=ffcf7d5e580476b6af6f2c5a1a1055ed656aa86034c14094d9434b0d2019f8cc&g",
+	"Tobruk Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1449390737593602259/file_00000000735871f4bb2cbbbced7ffbf7.png?ex=69400b50&is=693eb9d0&hm=5ec261995e8bb89a059a686f41ef8da731a5cbdd44dddb4bc356ddec9f368309&",
+	"Stalingrad Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1449396751206191364/file_00000000d4c871f4ac3d6d200f6a92ca_1.png?ex=694010e9&is=693ebf69&hm=1a90a0b6c9af30b6d400cc70d89d36ad778d88fb759d125abffc669b8511acf2&",
+}
+
+WAR_DIARY_MAP_OPTIONS: list[str] = [*WAR_DIARY_MAP_IMAGE_URLS.keys(), OTHER_MAP_OPTION]
 
 
 def _safe_int(value: Any) -> Optional[int]:
@@ -111,7 +138,8 @@ def _truncate_thread_name(name: str) -> str:
 	return clean[:97] + "..."
 
 def _media_extension(path: str) -> str:
-	return os.path.splitext(path)[1].lower()
+	parsed = urlparse(path)
+	return os.path.splitext(parsed.path or path)[1].lower()
 
 
 @dataclass(frozen=True)
@@ -234,6 +262,45 @@ class ScoreSelect(discord.ui.Select):
 		await interaction.response.edit_message(view=view)
 
 
+class MapSelect(discord.ui.Select):
+	def __init__(self):
+		super().__init__(
+			placeholder="Select the played map...",
+			min_values=1,
+			max_values=1,
+			options=[
+				discord.SelectOption(label=map_name, value=map_name)
+				for map_name in WAR_DIARY_MAP_OPTIONS
+			],
+		)
+
+	def set_selected_map(self, selected_map_name: Optional[str]) -> None:
+		selected_label: Optional[str] = None
+		refreshed: list[discord.SelectOption] = []
+		for option in self.options:
+			is_default = str(option.value) == selected_map_name
+			if is_default:
+				selected_label = option.label
+			refreshed.append(
+				discord.SelectOption(label=option.label, value=str(option.value), default=is_default)
+			)
+		self.options = refreshed
+		self.placeholder = selected_label or "Select the played map..."
+
+	async def callback(self, interaction: discord.Interaction):
+		view = self.view
+		if not isinstance(view, WarDiarySubmissionView):
+			return
+		if not view.is_owner(interaction.user.id):
+			await interaction.response.send_message("This submission form is not yours.", ephemeral=True)
+			return
+
+		view.selected_map_name = str(self.values[0])
+		self.set_selected_map(view.selected_map_name)
+		view.refresh_submit_state()
+		await interaction.response.edit_message(view=view)
+
+
 class StatsLinkModal(discord.ui.Modal, title="Match Details"):
 	match_date = discord.ui.TextInput(
 		label="Match date (DD/MM/YY)",
@@ -255,6 +322,7 @@ class StatsLinkModal(discord.ui.Modal, title="Match Details"):
 		self.clan_name = clan_name
 		self.opponent_clan_name = opponent_clan_name
 		self.selected_score = selected_score
+		self.selected_map_name: str = OTHER_MAP_OPTION
 
 	async def on_submit(self, interaction: discord.Interaction) -> None:
 		if not interaction.guild or not isinstance(interaction.user, discord.Member):
@@ -279,6 +347,7 @@ class StatsLinkModal(discord.ui.Modal, title="Match Details"):
 			submitter_score=left,
 			opponent_score=right,
 			match_date=match_date,
+			map_name=self.selected_map_name,
 			stats_link=stats_link,
 		)
 		if thread is None:
@@ -296,10 +365,14 @@ class WarDiarySubmissionView(discord.ui.View):
 		self.clan_name: str = HOME_CLAN_NAME
 		self.opponent_clan_name: Optional[str] = None
 		self.selected_score: Optional[str] = None
+		self.selected_map_name: Optional[str] = None
 
 		self.opponent_select = OpponentSelect(clans)
 		self.opponent_select.set_options(self.clan_name, self.opponent_clan_name)
 		self.add_item(self.opponent_select)
+
+		self.map_select = MapSelect()
+		self.add_item(self.map_select)
 
 		self.score_select = ScoreSelect()
 		self.add_item(self.score_select)
@@ -322,7 +395,7 @@ class WarDiarySubmissionView(discord.ui.View):
 	def refresh_submit_state(self) -> None:
 		for child in self.children:
 			if isinstance(child, discord.ui.Button) and child.custom_id == "wardiary:submit":
-				child.disabled = not (self.opponent_clan_name and self.selected_score)
+				child.disabled = not (self.opponent_clan_name and self.selected_score and self.selected_map_name)
 
 	@discord.ui.button(label="Add Optional Stats Link & Submit", style=discord.ButtonStyle.success, disabled=True, custom_id="wardiary:submit")
 	async def submit(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -334,13 +407,18 @@ class WarDiarySubmissionView(discord.ui.View):
 			return
 
 		await interaction.response.send_modal(
-			StatsLinkModal(
+			self._build_modal()
+		)
+
+	def _build_modal(self) -> StatsLinkModal:
+		modal = StatsLinkModal(
 				cog=self.cog,
 				clan_name=self.clan_name,
 				opponent_clan_name=self.opponent_clan_name,
 				selected_score=self.selected_score,
 			)
-		)
+		modal.selected_map_name = self.selected_map_name or OTHER_MAP_OPTION
+		return modal
 
 
 class WarDiaryMainView(discord.ui.View):
@@ -368,7 +446,7 @@ class WarDiaryMainView(discord.ui.View):
 		embed = discord.Embed(
 			title="Submit War Diary Result",
 			description=(
-				f"Home clan is fixed as **{HOME_CLAN_NAME}**. Pick the opposing clan and the result, then optionally paste a stats link in the next step."
+				f"Home clan is fixed as **{HOME_CLAN_NAME}**. Pick the opposing clan, the played map, and the result, then optionally paste a stats link in the next step."
 			),
 			colour=discord.Colour.blurple(),
 		)
@@ -383,6 +461,7 @@ class WarDiaryCog(commands.Cog):
 		self._state = self._load_state()
 		self._ensure_lock = asyncio.Lock()
 		self._match_lock = asyncio.Lock()
+		self._background_cache: dict[str, bytes] = {}
 
 	def _load_state(self) -> dict[str, Any]:
 		try:
@@ -580,11 +659,12 @@ class WarDiaryCog(commands.Cog):
 			name="How To Submit",
 			value=(
 				"1. Click the Submit Match Result button.\n"
-				"2. Select the opposing clan, click 'other' if it is not listed.\n"
-				"3. Select the result.\n"
-				"4. Before you go to the next step, check you have the stats link for the match, if you want to include that.\n"
-				"5. Click 'Add Optional Stats Link & Submit'.\n"
-				"6. Enter the date, paste the stats link and click Submit! Wait 20/30 seconds for the thread to appear, especially the GIF ones."
+				"2. Select the opposing clan.\n"
+				"3. Select the played map, or choose Other to use the blank scoreboard background.\n"
+				"4. Select the result.\n"
+				"5. Before you go to the next step, check you have the stats link for the match, if you want to include that.\n"
+				"6. Click 'Add Optional Stats Link & Submit'.\n"
+				"7. Enter the date, paste the stats link and click Submit! Wait 20/30 seconds for the thread to appear, especially the GIF ones."
 			),
 			inline=False,
 		)
@@ -746,16 +826,21 @@ class WarDiaryCog(commands.Cog):
 		submitter_score: int,
 		opponent_score: int,
 		match_date: str,
+		map_name: str,
 		filename: str,
 		submitter: discord.Member,
 		stats_link: Optional[str],
 	) -> discord.Embed:
+		description = (
+			f"**{submitter_clan_name}** {submitter_score}-{opponent_score} **{opponent_clan_name}**\n"
+			f"**Date:** {match_date}"
+		)
+		if map_name != OTHER_MAP_OPTION:
+			description += f"\n**Map:** {map_name}"
+
 		embed = discord.Embed(
 			title="War Diary Result",
-			description=(
-				f"**{submitter_clan_name}** {submitter_score}-{opponent_score} **{opponent_clan_name}**\n"
-				f"**Date:** {match_date}"
-			),
+			description=description,
 			colour=discord.Colour.blurple(),
 			timestamp=_utcnow(),
 		)
@@ -765,18 +850,41 @@ class WarDiaryCog(commands.Cog):
 		embed.set_image(url=f"attachment://{filename}")
 		return embed
 
-	def _select_result_background(self, *, prefer_gif: bool) -> tuple[str, str]:
-		preferred_path = BACKGROUND_GIF_PATH if prefer_gif else BACKGROUND_IMAGE_PATH
-		fallback_path = BACKGROUND_IMAGE_PATH if prefer_gif else BACKGROUND_GIF_PATH
+	def _load_background_bytes(self, source: str) -> Optional[bytes]:
+		cached = self._background_cache.get(source)
+		if cached is not None:
+			return cached
 
-		if os.path.exists(preferred_path):
-			return preferred_path, ".gif" if _media_extension(preferred_path) == ".gif" else ".png"
-		if os.path.exists(fallback_path):
-			return fallback_path, ".gif" if _media_extension(fallback_path) == ".gif" else ".png"
+		try:
+			if source.startswith(("http://", "https://")):
+				with urlopen(source, timeout=15) as response:
+					data = response.read()
+			else:
+				with open(source, "rb") as handle:
+					data = handle.read()
+		except Exception:
+			log.warning("Failed to load war diary background from %s", source, exc_info=True)
+			return None
 
-		configured_path = RESULT_BACKGROUND_PATH
-		configured_ext = _media_extension(configured_path)
-		return configured_path, ".gif" if configured_ext == ".gif" else ".png"
+		self._background_cache[source] = data
+		return data
+
+	def _select_result_background(self, *, prefer_gif: bool, map_name: str) -> tuple[str, str]:
+		if prefer_gif and os.path.exists(BACKGROUND_GIF_PATH):
+			return BACKGROUND_GIF_PATH, ".gif"
+
+		if map_name != OTHER_MAP_OPTION:
+			map_image_url = WAR_DIARY_MAP_IMAGE_URLS.get(map_name)
+			if map_image_url:
+				return map_image_url, ".png"
+
+		if os.path.exists(BACKGROUND_IMAGE_PATH):
+			return BACKGROUND_IMAGE_PATH, ".png"
+		if os.path.exists(BACKGROUND_GIF_PATH):
+			return BACKGROUND_GIF_PATH, ".gif"
+
+		configured_ext = _media_extension(RESULT_BACKGROUND_PATH)
+		return RESULT_BACKGROUND_PATH, ".gif" if configured_ext == ".gif" else ".png"
 
 	def _render_result_image(
 		self,
@@ -786,32 +894,34 @@ class WarDiaryCog(commands.Cog):
 		submitter_score: int,
 		opponent_score: int,
 		match_date: str,
+		map_name: str,
 		prefer_gif: bool,
 	) -> tuple[bytes, str]:
 		from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageSequence
 
 		width = 1600
 		height = 900
-		background_path, output_extension = self._select_result_background(prefer_gif=prefer_gif)
-		use_gif_background = _media_extension(background_path) == ".gif"
+		background_source, output_extension = self._select_result_background(prefer_gif=prefer_gif, map_name=map_name)
+		use_gif_background = _media_extension(background_source) == ".gif"
+		background_bytes = self._load_background_bytes(background_source)
 
-		if use_gif_background and os.path.exists(background_path):
-			with Image.open(background_path) as source_gif:
-				source_frames = [frame.copy() for frame in ImageSequence.Iterator(source_gif)]
-				durations = [frame.info.get("duration", source_gif.info.get("duration", 100)) for frame in ImageSequence.Iterator(source_gif)]
-		else:
-			source_frames = []
-			durations = []
+		source_frames = []
+		durations = []
+		if background_bytes:
+			try:
+				with Image.open(io.BytesIO(background_bytes)) as source_media:
+					if use_gif_background:
+						source_frames = [frame.copy() for frame in ImageSequence.Iterator(source_media)]
+						durations = [frame.info.get("duration", source_media.info.get("duration", 100)) for frame in ImageSequence.Iterator(source_media)]
+					else:
+						source_frames = [source_media.convert("RGBA")]
+						durations = [100]
+			except Exception:
+				log.warning("Failed to render war diary background from %s", background_source, exc_info=True)
 
 		if not source_frames:
-			if os.path.exists(background_path) and not use_gif_background:
-				base = Image.open(background_path).convert("RGBA")
-				base = ImageOps.fit(base, (width, height), method=Image.Resampling.LANCZOS)
-				source_frames = [base]
-				durations = [100]
-			else:
-				source_frames = [Image.new("RGBA", (width, height), (18, 24, 38, 255))]
-				durations = [100]
+			source_frames = [Image.new("RGBA", (width, height), (18, 24, 38, 255))]
+			durations = [100]
 
 		def load_font(size: int):
 			try:
@@ -880,6 +990,7 @@ class WarDiaryCog(commands.Cog):
 		submitter_score: int,
 		opponent_score: int,
 		match_date: str,
+		map_name: str,
 		stats_link: Optional[str],
 	) -> tuple[Optional[discord.Thread], Optional[str]]:
 		forum = await self._get_forum_channel()
@@ -908,6 +1019,7 @@ class WarDiaryCog(commands.Cog):
 				submitter_score=submitter_score,
 				opponent_score=opponent_score,
 				match_date=match_date,
+				map_name=map_name,
 				prefer_gif=prefer_gif,
 			)
 			filename = f"wardiary_{submitter_score}_{opponent_score}{output_extension}"
@@ -918,6 +1030,7 @@ class WarDiaryCog(commands.Cog):
 				submitter_score=submitter_score,
 				opponent_score=opponent_score,
 				match_date=match_date,
+				map_name=map_name,
 				filename=filename,
 				submitter=submitter,
 				stats_link=stats_link,
@@ -925,6 +1038,8 @@ class WarDiaryCog(commands.Cog):
 
 			content_lines: list[str] = []
 			content_lines.append(f"Match date: {match_date}")
+			if map_name != OTHER_MAP_OPTION:
+				content_lines.append(f"Map: {map_name}")
 			content = "\n".join(content_lines) if content_lines else None
 			applied_tags: list[discord.ForumTag] = []
 			opponent_tag = await self._get_or_create_forum_tag(forum, opponent_clan_name=opponent_clan_name)
