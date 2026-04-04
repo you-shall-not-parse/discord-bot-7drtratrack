@@ -1061,8 +1061,6 @@ class WarDiaryCog(commands.Cog):
 
 			content_lines: list[str] = []
 			content_lines.append(f"Match date: {match_date}")
-			if map_name != OTHER_MAP_OPTION:
-				content_lines.append(f"Map: {map_name}")
 			content = "\n".join(content_lines) if content_lines else None
 			applied_tags: list[discord.ForumTag] = []
 			opponent_tag = await self._get_or_create_forum_tag(forum, tag_name=opponent_clan_name)
