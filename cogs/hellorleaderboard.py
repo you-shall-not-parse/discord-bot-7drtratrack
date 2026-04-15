@@ -22,7 +22,7 @@ from data_paths import data_path
 
 # ========= CONFIG =========
 POST_CHANNEL_ID = 1099806153170489485
-ROLE_NAME = "Basic Trained"
+ROLE_NAME = "Basic trained"
 
 STATE_FILE = data_path("hellor_leaderboard_state.json")
 MAPPING_FILE = data_path("hellor_t17_map.json")
