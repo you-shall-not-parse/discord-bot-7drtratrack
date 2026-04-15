@@ -26,6 +26,7 @@ ROLE_NAME = "Basic Trained"
 
 STATE_FILE = data_path("hellor_leaderboard_state.json")  # stores output message id for editing
 MAPPING_FILE = data_path("hellor_t17_map.json")
+LOG_FILE = data_path("hellor_leaderboard.log")
 
 UPDATE_INTERVAL_SECONDS = 12 * 3600  # 12 hours
 
@@ -111,8 +112,23 @@ class HellorLeaderboard(commands.Cog):
         # HTTP session for hellor.pro
         self._http_session = make_session()
 
-        print(f"[HellorLeaderboard] STATE_FILE = {os.path.abspath(STATE_FILE)}")
-        print(f"[HellorLeaderboard] MAPPING_FILE = {os.path.abspath(MAPPING_FILE)}")
+        # Log paths for debugging
+        self._log(f"[HellorLeaderboard] STATE_FILE = {os.path.abspath(STATE_FILE)}")
+        self._log(f"[HellorLeaderboard] MAPPING_FILE = {os.path.abspath(MAPPING_FILE)}")
+        self._log(f"[HellorLeaderboard] LOG_FILE = {os.path.abspath(LOG_FILE)}")
+
+    # ---------- logging ----------
+    def _log(self, msg: str) -> None:
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        line = f"{ts} {msg}"
+        print(line)
+        try:
+            os.makedirs(os.path.dirname(LOG_FILE) or ".", exist_ok=True)
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        except Exception:
+            # Don't ever crash the cog due to logging.
+            pass
 
     # ---------- state ----------
     def _load_state(self) -> dict:
@@ -141,7 +157,7 @@ class HellorLeaderboard(commands.Cog):
         os.makedirs(os.path.dirname(MAPPING_FILE) or ".", exist_ok=True)
         with open(MAPPING_FILE, "w", encoding="utf-8") as f:
             json.dump(mapping, f, indent=2)
-        print(f"[HellorLeaderboard] wrote mapping: {os.path.abspath(MAPPING_FILE)}")
+        self._log(f"[HellorLeaderboard] wrote mapping: {os.path.abspath(MAPPING_FILE)}")
 
     def _load_mapping_file(self) -> dict:
         try:
@@ -337,12 +353,7 @@ class HellorLeaderboard(commands.Cog):
     async def _gather_role_members(self) -> list[discord.Member]:
         members: list[discord.Member] = []
         for guild in self.bot.guilds:
-            role = discord.utils.get(guild.roles, name=ROLE_NAME)
-            if role:
-                for m in getattr(role, "members", []) or []:
-                    if not m.bot:
-                        members.append(m)
-
+            role = discord.utils.get(guild.roles, name=ROLE_NAME        # de-dup
         seen = set()
         uniq: list[discord.Member] = []
         for m in members:
@@ -365,43 +376,49 @@ class HellorLeaderboard(commands.Cog):
 
             members = await self._gather_role_members()
             if not members:
-                print("[HellorLeaderboard] No members found with role:", ROLE_NAME)
+                self._log(f"[HellorLeaderboard] No members found with role: {ROLE_NAME}")
                 return None
 
-            manual_mapping = self._load_mapping_file()
-            mapping: dict[str, Optional[str]] = {}
+            # STICKY mapping:
+            # Start from file; only look up members NOT already present in the file.
+            mapping_file = self._load_mapping_file()
+            mapping: dict[str, Optional[str]] = dict(mapping_file)
 
-            # Build mapping (honor manual edits)
             http_lookups_done = 0
+            added_new_keys = 0
+
             for member in members:
                 display = self._cut_at_hash(member.display_name or member.name)
 
-                if display in manual_mapping:
-                    mapping[display] = manual_mapping[display]
+                # If already exists in mapping (even None), keep it.
+                if display in mapping:
                     continue
 
-                if not PLAYER_LOOKUP_ENABLED or http_lookups_done >= PLAYER_LOOKUP_MAX_PER_RUN:
-                    mapping[display] = None
-                    continue
-
-                remaining = PLAYER_LOOKUP_MAX_PER_RUN - http_lookups_done
+                added_new_keys += remaining = PLAYER_LOOKUP_MAX_PER_RUN - http_lookups_done
                 pid, used = await self.fetch_player_id_for_member(member, remaining)
                 http_lookups_done += used
                 mapping[display] = pid
 
-            # Always write mapping so it exists (even if all null)
+            # Always write mapping so it exists and stays sticky.
             self._save_mapping_file(mapping)
 
             targets: list[tuple[str, str]] = [(dn, t17) for dn, t17 in mapping.items() if t17]
-            print(f"[HellorLeaderboard] members={len(members)}  targets_with_t17={len(targets)}  pace={REQUEST_PACE_SECONDS}s")
+            self._log(
+                f"[HellorLeaderboard] members={len(members)} "
+                f"mapping_keys={len(mapping)} new_keys_added={added_new_keys} "
+                f"targets_with_t17={len(targets)} "
+                f"crcon_http_used={http_lookups_done}/{PLAYER_LOOKUP_MAX_PER_RUN} "
+                f"pace={REQUEST_PACE_SECONDS}s"
+            )
 
+            # Pace request start times; allow network time to overlap (still respects rate)
             async def paced_fetch_parse(idx: int, display_name: str, t17: str) -> tuple[str, Dict[str, int]]:
                 await asyncio.sleep(idx * REQUEST_PACE_SECONDS)
                 try:
                     html = await asyncio.to_thread(self._fetch_hellor_no_sleep, t17)
                     parsed = parse_scores(html)
                 except Exception as e:
-                    print(f"[HellorLeaderboard] hellor fetch/parse failed for {display_name} ({t17}): {e}")
+                    self._log(f"[HellorLeaderboard] hellor fetch/parse failed for {display_name} ({t17}): {e}")
                     return display_name, {"Overall": 0, "Team": 0, "Impact": 0, "Fight": 0}
 
                 out: Dict[str, int] = {}
@@ -422,7 +439,7 @@ class HellorLeaderboard(commands.Cog):
                 done += 1
                 if done % 10 == 0 or done == len(tasks):
                     elapsed = int(time.time() - started)
-                    print(f"[HellorLeaderboard] progress: {done}/{len(tasks)}  elapsed={elapsed}s")
+                    self._log(f"[HellorLeaderboard] progress: {done}/{len(tasks)} elapsed={elapsed}s")
 
             # Build leaderboards
             results: dict[str, list[tuple[int, str]]] = {}
@@ -442,13 +459,13 @@ class HellorLeaderboard(commands.Cog):
             embed = self._build_leaderboard_embed(guild_name, results)
 
             total = int(time.time() - started)
-            print(f"[HellorLeaderboard] build complete in {total}s")
+            self._log(f"[HellorLeaderboard] build complete in {total}s")
             return embed
 
     async def _update_message(self) -> None:
         channel, existing = await self._ensure_output_message()
         if channel is None:
-            print("[HellorLeaderboard] Failed to resolve post channel:", POST_CHANNEL_ID)
+            self._log(f"[HellorLeaderboard] Failed to resolve post channel: {POST_CHANNEL_ID}")
             return
 
         embed = await self._fetch_and_build()
@@ -462,14 +479,14 @@ class HellorLeaderboard(commands.Cog):
                 sent = await channel.send(embeds=[embed], allowed_mentions=discord.AllowedMentions.none())
                 self._set_output_message_id(sent.id)
         except Exception as e:
-            print("[HellorLeaderboard] Failed to post/update embed:", e)
+            self._log(f"[HellorLeaderboard] Failed to post/update embed: {e}")
 
     async def _periodic_updater(self) -> None:
         while True:
             try:
                 await self._update_message()
             except Exception as e:
-                print("[HellorLeaderboard] Exception in updater:", e)
+                self._log(f"[HellorLeaderboard] Exception in updater: {e}")
             await asyncio.sleep(UPDATE_INTERVAL_SECONDS)
 
     @commands.Cog.listener()
@@ -478,13 +495,11 @@ class HellorLeaderboard(commands.Cog):
             return
         self._ran_once = True
 
-        # Run one immediate update on startup
         try:
             await self._update_message()
         except Exception as e:
-            print("[HellorLeaderboard] Initial update failed:", e)
+            self._log(f"[HellorLeaderboard] Initial update failed: {e}")
 
-        # Start periodic updater
         self._updater_task = asyncio.create_task(self._periodic_updater())
 
     def cog_unload(self):
