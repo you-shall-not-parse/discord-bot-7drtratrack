@@ -124,7 +124,19 @@ class HellorLeaderboard(commands.Cog):
 
     def _save_state(self) -> None:
         os.makedirs(os.path.dirname(STATE_FILE) or ".", exist_ok=True)
-        with open(STATE_FILE, ---------- mapping ----------
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(self._state, f, indent=2)
+
+    def _get_output_message_id(self) -> Optional[int]:
+        msg_id = self._state.get("output_message_id")
+        return int(msg_id) if isinstance(msg_id, int) else None
+
+    def _set_output_message_id(self, message_id: int) -> None:
+        self._state["output_message_id"] = int(message_id)
+        self._state["output_channel_id"] = POST_CHANNEL_ID
+        self._save_state()
+
+    # ---------- mapping ----------
     def _save_mapping_file(self, mapping: dict) -> None:
         os.makedirs(os.path.dirname(MAPPING_FILE) or ".", exist_ok=True)
         with open(MAPPING_FILE, "w", encoding="utf-8") as f:
@@ -299,7 +311,10 @@ class HellorLeaderboard(commands.Cog):
         self._set_output_message_id(sent.id)
         return channel, sent
 
-    def _build_leaderboard_embed(self, guild_name.pro Top 10 Leaderboards",
+    def _build_leaderboard_embed(self, guild_name: str, results: dict[str, list[tuple[int, str]]]) -> discord.Embed:
+        now = datetime.now(timezone.utc)
+        e = discord.Embed(
+            title="hellor.pro Top 10 Leaderboards",
             color=discord.Color.dark_gold(),
             timestamp=now,
         )
@@ -375,17 +390,7 @@ class HellorLeaderboard(commands.Cog):
                 http_lookups_done += used
                 mapping[display] = pid
 
-            # Always write mapping so it exists (even if all null)
-            self._save_mapping_file(mapping)
-
-            targets: list[tuple[str, str]] = [(dn, t17) for dn, t17 in mapping.items() if t17]
-            print(f"[HellorLeaderboard] members={len(members)}  targets_with_t17={len(targets)}  pace={REQUEST_PACE_SECONDS}s")
-
-            # Pace request start times; allow network time to overlap (still respects rate)
-            async def paced_fetch_parse(idx: int, display_name: str, t17: str) -> tuple[str, Dict[str, int]]:
-                await asyncio.sleep(idx * REQUEST_PACE_SECONDS)
-                try:
-                    html = await asyncio.to_thread(self._fetch_hellor_no_sleep, t17)
+            # Always write mapping so it exists (.to_thread(self._fetch_hellor_no_sleep, t17)
                     parsed = parse_scores(html)
                 except Exception as e:
                     print(f"[HellorLeaderboard] hellor fetch/parse failed for {display_name} ({t17}): {e}")
@@ -395,8 +400,7 @@ class HellorLeaderboard(commands.Cog):
                 for label in ["Overall", "Team", "Impact", "Fight"]:
                     try:
                         out[label] = int(parsed.get(label, "0") or "0")
-                    except Exception:
-                        out[label] = 0
+                                           out[label] = 0
                 return display_name, out
 
             tasks = [asyncio.create_task(paced_fetch_parse(i, dn, t17)) for i, (dn, t17) in enumerate(targets)]
@@ -409,16 +413,7 @@ class HellorLeaderboard(commands.Cog):
                 done += 1
                 if done % 10 == 0 or done == len(tasks):
                     elapsed = int(time.time() - started)
-                    print(f"[HellorLeaderboard] progress: {done}/{len(tasks)}  elapsed={elapsed}s")
-
-            # Build leaderboards
-            results: dict[str, list[tuple[int, str]]] = {}
-            for label in ["Overall", "Team", "Impact", "Fight"]:
-                arr: list[tuple[int, str]] = []
-                for dn, sc in scores_by_player.items():
-                    arr.append((int(sc.get(label, 0)), dn))
-                arr.sort(key=lambda t: (-t[0], t[1].lower()))
-                results[label] = arr
+                    print(f"[HellorLeaderboard] progress: {done}/{len(tasks)}  elapsed results[label] = arr
 
             guild_name = "Clan"
             for g in self.bot.guilds:
@@ -439,7 +434,7 @@ class HellorLeaderboard(commands.Cog):
             return
 
         embed = await self._fetch_and_build()
-        if embed is None:
+        embed is None:
             return
 
         try:
