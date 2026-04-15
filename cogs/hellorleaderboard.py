@@ -34,18 +34,13 @@ REQUEST_PACE_SECONDS = 1.85
 CRCON_PANEL_URL = "https://7dr.hlladmin.com/api/"
 CRCON_API_KEY = os.getenv("CRCON_API_KEY")
 
-PLAYER_LOOKUP_ENABLED = True
-PLAYER_LOOKUP_MAX_PER_RUN = 120
-PLAYER_LOOKUP_CACHE_TTL_SECONDS = 3600
-PLAYER_LOOKUP_NEGATIVE_CACHE_TTL_SECONDS = 120
-
 BASE_HELLOR_URL = "https://hellor.pro/player/{}"
-
 
 print("HELLOR COG IMPORTED")
 
-# ========= HTTP SESSION =========
-def make_session() -> requests.Session:
+
+# ========= SESSION =========
+def make_session():
     s = requests.Session()
     retry = Retry(
         total=3,
@@ -57,49 +52,43 @@ def make_session() -> requests.Session:
     return s
 
 
-# ========= HTML PARSING =========
-def extract_label_score(text: str, label: str) -> Optional[str]:
-    """
-    Finds patterns like:
-    Overall 123
-    Overall: 123
-    """
+# ========= PARSING =========
+def extract_label_score(text: str, label: str):
     pattern = rf"{label}\s*[:\-]?\s*(\d+)"
-    match = re.search(pattern, text, re.IGNORECASE)
-    return match.group(1) if match else None
+    m = re.search(pattern, text, re.IGNORECASE)
+    return m.group(1) if m else None
 
 
-def find_label_nearby(soup: BeautifulSoup, label: str) -> Optional[str]:
-    nodes = soup.find_all(string=re.compile(rf"\b{re.escape(label)}\b", re.IGNORECASE))
+def find_label_nearby(soup: BeautifulSoup, label: str):
+    nodes = soup.find_all(string=re.compile(rf"\b{re.escape(label)}\b", re.I))
 
     for node in nodes:
-        current = node.parent
+        cur = node.parent
         for _ in range(4):
-            if current is None:
+            if not cur:
                 break
-            txt = current.get_text(" ", strip=True)
+            txt = cur.get_text(" ", strip=True)
             got = extract_label_score(txt, label)
             if got:
                 return got
-            current = current.parent
+            cur = cur.parent
     return None
 
 
-def parse_scores(html: str) -> Dict[str, str]:
+def parse_scores(html: str):
     soup = BeautifulSoup(html, "html.parser")
 
     labels = ["Overall", "Team", "Impact", "Fight"]
     full_text = soup.get_text(" ", strip=True)
 
-    results: Dict[str, str] = {}
-    for label in labels:
-        results[label] = (
-            find_label_nearby(soup, label)
-            or extract_label_score(full_text, label)
+    out = {}
+    for l in labels:
+        out[l] = (
+            find_label_nearby(soup, l)
+            or extract_label_score(full_text, l)
             or "0"
         )
-
-    return results
+    return out
 
 
 # ========= COG =========
@@ -110,54 +99,61 @@ class HellorLeaderboard(commands.Cog):
         self._lock = asyncio.Lock()
 
         self._state = self._load_state()
-        self._updater_task: Optional[asyncio.Task] = None
-
-        self._player_id_cache: dict[str, tuple[Optional[str], float]] = {}
-        self._http_session = make_session()
+        self._session = make_session()
 
     # ---------- logging ----------
     def _log(self, msg: str):
-        ts = datetime.now(timezone.utc).isoformat()
-        print(f"{ts} {msg}")
+        print(f"{datetime.now(timezone.utc).isoformat()} {msg}")
 
     # ---------- state ----------
     def _load_state(self):
         try:
-            with open(STATE_FILE, "r", encoding="utf-8") as f:
+            with open(STATE_FILE, "r") as f:
                 return json.load(f)
         except:
             return {}
 
     def _save_state(self):
-        with open(STATE_FILE, "w", encoding="utf-8") as f:
+        with open(STATE_FILE, "w") as f:
             json.dump(self._state, f, indent=2)
 
-    # ---------- mapping ----------
-    def _load_mapping(self):
-        try:
-            with open(MAPPING_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except:
-            return {}
+    # ========= IMPORTANT: FIXED NORMALISATION =========
+    RANK_PREFIXES = [
+        "Field Marshal","FM",
+        "General","Gen",
+        "Lieutenant General","Lt Gen","LtGen","Lt.Gen",
+        "Major General","Maj Gen","MajGen",
+        "Brigadier","Brig",
+        "Colonel","Col",
+        "Lieutenant Colonel","Lt Col","LtCol",
+        "Major","Maj",
+        "Captain","Cpt",
+        "Lieutenant","Lt","Lt.",
+        "2nd Lieutenant","2Lt",
+        "RSM","Regimental Sergeant Major",
+        "WO1","WO2",
+        "SGM","Sergeant Major",
+        "SSG","Staff Sergeant",
+        "SGT","Sergeant",
+        "CPL","Corporal",
+        "LCPL","Lance Corporal",
+        "PTE","Private"
+    ]
 
-    def _save_mapping(self, data):
-        with open(MAPPING_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-
-    # ---------- SAME NAME NORMALISATION AS YOUR REACTION BOT ----------
-    def _cut_at_hash(self, text: str) -> str:
-        t = (text or "").strip()
-        if "#" in t:
-            t = t.split("#", 1)[0]
-        return " ".join(t.split())
+    def _cut_hash(self, name: str) -> str:
+        name = (name or "").strip()
+        if "#" in name:
+            name = name.split("#", 1)[0]
+        return " ".join(name.split())
 
     def _normalize(self, name: str, strip_rank: bool = False) -> str:
-        name = self._cut_at_hash(name)
+        name = self._cut_hash(name)
         name = name.replace("%", " ")
         name = " ".join(name.split())
 
         if strip_rank:
-            name = re.sub(r"^(PTE|CPL|SGT|SSG|SGM|WO1|WO2)\.?\s+", "", name, flags=re.IGNORECASE)
+            pattern = r"^(?:" + "|".join(re.escape(x) for x in self.RANK_PREFIXES) + r")\.?\s+"
+            name = re.sub(pattern, "", name, flags=re.I)
 
         return name.strip()
 
@@ -176,44 +172,47 @@ class HellorLeaderboard(commands.Cog):
 
         return await asyncio.to_thread(_do)
 
-    def _extract_player_id(self, data):
+    def _extract_pid(self, data):
         if isinstance(data, dict):
             if "player_id" in data:
                 return str(data["player_id"])
             for v in data.values():
-                r = self._extract_player_id(v)
+                r = self._extract_pid(v)
                 if r:
                     return r
         if isinstance(data, list):
             for i in data:
-                r = self._extract_player_id(i)
+                r = self._extract_pid(i)
                 if r:
                     return r
         return None
 
-    async def _get_player_id(self, name: str):
-        key = name.lower()
-        now = time.time()
-
-        cached = self._player_id_cache.get(key)
-        if cached and now - cached[1] < PLAYER_LOOKUP_CACHE_TTL_SECONDS:
-            return cached[0]
-
-        q = urllib.parse.quote(name)
-        data = await self._rcon_get(f"get_players_history?player_name={q}&page_size=1")
-
-        pid = self._extract_player_id(data.get("result", data))
-        self._player_id_cache[key] = (pid, now)
-        return pid
-
-    # ---------- hellor ----------
-    def _fetch(self, t17: str) -> str:
-        r = self._http_session.get(BASE_HELLOR_URL.format(t17), timeout=10)
+    # ---------- FETCH ----------
+    def _fetch(self, t17: str):
+        r = self._session.get(BASE_HELLOR_URL.format(t17), timeout=10)
         r.raise_for_status()
         return r.text
 
+    # ========= FIXED TARGET BUILD =========
+    def _build_targets(self, members, mapping):
+        targets = []
+
+        for m in members:
+            key1 = self._normalize(m.display_name, False).lower()
+            key2 = self._normalize(m.display_name, True).lower()
+
+            t17 = mapping.get(key1) or mapping.get(key2)
+
+            if t17:
+                targets.append((m.display_name, t17))
+
+        return targets
+
+    # ---------- BUILD ----------
     async def _build(self):
         async with self._lock:
+            self._log("Building leaderboard...")
+
             mapping = self._load_mapping()
 
             members = []
@@ -222,10 +221,17 @@ class HellorLeaderboard(commands.Cog):
                 if role:
                     members.extend(role.members)
 
-            targets = [(m.display_name, t17) for m, t17 in [
-                (m, mapping.get(self._cut_at_hash(m.display_name)))
-                for m in members
-            ] if t17]
+            self._log(f"Members found: {len(members)}")
+
+            targets = self._build_targets(members, mapping)
+            self._log(f"Targets resolved: {len(targets)}")
+
+            if not targets:
+                return discord.Embed(
+                    title="hellor.pro Leaderboard",
+                    description="No mapped players found",
+                    color=discord.Color.red(),
+                )
 
             scores = {}
 
@@ -266,22 +272,31 @@ class HellorLeaderboard(commands.Cog):
 
             return embed
 
+    # ---------- UPDATE (FIXED: edits message instead of spam) ----------
     async def _update(self):
         channel = self.bot.get_channel(POST_CHANNEL_ID)
         if not channel:
+            self._log("Channel not found")
             return
 
         embed = await self._build()
-        await channel.send(embed=embed)
 
-    async def on_ready(self):
-        if self._ran_once:
-            return
-        self._ran_once = True
+        state = self._state.setdefault("msg", {})
+        msg_id = state.get("id")
 
-        await self._update()
-        self._updater_task = asyncio.create_task(self._loop())
+        try:
+            if msg_id:
+                msg = await channel.fetch_message(msg_id)
+                await msg.edit(embed=embed)
+            else:
+                msg = await channel.send(embed=embed)
+                state["id"] = msg.id
+                self._save_state()
 
+        except Exception as e:
+            self._log(f"Update failed: {e}")
+
+    # ---------- LOOP ----------
     async def _loop(self):
         while True:
             try:
@@ -289,6 +304,14 @@ class HellorLeaderboard(commands.Cog):
             except Exception as e:
                 self._log(str(e))
             await asyncio.sleep(UPDATE_INTERVAL_SECONDS)
+
+    async def on_ready(self):
+        if self._ran_once:
+            return
+        self._ran_once = True
+
+        await self._update()
+        asyncio.create_task(self._loop())
 
 
 async def setup(bot: commands.Bot):
