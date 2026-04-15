@@ -6,7 +6,6 @@ Fetch a single hellor.pro player page and print Overall/Team/Impact/Fight scores
 Usage:
     python3 scraper1.py <t17_id> [--delay 0.85]
 
-Default rate limit enforces ~1.2 requests/sec (delay default 0.85s).
 """
 from __future__ import annotations
 
@@ -21,7 +20,7 @@ from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-DEFAULT_DELAY = 0.85  # seconds (<= 1.2 req/sec)
+DEFAULT_DELAY = 1.85  # seconds (<= 1.2 req/sec)
 BASE_URL = "https://hellor.pro/player/{}"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; Copilot-Chat-Scraper/1.0; +https://github.com/you-shall-not-parse)"
