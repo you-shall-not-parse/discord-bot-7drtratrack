@@ -6,9 +6,6 @@ import json
 import os
 import re
 import time
-import urllib.parse
-from datetime import datetime, timezone
-from typing import Dict, Optional
 
 import discord
 from discord.ext import commands
@@ -112,7 +109,6 @@ class HellorLeaderboard(commands.Cog):
         # HTTP session for hellor.pro
         self._http_session = make_session()
 
-        # Log paths for debugging
         self._log(f"[HellorLeaderboard] STATE_FILE = {os.path.abspath(STATE_FILE)}")
         self._log(f"[HellorLeaderboard] MAPPING_FILE = {os.path.abspath(MAPPING_FILE)}")
         self._log(f"[HellorLeaderboard] LOG_FILE = {os.path.abspath(LOG_FILE)}")
@@ -127,7 +123,6 @@ class HellorLeaderboard(commands.Cog):
             with open(LOG_FILE, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
         except Exception:
-            # Don't ever crash the cog due to logging.
             pass
 
     # ---------- state ----------
@@ -143,31 +138,7 @@ class HellorLeaderboard(commands.Cog):
         with open(STATE_FILE, "w", encoding="utf-8") as f:
             json.dump(self._state, f, indent=2)
 
-    def _get_output_message_id(self) -> Optional[int]:
-        msg_id = self._state.get("output_message_id")
-        return int(msg_id) if isinstance(msg_id, int) else None
-
-    def _set_output_message_id(self, message_id: int) -> None:
-        self._state["output_message_id"] = int(message_id)
-        self._state["output_channel_id"] = POST_CHANNEL_ID
-        self._save_state()
-
-    # ---------- mapping ----------
-    def _save_mapping_file(self, mapping: dict) -> None:
-        os.makedirs(os.path.dirname(MAPPING_FILE) or ".", exist_ok=True)
-        with open(MAPPING_FILE, "w", encoding="utf-8") as f:
-            json.dump(mapping, f, indent=2)
-        self._log(f"[HellorLeaderboard] wrote mapping: {os.path.abspath(MAPPING_FILE)}")
-
-    def _load_mapping_file(self) -> dict:
-        try:
-            with open(MAPPING_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            return {}
-
-    # ---------- name normalization ----------
-    def _cut_at_hash(self, text: str) -> str:
+    def _get_output_message_id(self) str:
         t = (text or "").strip()
         if not t:
             return ""
@@ -184,7 +155,7 @@ class HellorLeaderboard(commands.Cog):
             rank_prefixes = [
                 "Field Marshal", "FM",
                 "General", "Gen",
-                "Lieutenant General", "Lt Gen", "LtGen",
+                "LieLt Gen", "LtGen",
                 "Major General", "Maj Gen", "MajGen",
                 "Major", "Maj",
                 "WO1", "WO2",
@@ -205,7 +176,7 @@ class HellorLeaderboard(commands.Cog):
             try:
                 r = requests.get(
                     url,
-                    headers={"Authorization": f"Bearer {CRCON_API_KEY}"},
+                    headers={"Authorization": fCRCON_API_KEY}"},
                     timeout=10,
                 )
                 return r.json()
@@ -230,8 +201,7 @@ class HellorLeaderboard(commands.Cog):
                     return found
         return None
 
-    async def _fetch_player_id_cached(self, player_name: str) -> tuple[Optional[str], bool]:
-        normalized = self._normalize_discord_username(player_name, strip_rank_prefix=False)
+    async def _fetch_player_id_cached(self, player_name: str) -> tuple[Optional[str(player_name, strip_rank_prefix=False)
         if not normalized:
             return None, False
 
@@ -353,7 +323,13 @@ class HellorLeaderboard(commands.Cog):
     async def _gather_role_members(self) -> list[discord.Member]:
         members: list[discord.Member] = []
         for guild in self.bot.guilds:
-            role = discord.utils.get(guild.roles, name=ROLE_NAME        # de-dup
+            role = discord.utils.get(guild.roles, name=ROLE_NAME)
+            if role:
+                for m in getattr(role, "members", []) or []:
+                    if not m.bot:
+                        members.append(m)
+
+        # de-dup
         seen = set()
         uniq: list[discord.Member] = []
         for m in members:
@@ -379,8 +355,7 @@ class HellorLeaderboard(commands.Cog):
                 self._log(f"[HellorLeaderboard] No members found with role: {ROLE_NAME}")
                 return None
 
-            # STICKY mapping:
-            # Start from file; only look up members NOT already present in the file.
+            # Sticky mapping: start from file; only look up members not already in file (even None stays sticky)
             mapping_file = self._load_mapping_file()
             mapping: dict[str, Optional[str]] = dict(mapping_file)
 
@@ -390,16 +365,20 @@ class HellorLeaderboard(commands.Cog):
             for member in members:
                 display = self._cut_at_hash(member.display_name or member.name)
 
-                # If already exists in mapping (even None), keep it.
                 if display in mapping:
                     continue
 
-                added_new_keys += remaining = PLAYER_LOOKUP_MAX_PER_RUN - http_lookups_done
+                added_new_keys += 1
+
+                if not PLAYER_LOOKUP_ENABLED or http_lookups_done >= PLAYER_LOOKUP_MAX_PER_RUN:
+                    mapping[display] = None
+                    continue
+
+                remaining = PLAYER_LOOKUP_MAX_PER_RUN - http_lookups_done
                 pid, used = await self.fetch_player_id_for_member(member, remaining)
                 http_lookups_done += used
                 mapping[display] = pid
 
-            # Always write mapping so it exists and stays sticky.
             self._save_mapping_file(mapping)
 
             targets: list[tuple[str, str]] = [(dn, t17) for dn, t17 in mapping.items() if t17]
@@ -411,7 +390,6 @@ class HellorLeaderboard(commands.Cog):
                 f"pace={REQUEST_PACE_SECONDS}s"
             )
 
-            # Pace request start times; allow network time to overlap (still respects rate)
             async def paced_fetch_parse(idx: int, display_name: str, t17: str) -> tuple[str, Dict[str, int]]:
                 await asyncio.sleep(idx * REQUEST_PACE_SECONDS)
                 try:
@@ -441,7 +419,6 @@ class HellorLeaderboard(commands.Cog):
                     elapsed = int(time.time() - started)
                     self._log(f"[HellorLeaderboard] progress: {done}/{len(tasks)} elapsed={elapsed}s")
 
-            # Build leaderboards
             results: dict[str, list[tuple[int, str]]] = {}
             for label in ["Overall", "Team", "Impact", "Fight"]:
                 arr: list[tuple[int, str]] = []
@@ -508,4 +485,4 @@ class HellorLeaderboard(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(HellorLeaderboard(bot)) 
+    await bot.add_cog(HellorLeaderboard(bot))
