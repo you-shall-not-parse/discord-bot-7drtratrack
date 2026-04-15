@@ -42,6 +42,8 @@ PLAYER_LOOKUP_NEGATIVE_CACHE_TTL_SECONDS = 120
 BASE_HELLOR_URL = "https://hellor.pro/player/{}"
 
 
+print("HELLOR COG IMPORTED")
+
 # ========= HTTP SESSION =========
 def make_session() -> requests.Session:
     s = requests.Session()
