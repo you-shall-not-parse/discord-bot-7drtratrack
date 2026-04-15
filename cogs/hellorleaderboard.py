@@ -165,7 +165,6 @@ class HellorLeaderboard(commands.Cog):
         name = " ".join(name.split())
 
         if strip_rank_prefix:
-            # minimal rank token stripping (good enough for lookup fallback)
             rank_prefixes = [
                 "Field Marshal", "FM",
                 "General", "Gen",
@@ -390,8 +389,17 @@ class HellorLeaderboard(commands.Cog):
                 http_lookups_done += used
                 mapping[display] = pid
 
-            # Always write mapping so it exists (.to_thread(self._fetch_hellor_no_sleep, t17)
-                parsed = parse_scores(html)
+            # Always write mapping so it exists (even if all null)
+            self._save_mapping_file(mapping)
+
+            targets: list[tuple[str, str]] = [(dn, t17) for dn, t17 in mapping.items() if t17]
+            print(f"[HellorLeaderboard] members={len(members)}  targets_with_t17={len(targets)}  pace={REQUEST_PACE_SECONDS}s")
+
+            async def paced_fetch_parse(idx: int, display_name: str, t17: str) -> tuple[str, Dict[str, int]]:
+                await asyncio.sleep(idx * REQUEST_PACE_SECONDS)
+                try:
+                    html = await asyncio.to_thread(self._fetch_hellor_no_sleep, t17)
+                    parsed = parse_scores(html)
                 except Exception as e:
                     print(f"[HellorLeaderboard] hellor fetch/parse failed for {display_name} ({t17}): {e}")
                     return display_name, {"Overall": 0, "Team": 0, "Impact": 0, "Fight": 0}
@@ -400,7 +408,8 @@ class HellorLeaderboard(commands.Cog):
                 for label in ["Overall", "Team", "Impact", "Fight"]:
                     try:
                         out[label] = int(parsed.get(label, "0") or "0")
-                                           out[label] = 0
+                    except Exception:
+                        out[label] = 0
                 return display_name, out
 
             tasks = [asyncio.create_task(paced_fetch_parse(i, dn, t17)) for i, (dn, t17) in enumerate(targets)]
@@ -413,7 +422,16 @@ class HellorLeaderboard(commands.Cog):
                 done += 1
                 if done % 10 == 0 or done == len(tasks):
                     elapsed = int(time.time() - started)
-                    print(f"[HellorLeaderboard] progress: {done}/{len(tasks)}  elapsed results[label] = arr
+                    print(f"[HellorLeaderboard] progress: {done}/{len(tasks)}  elapsed={elapsed}s")
+
+            # Build leaderboards
+            results: dict[str, list[tuple[int, str]]] = {}
+            for label in ["Overall", "Team", "Impact", "Fight"]:
+                arr: list[tuple[int, str]] = []
+                for dn, sc in scores_by_player.items():
+                    arr.append((int(sc.get(label, 0)), dn))
+                arr.sort(key=lambda t: (-t[0], t[1].lower()))
+                results[label] = arr
 
             guild_name = "Clan"
             for g in self.bot.guilds:
@@ -434,7 +452,7 @@ class HellorLeaderboard(commands.Cog):
             return
 
         embed = await self._fetch_and_build()
-        embed is None:
+        if embed is None:
             return
 
         try:
