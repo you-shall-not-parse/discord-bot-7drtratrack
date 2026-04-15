@@ -391,7 +391,7 @@ class HellorLeaderboard(commands.Cog):
                 mapping[display] = pid
 
             # Always write mapping so it exists (.to_thread(self._fetch_hellor_no_sleep, t17)
-                    parsed = parse_scores(html)
+                parsed = parse_scores(html)
                 except Exception as e:
                     print(f"[HellorLeaderboard] hellor fetch/parse failed for {display_name} ({t17}): {e}")
                     return display_name, {"Overall": 0, "Team": 0, "Impact": 0, "Fight": 0}
