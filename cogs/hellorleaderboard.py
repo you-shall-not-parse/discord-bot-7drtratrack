@@ -125,6 +125,7 @@ class HellorLeaderboard(commands.Cog):
         self.session = make_session()
         self._synced = False
         self.leaderboard_message_id = self._load_leaderboard_message_id()
+        self._initial_posted = False
 
     def cog_unload(self):
         if self.post_leaderboard.is_running():
@@ -358,6 +359,14 @@ class HellorLeaderboard(commands.Cog):
                 self._synced = True
             except Exception as e:
                 print("HELLOR command sync failed:", e)
+
+        # Perform one immediate update on first ready, then start recurring loop
+        if not self._initial_posted:
+            try:
+                await self.update_or_post_leaderboard()
+            except Exception as e:
+                print("HELLOR initial post failed:", e)
+            self._initial_posted = True
 
         if not self.post_leaderboard.is_running():
             self.post_leaderboard.start()
