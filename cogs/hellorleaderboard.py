@@ -25,13 +25,15 @@ from data_paths import data_path
 GUILD_ID = 1097913605082579024
 POST_CHANNEL_ID = 1099806153170489485
 ROLE_NAME = "131st Infantry Brigade"
+HELLOR_ADMIN_ROLE_ID = 1213495462632361994
 
 STATE_FILE = data_path("hellor_leaderboard_state.json")
 MAPPING_FILE = data_path("hellor_t17_map.json")
 LOG_FILE = data_path("hellor_leaderboard.log")
 
-UPDATE_INTERVAL_SECONDS = 12 * 3600
-REQUEST_PACE_SECONDS = 1.85
+UPDATE_INTERVAL_SECONDS = 7 * 24 * 3600
+REQUEST_PACE_SECONDS = 4
+SCORE_REFRESH_INTERVAL_SECONDS = 7 * 24 * 3600
 
 CRCON_PANEL_URL = "https://7dr.hlladmin.com/api/"
 CRCON_API_KEY = os.getenv("CRCON_API_KEY")
@@ -203,13 +205,92 @@ class HellorLeaderboard(commands.Cog):
 
     def _save_leaderboard_message_id(self, message_id: Optional[int]) -> None:
         self.leaderboard_message_id = message_id
-        self._save_state(
+        state = self._load_state()
+        state.update(
             {
                 "channel_id": POST_CHANNEL_ID,
                 "message_id": message_id,
                 "updated_at": utc_now_iso(),
             }
         )
+        self._save_state(state)
+
+    def _empty_scores(self) -> dict[str, dict[str, str]]:
+        return {label: {"score": "N/A", "top": "N/A"} for label in LEADERBOARD_LABELS}
+
+    def _load_cached_member_scores(self) -> tuple[list[dict[str, Any]], str | None]:
+        state = self._load_state()
+        raw_scores = state.get("member_scores")
+        scores = raw_scores if isinstance(raw_scores, list) else []
+        updated_at = state.get("scores_updated_at")
+        return scores, updated_at if isinstance(updated_at, str) else None
+
+    def _save_cached_member_scores(self, member_scores: list[dict[str, Any]]) -> None:
+        state = self._load_state()
+        state["member_scores"] = member_scores
+        state["scores_updated_at"] = utc_now_iso()
+        state["role_name"] = ROLE_NAME
+        state["updated_at"] = utc_now_iso()
+        self._save_state(state)
+
+    def _cached_scores_stale(self, updated_at: str | None) -> bool:
+        if not updated_at:
+            return True
+
+        try:
+            previous = datetime.fromisoformat(updated_at)
+        except ValueError:
+            return True
+
+        if previous.tzinfo is None:
+            previous = previous.replace(tzinfo=timezone.utc)
+
+        return (utc_now() - previous.astimezone(timezone.utc)).total_seconds() >= SCORE_REFRESH_INTERVAL_SECONDS
+
+    def _member_scores_from_cache(
+        self, targets: list[dict[str, Any]], cached_scores: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        cached_by_t17: dict[str, dict[str, Any]] = {}
+        for item in cached_scores:
+            t17_id = item.get("t17_id")
+            if isinstance(t17_id, str) and t17_id:
+                cached_by_t17[t17_id] = item
+
+        member_scores: list[dict[str, Any]] = []
+        for target in targets:
+            cached = cached_by_t17.get(target["t17_id"], {})
+            scores = cached.get("scores")
+            member_scores.append({
+                **target,
+                "scores": scores if isinstance(scores, dict) else self._empty_scores(),
+            })
+
+        return member_scores
+
+    async def _get_member_scores(self, guild: discord.Guild, *, force_refresh: bool = False) -> list[dict[str, Any]]:
+        targets, _mapping = await self._collect_basic_trained_targets(guild)
+        cached_scores, updated_at = self._load_cached_member_scores()
+
+        if force_refresh or not cached_scores or self._cached_scores_stale(updated_at):
+            member_scores = await self._fetch_member_scores(targets)
+            self._save_cached_member_scores(member_scores)
+            self.logger.info(
+                "hellor_scores_refreshed guild_id=%s resolved_targets=%s parsed_profiles=%s",
+                guild.id,
+                len(targets),
+                len(member_scores),
+            )
+            return member_scores
+
+        member_scores = self._member_scores_from_cache(targets, cached_scores)
+        self.logger.info(
+            "hellor_scores_cached guild_id=%s resolved_targets=%s cached_profiles=%s cached_at=%s",
+            guild.id,
+            len(targets),
+            len(member_scores),
+            updated_at,
+        )
+        return member_scores
 
     def _empty_mapping(self) -> dict[str, Any]:
         return {
@@ -633,21 +714,13 @@ class HellorLeaderboard(commands.Cog):
 
     async def build_embed(self, guild: discord.Guild) -> discord.Embed:
         try:
-            targets, _mapping = await self._collect_basic_trained_targets(guild)
+            member_scores = await self._get_member_scores(guild)
         except RuntimeError as exc:
             self.logger.error("build_embed_failed guild_id=%s error=%s", guild.id, exc)
             return self._build_empty_embed(str(exc))
-
-        member_scores = await self._fetch_member_scores(targets)
-        self.logger.info(
-            "hellor_summary guild_id=%s resolved_targets=%s parsed_profiles=%s",
-            guild.id,
-            len(targets),
-            len(member_scores),
-        )
         return self._build_leaderboard_embed(guild, member_scores)
 
-    async def update_or_post_leaderboard(self) -> None:
+    async def update_or_post_leaderboard(self, *, force_refresh: bool = False) -> None:
         async with self._update_lock:
             channel = await self._get_post_channel()
             if channel is None:
@@ -660,15 +733,13 @@ class HellorLeaderboard(commands.Cog):
                 channel.id,
                 self.leaderboard_message_id,
             )
-            # build targets, mapping and member scores so we can attach a details view
-            targets, _mapping = await self._collect_basic_trained_targets(channel.guild)
-            member_scores = await self._fetch_member_scores(targets)
+            member_scores = await self._get_member_scores(channel.guild, force_refresh=force_refresh)
             embed = self._build_leaderboard_embed(channel.guild, member_scores)
+            view = self._make_details_view(channel.guild, member_scores)
 
             if self.leaderboard_message_id:
                 try:
                     message = await channel.fetch_message(self.leaderboard_message_id)
-                    view = self._make_details_view(channel.guild, member_scores)
                     await message.edit(embed=embed, view=view)
                     self.logger.info("update_edit_success message_id=%s", self.leaderboard_message_id)
                     return
@@ -682,19 +753,19 @@ class HellorLeaderboard(commands.Cog):
                     self.logger.error("update_edit_failed message_id=%s error=%s", self.leaderboard_message_id, exc)
                     return
 
-            message = await channel.send(embed=embed)
+            message = await channel.send(embed=embed, view=view)
             self._save_leaderboard_message_id(message.id)
             self.logger.info("update_post_success message_id=%s", message.id)
 
     def _can_manage_leaderboard(self, interaction: discord.Interaction) -> bool:
         user = interaction.user
-        return isinstance(user, discord.Member) and user.guild_permissions.manage_guild
+        return isinstance(user, discord.Member) and any(role.id == HELLOR_ADMIN_ROLE_ID for role in user.roles)
 
-    @app_commands.command(name="set_hellor_t17", description="Override a Basic trained member's T17 ID for the hellor leaderboard")
+    @app_commands.command(name="hellor_t17overwrite", description="Override a Basic trained member's T17 ID for the hellor leaderboard")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     async def set_hellor_t17(self, interaction: discord.Interaction, member: discord.Member, t17_id: str):
         if not self._can_manage_leaderboard(interaction):
-            await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
+            await interaction.response.send_message("You need the configured hellor admin role to use this command.", ephemeral=True)
             return
 
         guild = interaction.guild
@@ -754,22 +825,22 @@ class HellorLeaderboard(commands.Cog):
             ephemeral=True,
         )
 
-    @app_commands.command(name="refresh_hellor_leaderboard", description="Force a refresh of the hellor leaderboard")
+    @app_commands.command(name="hellor_request", description="Force a live refresh of the hellor leaderboard")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     async def refresh_hellor_leaderboard(self, interaction: discord.Interaction):
         if not self._can_manage_leaderboard(interaction):
-            await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
+            await interaction.response.send_message("You need the configured hellor admin role to use this command.", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            await self.update_or_post_leaderboard()
+            await self.update_or_post_leaderboard(force_refresh=True)
         except Exception as exc:
             self.logger.exception("manual_refresh_failed error=%s", exc)
             await interaction.followup.send(f"Refresh failed: {exc}", ephemeral=True)
             return
 
-        await interaction.followup.send("Leaderboard refreshed.", ephemeral=True)
+        await interaction.followup.send("Leaderboard requested and refreshed from hellor.pro.", ephemeral=True)
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -793,7 +864,7 @@ class HellorLeaderboard(commands.Cog):
     @tasks.loop(seconds=UPDATE_INTERVAL_SECONDS)
     async def post_leaderboard(self):
         try:
-            await self.update_or_post_leaderboard()
+            await self.update_or_post_leaderboard(force_refresh=True)
         except Exception as exc:
             self.logger.exception("scheduled_update_failed error=%s", exc)
 
