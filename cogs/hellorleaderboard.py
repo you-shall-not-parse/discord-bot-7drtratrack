@@ -662,54 +662,112 @@ class HellorLeaderboard(commands.Cog):
 
         return embed
 
-    def _make_details_view(self, guild: discord.Guild, member_scores: list[dict[str, Any]]) -> discord.ui.View:
-        options: list[discord.SelectOption] = []
-        for item in member_scores[:25]:
-            label = (item.get("display_name") or "")[:100]
-            desc = (item.get("t17_id") or "No T17")[:80]
-            options.append(discord.SelectOption(label=label or "(unknown)", description=desc, value=str(item.get("member_id"))))
+    def _resolved_members_for_guild(self, guild_id: int) -> list[dict[str, Any]]:
+        mapping = self._load_mapping()
+        members: list[dict[str, Any]] = []
+        for entry in mapping.get("resolved_members", {}).values():
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("guild_id") != guild_id:
+                continue
+            if entry.get("role_name") != ROLE_NAME:
+                continue
+            members.append(entry)
 
+        members.sort(key=lambda item: str(item.get("display_name") or item.get("username") or "").lower())
+        return members
+
+    def _member_details_lines(self, resolved: dict[str, Any], *, include_contact_line: bool = True) -> list[str]:
+        lines: list[str] = []
+        display = resolved.get("display_name")
+        username = resolved.get("username")
+        global_name = resolved.get("global_name")
+        t17_id = resolved.get("t17_id")
+
+        if display:
+            lines.append(f"Display name: {display}")
+        if username:
+            lines.append(f"Username: {username}")
+        if global_name:
+            lines.append(f"Global name: {global_name}")
+
+        if t17_id:
+            url = f"https://hellor.pro/player/{t17_id}"
+            lines.append(f"T17 ID: {t17_id}")
+            lines.append(f"Profile: {url}")
+        else:
+            lines.append("T17 ID: none")
+
+        if include_contact_line:
+            lines.append("")
+            lines.append("Is this wrong? Contact an admin.")
+
+        return lines
+
+    def _admin_member_lines(self, guild_id: int) -> list[str]:
+        lines: list[str] = []
+        for resolved in self._resolved_members_for_guild(guild_id):
+            display = resolved.get("display_name") or resolved.get("username") or "Unknown"
+            t17_id = resolved.get("t17_id")
+            if t17_id:
+                lines.append(f"{display}: {t17_id} | https://hellor.pro/player/{t17_id}")
+            else:
+                lines.append(f"{display}: none")
+        return lines
+
+    async def _send_chunked_ephemeral(self, interaction: discord.Interaction, chunks: list[str]) -> None:
+        if not chunks:
+            chunks = ["No records found."]
+
+        await interaction.response.send_message(chunks[0], ephemeral=True)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(chunk, ephemeral=True)
+
+    def _chunk_lines(self, lines: list[str], *, max_length: int = 1800) -> list[str]:
+        if not lines:
+            return []
+
+        chunks: list[str] = []
+        current: list[str] = []
+        current_length = 0
+        for line in lines:
+            addition = len(line) + (1 if current else 0)
+            if current and current_length + addition > max_length:
+                chunks.append("\n".join(current))
+                current = [line]
+                current_length = len(line)
+                continue
+
+            current.append(line)
+            current_length += addition
+
+        if current:
+            chunks.append("\n".join(current))
+        return chunks
+
+    def _make_details_view(self, guild: discord.Guild) -> discord.ui.View:
         view = discord.ui.View(timeout=None)
-        if not options:
-            return view
 
-        select = discord.ui.Select(placeholder="Show member details...", options=options, max_values=1)
+        button = discord.ui.Button(label="Show My T17 ID", style=discord.ButtonStyle.secondary)
 
-        async def _on_select(interaction: discord.Interaction) -> None:
-            try:
-                member_id = int(select.values[0])
-            except Exception:
-                await interaction.response.send_message("Invalid selection.", ephemeral=True)
+        async def _on_button(interaction: discord.Interaction) -> None:
+            key = f"{guild.id}:{interaction.user.id}"
+            mapping = self._load_mapping()
+            resolved = mapping.get("resolved_members", {}).get(key)
+            if not isinstance(resolved, dict):
+                await interaction.response.send_message(
+                    "I do not have a stored hellor record for you right now. If this looks wrong, contact an admin.",
+                    ephemeral=True,
+                )
                 return
 
-            mapping = self._load_mapping()
-            key = f"{guild.id}:{member_id}"
-            resolved = mapping.get("resolved_members", {}).get(key, {})
+            await interaction.response.send_message(
+                "\n".join(self._member_details_lines(resolved)),
+                ephemeral=True,
+            )
 
-            lines: list[str] = []
-            display = resolved.get("display_name")
-            username = resolved.get("username")
-            global_name = resolved.get("global_name")
-            t17_id = resolved.get("t17_id")
-
-            if display:
-                lines.append(f"Display name: {display}")
-            if username:
-                lines.append(f"Username: {username}")
-            if global_name:
-                lines.append(f"Global name: {global_name}")
-
-            if t17_id:
-                url = f"https://hellor.pro/player/{t17_id}"
-                lines.append(f"T17 ID: {t17_id} — {url}")
-            else:
-                lines.append("T17 ID: none")
-
-            lines.append("\nIs this wrong? Contact an admin.")
-            await interaction.response.send_message("\n".join(lines), ephemeral=True)
-
-        select.callback = _on_select
-        view.add_item(select)
+        button.callback = _on_button
+        view.add_item(button)
         return view
 
     async def build_embed(self, guild: discord.Guild) -> discord.Embed:
@@ -735,7 +793,7 @@ class HellorLeaderboard(commands.Cog):
             )
             member_scores = await self._get_member_scores(channel.guild, force_refresh=force_refresh)
             embed = self._build_leaderboard_embed(channel.guild, member_scores)
-            view = self._make_details_view(channel.guild, member_scores)
+            view = self._make_details_view(channel.guild)
 
             if self.leaderboard_message_id:
                 try:
@@ -841,6 +899,26 @@ class HellorLeaderboard(commands.Cog):
             return
 
         await interaction.followup.send("Leaderboard requested and refreshed from hellor.pro.", ephemeral=True)
+
+    @app_commands.command(name="hellor_t17idadmin", description="Show all stored hellor names and T17 IDs for the current role")
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    async def hellor_t17idadmin(self, interaction: discord.Interaction):
+        if not self._can_manage_leaderboard(interaction):
+            await interaction.response.send_message("You need the configured hellor admin role to use this command.", ephemeral=True)
+            return
+
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+            return
+
+        lines = self._admin_member_lines(guild.id)
+        if not lines:
+            await interaction.response.send_message("No stored hellor records were found for the current role.", ephemeral=True)
+            return
+
+        chunks = self._chunk_lines(lines)
+        await self._send_chunked_ephemeral(interaction, chunks)
 
     @commands.Cog.listener()
     async def on_ready(self):
