@@ -300,7 +300,11 @@ class HellorLeaderboard(commands.Cog):
     async def _get_post_channel(self) -> Optional[discord.TextChannel]:
         channel = self.bot.get_channel(POST_CHANNEL_ID)
         if channel is None:
-            channel = await self.bot.fetch_channel(POST_CHANNEL_ID)
+            try:
+                channel = await self.bot.fetch_channel(POST_CHANNEL_ID)
+            except Exception as e:
+                print(f"HELLOR fetch_channel failed: {e}")
+                return None
 
         if not isinstance(channel, discord.TextChannel):
             print(f"HELLOR channel {POST_CHANNEL_ID} is not a text channel")
@@ -309,26 +313,45 @@ class HellorLeaderboard(commands.Cog):
         return channel
 
     async def update_or_post_leaderboard(self):
+        print("HELLOR: update_or_post_leaderboard start")
         channel = await self._get_post_channel()
         if channel is None:
+            print("HELLOR: post channel not available")
             return
 
+        print(f"HELLOR: posting to channel {channel.id} (leaderboard_message_id={self.leaderboard_message_id})")
         embed = await self.build(channel.guild)
 
         if self.leaderboard_message_id:
             try:
                 message = await channel.fetch_message(self.leaderboard_message_id)
+                print(f"HELLOR: editing existing message {self.leaderboard_message_id}")
                 await message.edit(embed=embed)
                 return
             except discord.NotFound:
+                print("HELLOR: saved message not found; will post new")
                 self.leaderboard_message_id = None
             except discord.Forbidden:
-                print("HELLOR missing permission to edit existing leaderboard message")
+                print("HELLOR: missing permission to edit existing leaderboard message")
             except Exception as e:
-                print(f"HELLOR failed to edit existing leaderboard message: {e}")
+                print(f"HELLOR: failed to edit existing leaderboard message: {e}")
 
+        print("HELLOR: sending new leaderboard message")
         message = await channel.send(embed=embed)
+        print(f"HELLOR: sent message {message.id}")
         self._save_leaderboard_message_id(message.id)
+
+        return
+
+    @app_commands.command(name="post_hellor_now", description="Force update/post the hellor leaderboard")
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    async def post_hellor_now(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            await self.update_or_post_leaderboard()
+            await interaction.followup.send("Posted/updated leaderboard (check channel).", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"Failed to post leaderboard: {e}", ephemeral=True)
 
     # ---------- SLASH COMMAND: EDIT T17 ----------
     @app_commands.command(name="set_t17", description="Set or override a player's T17 ID")
