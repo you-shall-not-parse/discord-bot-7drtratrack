@@ -2,476 +2,736 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
 import json
+import logging
 import os
 import re
+import time
 import urllib.parse
-from typing import Optional
-import logging
+from datetime import datetime, timezone
+from logging.handlers import RotatingFileHandler
+from typing import Any, Optional
 
 import discord
-from discord.ext import commands, tasks
-from discord import app_commands
-
 import requests
 from bs4 import BeautifulSoup
+from discord import app_commands
+from discord.ext import commands, tasks
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from data_paths import data_path
 
-# ================= CONFIG =================
 GUILD_ID = 1097913605082579024
-
 POST_CHANNEL_ID = 1099806153170489485
 ROLE_NAME = "Basic trained"
 
 STATE_FILE = data_path("hellor_leaderboard_state.json")
 MAPPING_FILE = data_path("hellor_t17_map.json")
+LOG_FILE = data_path("hellor_leaderboard.log")
 
 UPDATE_INTERVAL_SECONDS = 12 * 3600
 REQUEST_PACE_SECONDS = 1.85
 
 CRCON_PANEL_URL = "https://7dr.hlladmin.com/api/"
 CRCON_API_KEY = os.getenv("CRCON_API_KEY")
+PLAYER_LOOKUP_CACHE_TTL_SECONDS = 3600
+PLAYER_LOOKUP_NEGATIVE_CACHE_TTL_SECONDS = 120
 
 BASE_HELLOR_URL = "https://hellor.pro/player/{}"
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; Copilot-Chat-Scraper/1.0; +https://github.com/you-shall-not-parse)"
+}
 
-print("HELLOR LEADERBOARD LOADED")
-
-# ================= ROSTERIZER STYLE NORMALISATION =================
-RANK_ORDER = [
+RANK_ORDER: list[tuple[str, list[str]]] = [
     ("FM", ["Field Marshal", "FM"]),
     ("GEN", ["General", "Gen"]),
-    ("LTGEN", ["Lieutenant General", "Lt Gen", "Lt.Gen", "LtGen"]),
-    ("MAJGEN", ["Major General", "Maj Gen", "MajGen"]),
+    ("LTGEN", ["Lieutenant General", "Lt Gen", "Lt.Gen", "LtGen", "Lt-Gen"]),
+    ("MAJGEN", ["Major General", "Maj Gen", "Maj.Gen", "MajGen", "Maj-Gen"]),
     ("BRIG", ["Brigadier", "Brig"]),
     ("COL", ["Colonel", "Col"]),
-    ("LTCOL", ["Lieutenant Colonel", "Lt Col", "LtCol"]),
+    ("LTCOL", ["Lieutenant Colonel", "Lt Col", "Lt. Col", "Lt.Col", "LtCol", "Lt-Col"]),
     ("MAJ", ["Major", "Maj"]),
     ("CPT", ["Captain", "Cpt"]),
     ("LT", ["Lieutenant", "Lt", "Lt."]),
-    ("2LT", ["2nd Lieutenant", "2Lt", "2Lt."]),
-    ("RSM", ["RSM"]),
-    ("WO1", ["WO1"]),
-    ("WO2", ["WO2"]),
-    ("SGM", ["SGM"]),
-    ("SSG", ["SSG"]),
-    ("SGT", ["SGT", "Sgt"]),
-    ("CPL", ["CPL", "Cpl"]),
-    ("LCPL", ["LCPL"]),
-    ("PTE", ["Private", "Pte", "Pte."])
+    ("2LT", ["2nd Lieutenant", "2Lt", "2Lt.", "2ndLt", "2nd Lt", "2 Lt"]),
+    ("RSM", ["Regimental Sergeant Major", "Regimental Sargent Major", "RSM"]),
+    ("WO1", ["Warrant Officer 1st Class", "Warrant Officer 1", "WO1"]),
+    ("WO2", ["Warrant Officer 2nd Class", "Warrant Officer 2", "WO2"]),
+    ("SGM", ["Sergeant Major", "Sergeant major", "SGM"]),
+    ("SSG", ["Staff Sergeant", "Staff Sargent", "SSG"]),
+    ("SGT", ["Sergeant", "Sgt"]),
+    ("CPL", ["Corporal", "Cpl"]),
+    ("LCPL", ["Lance Corporal", "L.Cpl", "LCpl", "L Cpl"]),
+    ("PTE", ["Private", "Pte", "Pte."]),
 ]
-
-RANK_PREFIXES = [v for _, variants in RANK_ORDER for v in variants]
-
-
-class NameTools:
-    @staticmethod
-    def cut(name: str) -> str:
-        name = (name or "").strip()
-        if "#" in name:
-            name = name.split("#", 1)[0]
-        return " ".join(name.split())
-
-    @staticmethod
-    def normalize(name: str, strip_rank: bool = False) -> str:
-        name = NameTools.cut(name)
-        name = name.replace("%", " ")
-        name = " ".join(name.split())
-
-        if strip_rank:
-            pattern = r"^(?:" + "|".join(re.escape(x) for x in RANK_PREFIXES) + r")\.?\s+"
-            name = re.sub(pattern, "", name, flags=re.I)
-
-        return name.strip().lower()
+RANK_PREFIXES: list[str] = [variant for _code, variants in RANK_ORDER for variant in variants]
+LEADERBOARD_LABELS = ["Overall", "Team", "Impact", "Fight"]
 
 
-# ================= HTTP =================
-def make_session():
-    s = requests.Session()
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def utc_now_iso() -> str:
+    return utc_now().isoformat()
+
+
+def make_session(retries: int = 3, backoff_factor: float = 0.5) -> requests.Session:
+    session = requests.Session()
     retry = Retry(
-        total=3,
-        backoff_factor=0.5,
+        total=retries,
+        backoff_factor=backoff_factor,
         status_forcelist=(429, 500, 502, 503, 504),
         allowed_methods=frozenset(["GET"]),
     )
-    s.mount("https://", HTTPAdapter(max_retries=retry))
-    return s
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    session.headers.update(HEADERS)
+    return session
 
 
-# ================= HELLOR PARSE =================
-def extract_score(text: str, label: str):
-    m = re.search(rf"{label}\s*[:\-]?\s*(\d+)", text, re.I)
-    return m.group(1) if m else None
+def extract_label_info_from_text(text: str, label: str) -> Optional[tuple[str, str]]:
+    pattern = re.compile(
+        rf"{re.escape(label)}\D*?(\d{{1,7}})(?:[^\d%]*)?(?:Top[:\s]*([0-9]+(?:\.[0-9]+)?)%)?",
+        re.IGNORECASE,
+    )
+    match = pattern.search(text)
+    if not match:
+        return None
+    raw_score = match.group(1)
+    top_value = match.group(2)
+    return raw_score, f"{top_value}%" if top_value else "N/A"
 
 
-def parse_scores(html: str):
+def find_label_nearby(soup: BeautifulSoup, label: str) -> Optional[tuple[str, str]]:
+    nodes = soup.find_all(string=re.compile(rf"\b{re.escape(label)}\b", re.IGNORECASE))
+    for node in nodes:
+        current = node.parent
+        for _ in range(4):
+            if current is None:
+                break
+            text = current.get_text(" ", strip=True)
+            found = extract_label_info_from_text(text, label)
+            if found:
+                return found
+            current = current.parent
+    return None
+
+
+def parse_scores(html: str) -> dict[str, dict[str, str]]:
     soup = BeautifulSoup(html, "html.parser")
-    text = soup.get_text(" ", strip=True)
+    full_text = soup.get_text(" ", strip=True)
+    results: dict[str, dict[str, str]] = {}
 
-    out = {}
-    for k in ["Overall", "Team", "Impact", "Fight"]:
-        out[k] = extract_score(text, k) or "0"
-    return out
+    for label in LEADERBOARD_LABELS:
+        found = find_label_nearby(soup, label)
+        if not found:
+            found = extract_label_info_from_text(full_text, label)
+        results[label] = {
+            "score": found[0] if found else "N/A",
+            "top": found[1] if found else "N/A",
+        }
+    return results
 
 
-# ================= COG =================
+def score_as_int(value: str) -> int:
+    return int(value) if value.isdigit() else -1
+
+
 class HellorLeaderboard(commands.Cog):
-
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.lock = asyncio.Lock()
         self.session = make_session()
+        self._update_lock = asyncio.Lock()
+        self._player_id_cache: dict[str, tuple[str | None, float]] = {}
         self._synced = False
-        self.leaderboard_message_id = self._load_leaderboard_message_id()
         self._initial_posted = False
-        self.logger = logging.getLogger("HellorLeaderboard")
+        self.logger = self._build_logger()
+        self.leaderboard_message_id = self._load_leaderboard_message_id()
 
     def cog_unload(self):
         if self.post_leaderboard.is_running():
             self.post_leaderboard.cancel()
+        self.session.close()
 
-    # ---------- STATE ----------
-    def _load_state(self):
+    def _build_logger(self) -> logging.Logger:
+        logger = logging.getLogger("HellorLeaderboard")
+        logger.setLevel(logging.DEBUG)
+        logger.propagate = False
+
+        existing = [
+            handler
+            for handler in logger.handlers
+            if isinstance(handler, RotatingFileHandler) and getattr(handler, "baseFilename", None) == LOG_FILE
+        ]
+        if not existing:
+            handler = RotatingFileHandler(LOG_FILE, maxBytes=2 * 1024 * 1024, backupCount=3, encoding="utf-8")
+            handler.setLevel(logging.DEBUG)
+            handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+            logger.addHandler(handler)
+
+        return logger
+
+    def _load_json_file(self, path: str) -> dict[str, Any]:
         try:
-            if not os.path.exists(STATE_FILE):
-                return {}
-            with open(STATE_FILE, "r", encoding="utf-8") as f:
-                state = json.load(f)
-            return state if isinstance(state, dict) else {}
-        except Exception:
+            with open(path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            return data if isinstance(data, dict) else {}
+        except (FileNotFoundError, json.JSONDecodeError):
             return {}
 
-    def _save_state(self, state):
-        tmp_path = STATE_FILE + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(state, f, indent=2)
-        os.replace(tmp_path, STATE_FILE)
+    def _save_json_file(self, path: str, data: dict[str, Any]) -> None:
+        tmp_path = f"{path}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2, sort_keys=True)
+        os.replace(tmp_path, path)
+
+    def _load_state(self) -> dict[str, Any]:
+        return self._load_json_file(STATE_FILE)
+
+    def _save_state(self, state: dict[str, Any]) -> None:
+        self._save_json_file(STATE_FILE, state)
 
     def _load_leaderboard_message_id(self) -> Optional[int]:
         state = self._load_state()
         if state.get("channel_id") != POST_CHANNEL_ID:
             return None
-
         message_id = state.get("message_id")
         return message_id if isinstance(message_id, int) else None
 
-    def _save_leaderboard_message_id(self, message_id: Optional[int]):
+    def _save_leaderboard_message_id(self, message_id: Optional[int]) -> None:
         self.leaderboard_message_id = message_id
         self._save_state(
             {
                 "channel_id": POST_CHANNEL_ID,
                 "message_id": message_id,
-                "updated_at": datetime.utcnow().isoformat(),
+                "updated_at": utc_now_iso(),
             }
         )
 
-    def _load_mapping(self):
-        try:
-            with open(MAPPING_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except:
-            return {}
+    def _empty_mapping(self) -> dict[str, Any]:
+        return {
+            "manual_overrides": {},
+            "name_cache": {},
+            "resolved_members": {},
+            "updated_at": None,
+        }
 
+    def _load_mapping(self) -> dict[str, Any]:
+        raw = self._load_json_file(MAPPING_FILE)
+        mapping = self._empty_mapping()
 
-    def _save_mapping(self, data):
-        with open(MAPPING_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+        if set(raw.keys()) >= {"manual_overrides", "name_cache", "resolved_members"}:
+            mapping.update(raw)
+            return mapping
 
-    # ---------- CRCON ----------
-    async def _crcon_lookup(self, name: str) -> Optional[str]:
-        if not CRCON_API_KEY:
-            try:
-                self.logger.info("CRCON_API_KEY not set; cannot lookup player IDs")
-            except Exception:
-                pass
+        for key, value in raw.items():
+            if isinstance(value, str):
+                mapping["name_cache"][key] = {
+                    "t17_id": value,
+                    "source": "legacy",
+                    "updated_at": None,
+                }
+
+        if raw:
+            mapping["updated_at"] = utc_now_iso()
+        return mapping
+
+    def _save_mapping(self, mapping: dict[str, Any]) -> None:
+        mapping["updated_at"] = utc_now_iso()
+        self._save_json_file(MAPPING_FILE, mapping)
+
+    def _member_key(self, guild_id: int, user_id: int) -> str:
+        return f"{guild_id}:{user_id}"
+
+    def _cut_at_hash(self, text: str) -> str:
+        value = (text or "").strip()
+        if not value:
+            return ""
+        if "#" in value:
+            value = value.split("#", 1)[0].strip()
+        return " ".join(value.split())
+
+    def _normalize_discord_username(self, name: str, *, strip_rank_prefix: bool = False) -> str:
+        name = self._cut_at_hash(name)
+        name = name.replace("%", " ")
+        name = " ".join(name.split())
+
+        if strip_rank_prefix:
+            rank_pattern = r"^(?:" + "|".join(re.escape(prefix) for prefix in RANK_PREFIXES) + r")\.?\s+"
+            name = re.sub(rank_pattern, "", name, flags=re.IGNORECASE).strip()
+
+        return name
+
+    def _build_lookup_queries(self, member: discord.Member) -> list[str]:
+        raw_candidates: list[str] = []
+        if member.display_name:
+            raw_candidates.append(member.display_name)
+        raw_candidates.append(member.name)
+        global_name = getattr(member, "global_name", None)
+        if global_name:
+            raw_candidates.append(global_name)
+
+        queries: list[str] = []
+        seen: set[str] = set()
+
+        for raw in raw_candidates:
+            cut = self._normalize_discord_username(raw, strip_rank_prefix=False)
+            if cut:
+                lowered = cut.lower()
+                if lowered not in seen:
+                    seen.add(lowered)
+                    queries.append(cut)
+
+            stripped = self._normalize_discord_username(raw, strip_rank_prefix=True)
+            if stripped:
+                lowered = stripped.lower()
+                if lowered not in seen:
+                    seen.add(lowered)
+                    queries.append(stripped)
+
+        return queries
+
+    def _extract_first_player_id(self, data: Any) -> str | None:
+        if isinstance(data, dict):
+            if "player_id" in data and data["player_id"] is not None:
+                return str(data["player_id"])
+            for value in data.values():
+                found = self._extract_first_player_id(value)
+                if found:
+                    return found
             return None
-
-        def req():
-            r = requests.get(
-                CRCON_PANEL_URL + f"get_players_history?player_name={urllib.parse.quote(name)}&page_size=1",
-                headers={"Authorization": f"Bearer {CRCON_API_KEY}"},
-                timeout=10,
-            )
-            return r.json()
-
-        data = await asyncio.to_thread(req)
-
-        def extract(d):
-            if isinstance(d, dict):
-                if "player_id" in d:
-                    return str(d["player_id"])
-                for v in d.values():
-                    r = extract(v)
-                    if r:
-                        return r
-            return None
-
-        res = extract(data.get("result", data))
-        if not res:
-            try:
-                self.logger.debug(f"CRCON lookup returned no player_id for '{name}'")
-            except Exception:
-                pass
-        return res
-
-    # ---------- RESOLVE T17 (MANUAL + AUTO CACHE) ----------
-    async def resolve_t17(self, member: discord.Member, mapping: dict) -> Optional[str]:
-        # Try multiple name candidates similar to rosterizer: display_name, then username
-        candidates = [getattr(member, "display_name", None), getattr(member, "name", None)]
-        tried = []
-
-        for cand in candidates:
-            if not cand:
-                continue
-            n1 = NameTools.normalize(cand, False)
-            n2 = NameTools.normalize(cand, True)
-
-            # 1. MANUAL OVERRIDE
-            if n1 in mapping:
-                return mapping[n1]
-            if n2 in mapping:
-                return mapping[n2]
-
-            tried.append((cand, n1, n2))
-
-        # 2. CRCON fallback: try candidates in order
-        for cand, n1, n2 in tried:
-            t17 = await self._crcon_lookup(cand)
-            if t17:
-                # Cache result under both normalized keys
-                mapping[n1] = t17
-                if n2 != n1:
-                    mapping[n2] = t17
-                self._save_mapping(mapping)
-                return t17
-
+        if isinstance(data, list):
+            for item in data:
+                found = self._extract_first_player_id(item)
+                if found:
+                    return found
         return None
 
-    # ---------- TARGETS ----------
-    async def build_targets(self, members, mapping):
-        out = []
-        unresolved = []
-        for m in members:
-            t17 = await self.resolve_t17(m, mapping)
-            if t17:
-                out.append((m.display_name, t17))
-            else:
-                unresolved.append(m.display_name)
-        try:
-            self.logger.info(f"Hellor: members={len(members)}, targets={len(out)}, unresolved={len(unresolved)}")
-            if unresolved:
-                self.logger.debug(f"Hellor unresolved (sample 20): {unresolved[:20]}")
-        except Exception:
-            pass
-        return out
+    async def _rcon_get(self, endpoint: str) -> dict[str, Any]:
+        if not CRCON_API_KEY:
+            return {"error": "CRCON_API_KEY is not set"}
 
-    # ---------- FETCH ----------
-    def fetch(self, t17: str):
-        r = self.session.get(BASE_HELLOR_URL.format(t17), timeout=10)
-        r.raise_for_status()
-        return r.text
+        url = CRCON_PANEL_URL + endpoint
 
-    # ---------- BUILD ----------
-    async def build(self, guild: discord.Guild):
-        async with self.lock:
-            mapping = self._load_mapping()
-
-            role = discord.utils.get(guild.roles, name=ROLE_NAME)
-            if not role:
-                return discord.Embed(title="Error", description="Role missing", color=discord.Color.red())
-
-            members = role.members
-            targets = await self.build_targets(members, mapping)
-
-            scores = {}
-
-            async def worker(i, name, t17):
-                await asyncio.sleep(i * REQUEST_PACE_SECONDS)
-                try:
-                    html = await asyncio.to_thread(self.fetch, t17)
-                except Exception as e:
-                    print(f"HELLOR fetch failed for {name} ({t17}): {e}")
-                    return name, None
-                return name, parse_scores(html)
-
-            worker_tasks = [asyncio.create_task(worker(i, n, t)) for i, (n, t) in enumerate(targets)]
-
-            for t in asyncio.as_completed(worker_tasks):
-                name, sc = await t
-                if sc is None:
-                    continue
-                scores[name] = sc
-
-            results = {k: [] for k in ["Overall", "Team", "Impact", "Fight"]}
-
-            for name, sc in scores.items():
-                for k in results:
-                    results[k].append((int(sc.get(k, 0)), name))
-
-            for k in results:
-                results[k].sort(reverse=True)
-
-            embed = discord.Embed(title="hellor.pro Leaderboard", color=discord.Color.gold())
-
-            for k in results:
-                embed.add_field(
-                    name=k,
-                    value="\n".join(
-                        f"{i+1}. {n} — {v}"
-                        for i, (v, n) in enumerate(results[k][:10])
-                    ) or "None",
-                    inline=False,
+        def do_request() -> dict[str, Any]:
+            try:
+                response = requests.get(
+                    url,
+                    headers={"Authorization": f"Bearer {CRCON_API_KEY}"},
+                    timeout=10,
                 )
+                return response.json()
+            except Exception as exc:
+                return {"error": str(exc)}
 
-            return embed
+        return await asyncio.to_thread(do_request)
+
+    async def _fetch_player_id_cached(self, player_name: str) -> tuple[str | None, bool]:
+        normalized = self._normalize_discord_username(player_name, strip_rank_prefix=False)
+        if not normalized:
+            return None, False
+
+        key = normalized.lower()
+        now = time.time()
+        cached = self._player_id_cache.get(key)
+        if cached:
+            cached_id, cached_ts = cached
+            ttl = PLAYER_LOOKUP_CACHE_TTL_SECONDS if cached_id is not None else PLAYER_LOOKUP_NEGATIVE_CACHE_TTL_SECONDS
+            if now - cached_ts <= ttl:
+                return cached_id, False
+
+        player_name_q = urllib.parse.quote(normalized, safe="")
+        endpoint = f"get_players_history?player_name={player_name_q}&page_size=1"
+        data = await self._rcon_get(endpoint)
+        if not data or data.get("failed") or data.get("error"):
+            self._player_id_cache[key] = (None, now)
+            return None, True
+
+        player_id = self._extract_first_player_id(data.get("result", data))
+        self._player_id_cache[key] = (player_id, now)
+        return player_id, True
+
+    def _read_name_cache(self, mapping: dict[str, Any], query: str) -> str | None:
+        entry = mapping.get("name_cache", {}).get(query.lower())
+        if isinstance(entry, str):
+            return entry
+        if isinstance(entry, dict):
+            t17_id = entry.get("t17_id")
+            return str(t17_id) if t17_id else None
+        return None
+
+    def _write_name_cache(self, mapping: dict[str, Any], queries: list[str], t17_id: str, source: str) -> None:
+        for query in queries:
+            mapping["name_cache"][query.lower()] = {
+                "t17_id": t17_id,
+                "source": source,
+                "updated_at": utc_now_iso(),
+            }
+
+    def _store_resolved_member(
+        self,
+        mapping: dict[str, Any],
+        member: discord.Member,
+        *,
+        t17_id: str | None,
+        source: str,
+        queries: list[str],
+    ) -> None:
+        mapping["resolved_members"][self._member_key(member.guild.id, member.id)] = {
+            "guild_id": member.guild.id,
+            "role_name": ROLE_NAME,
+            "user_id": member.id,
+            "display_name": member.display_name,
+            "username": member.name,
+            "global_name": getattr(member, "global_name", None),
+            "t17_id": t17_id,
+            "source": source,
+            "lookup_queries": queries,
+            "updated_at": utc_now_iso(),
+        }
+
+    def _prune_resolved_members(self, mapping: dict[str, Any], guild_id: int, active_member_ids: set[int]) -> None:
+        keep: dict[str, Any] = {}
+        prefix = f"{guild_id}:"
+        for key, value in mapping.get("resolved_members", {}).items():
+            if not key.startswith(prefix):
+                keep[key] = value
+                continue
+
+            _, user_id_raw = key.split(":", 1)
+            if user_id_raw.isdigit() and int(user_id_raw) in active_member_ids:
+                keep[key] = value
+
+        mapping["resolved_members"] = keep
+
+    async def _resolve_t17_for_member(self, member: discord.Member, mapping: dict[str, Any]) -> tuple[str | None, str, list[str]]:
+        member_key = self._member_key(member.guild.id, member.id)
+        queries = self._build_lookup_queries(member)
+        self.logger.info(
+            "resolve_start member_id=%s display_name=%r username=%r queries=%s",
+            member.id,
+            member.display_name,
+            member.name,
+            queries,
+        )
+
+        manual_entry = mapping.get("manual_overrides", {}).get(member_key)
+        if isinstance(manual_entry, dict) and manual_entry.get("t17_id"):
+            t17_id = str(manual_entry["t17_id"])
+            self._write_name_cache(mapping, queries, t17_id, "manual_override")
+            self._store_resolved_member(mapping, member, t17_id=t17_id, source="manual_override", queries=queries)
+            self.logger.info("resolve_manual_override member_id=%s t17_id=%s", member.id, t17_id)
+            return t17_id, "manual_override", queries
+
+        for query in queries:
+            cached_t17 = self._read_name_cache(mapping, query)
+            if cached_t17:
+                self._store_resolved_member(mapping, member, t17_id=cached_t17, source="name_cache", queries=queries)
+                self.logger.info("resolve_name_cache_hit member_id=%s query=%r t17_id=%s", member.id, query, cached_t17)
+                return cached_t17, "name_cache", queries
+
+        for query in queries:
+            self.logger.info("resolve_crcon_try member_id=%s query=%r", member.id, query)
+            t17_id, did_http = await self._fetch_player_id_cached(query)
+            self.logger.info(
+                "resolve_crcon_result member_id=%s query=%r did_http=%s t17_id=%s",
+                member.id,
+                query,
+                did_http,
+                t17_id,
+            )
+            if t17_id:
+                self._write_name_cache(mapping, queries, t17_id, "crcon")
+                self._store_resolved_member(mapping, member, t17_id=t17_id, source="crcon", queries=queries)
+                return t17_id, "crcon", queries
+
+        self._store_resolved_member(mapping, member, t17_id=None, source="unresolved", queries=queries)
+        self.logger.info("resolve_failed member_id=%s queries=%s", member.id, queries)
+        return None, "unresolved", queries
+
+    def _fetch_hellor_html(self, t17_id: str) -> str:
+        response = self.session.get(BASE_HELLOR_URL.format(t17_id), timeout=10)
+        response.raise_for_status()
+        return response.text
 
     async def _get_post_channel(self) -> Optional[discord.TextChannel]:
         channel = self.bot.get_channel(POST_CHANNEL_ID)
         if channel is None:
-            channel = await self.bot.fetch_channel(POST_CHANNEL_ID)
-
-        if not isinstance(channel, discord.TextChannel):
-            print(f"HELLOR channel {POST_CHANNEL_ID} is not a text channel")
-            return None
-
-        return channel
-
-    async def update_or_post_leaderboard(self):
-        try:
-            self.logger.info("HELLOR: update_or_post_leaderboard starting")
-        except Exception:
-            pass
-
-        channel = await self._get_post_channel()
-        if channel is None:
-            return
-        try:
-            self.logger.info(f"HELLOR: posting to channel {channel.id}, existing_message_id={self.leaderboard_message_id}")
-        except Exception:
-            pass
-
-        embed = await self.build(channel.guild)
-
-        if self.leaderboard_message_id:
             try:
-                message = await channel.fetch_message(self.leaderboard_message_id)
-                await message.edit(embed=embed)
-                try:
-                    self.logger.info(f"HELLOR: edited existing message {self.leaderboard_message_id}")
-                except Exception:
-                    pass
-                return
-            except discord.NotFound:
-                self.leaderboard_message_id = None
-            except discord.Forbidden:
-                print("HELLOR missing permission to edit existing leaderboard message")
-            except Exception as e:
-                print(f"HELLOR failed to edit existing leaderboard message: {e}")
+                channel = await self.bot.fetch_channel(POST_CHANNEL_ID)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                return None
 
-        message = await channel.send(embed=embed)
-        self._save_leaderboard_message_id(message.id)
-        try:
-            self.logger.info(f"HELLOR: posted new leaderboard message {message.id}")
-        except Exception:
-            pass
+        return channel if isinstance(channel, discord.TextChannel) else None
 
-    # ---------- SLASH COMMAND: EDIT T17 ----------
-    @app_commands.command(name="set_t17", description="Set or override a player's T17 ID")
-    @app_commands.guilds(discord.Object(id=GUILD_ID))
-    async def set_t17(self, interaction: discord.Interaction, name: str, t17_id: str):
+    def _build_empty_embed(self, description: str) -> discord.Embed:
+        embed = discord.Embed(title="hellor.pro Leaderboard", description=description, color=discord.Color.orange())
+        embed.timestamp = utc_now()
+        return embed
 
+    async def _collect_basic_trained_targets(self, guild: discord.Guild) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         mapping = self._load_mapping()
+        role = discord.utils.get(guild.roles, name=ROLE_NAME)
+        if role is None:
+            raise RuntimeError(f"Role '{ROLE_NAME}' not found")
 
-        key1 = NameTools.normalize(name, False)
-        key2 = NameTools.normalize(name, True)
+        members = sorted(role.members, key=lambda member: member.display_name.lower())
+        self._prune_resolved_members(mapping, guild.id, {member.id for member in members})
 
-        mapping[key1] = t17_id
-        mapping[key2] = t17_id
+        targets: list[dict[str, Any]] = []
+        unresolved: list[str] = []
+
+        for member in members:
+            t17_id, source, queries = await self._resolve_t17_for_member(member, mapping)
+            if not t17_id:
+                unresolved.append(member.display_name)
+                continue
+            targets.append(
+                {
+                    "member_id": member.id,
+                    "display_name": member.display_name,
+                    "t17_id": t17_id,
+                    "source": source,
+                    "queries": queries,
+                }
+            )
 
         self._save_mapping(mapping)
-
-        await interaction.response.send_message(
-            f"Updated mapping:\n`{name}` → `{t17_id}`",
-            ephemeral=True
+        self.logger.info(
+            "resolve_summary guild_id=%s role=%r members=%s resolved=%s unresolved=%s",
+            guild.id,
+            ROLE_NAME,
+            len(members),
+            len(targets),
+            len(unresolved),
         )
+        if unresolved:
+            self.logger.info("resolve_unresolved_sample guild_id=%s sample=%s", guild.id, unresolved[:20])
 
-    @app_commands.command(name="post_hellor", description="Force-post or update the hellor leaderboard now")
+        return targets, mapping
+
+    async def _fetch_member_scores(self, targets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+
+        for index, target in enumerate(targets):
+            if index:
+                await asyncio.sleep(REQUEST_PACE_SECONDS)
+
+            self.logger.info(
+                "hellor_fetch_start member_id=%s display_name=%r t17_id=%s",
+                target["member_id"],
+                target["display_name"],
+                target["t17_id"],
+            )
+            try:
+                html = await asyncio.to_thread(self._fetch_hellor_html, target["t17_id"])
+                scores = parse_scores(html)
+            except Exception as exc:
+                self.logger.exception(
+                    "hellor_fetch_failed member_id=%s display_name=%r t17_id=%s error=%s",
+                    target["member_id"],
+                    target["display_name"],
+                    target["t17_id"],
+                    exc,
+                )
+                continue
+
+            self.logger.info(
+                "hellor_parse_result member_id=%s display_name=%r t17_id=%s scores=%s",
+                target["member_id"],
+                target["display_name"],
+                target["t17_id"],
+                scores,
+            )
+            results.append({**target, "scores": scores})
+
+        return results
+
+    def _build_leaderboard_embed(self, guild: discord.Guild, member_scores: list[dict[str, Any]]) -> discord.Embed:
+        embed = discord.Embed(
+            title=f"hellor.pro Leaderboard - {ROLE_NAME}",
+            color=discord.Color.gold(),
+            timestamp=utc_now(),
+        )
+        embed.set_footer(text=f"Updated for {guild.name}")
+
+        if not member_scores:
+            embed.description = "No Basic trained members could be resolved to a T17 ID."
+            return embed
+
+        for label in LEADERBOARD_LABELS:
+            ranking = sorted(
+                member_scores,
+                key=lambda item: (
+                    -score_as_int(item["scores"][label]["score"]),
+                    item["display_name"].lower(),
+                ),
+            )[:10]
+
+            lines: list[str] = []
+            for index, item in enumerate(ranking, start=1):
+                score_value = item["scores"][label]["score"]
+                top_value = item["scores"][label]["top"]
+                suffix = f" (Top {top_value})" if top_value != "N/A" else ""
+                lines.append(f"{index}. {item['display_name']} - {score_value}{suffix}")
+
+            embed.add_field(name=label, value="\n".join(lines) if lines else "None", inline=False)
+
+        return embed
+
+    async def build_embed(self, guild: discord.Guild) -> discord.Embed:
+        try:
+            targets, _mapping = await self._collect_basic_trained_targets(guild)
+        except RuntimeError as exc:
+            self.logger.error("build_embed_failed guild_id=%s error=%s", guild.id, exc)
+            return self._build_empty_embed(str(exc))
+
+        member_scores = await self._fetch_member_scores(targets)
+        self.logger.info(
+            "hellor_summary guild_id=%s resolved_targets=%s parsed_profiles=%s",
+            guild.id,
+            len(targets),
+            len(member_scores),
+        )
+        return self._build_leaderboard_embed(guild, member_scores)
+
+    async def update_or_post_leaderboard(self) -> None:
+        async with self._update_lock:
+            channel = await self._get_post_channel()
+            if channel is None:
+                self.logger.error("post_channel_missing channel_id=%s", POST_CHANNEL_ID)
+                return
+
+            self.logger.info(
+                "update_start guild_id=%s channel_id=%s existing_message_id=%s",
+                channel.guild.id,
+                channel.id,
+                self.leaderboard_message_id,
+            )
+            embed = await self.build_embed(channel.guild)
+
+            if self.leaderboard_message_id:
+                try:
+                    message = await channel.fetch_message(self.leaderboard_message_id)
+                    await message.edit(embed=embed)
+                    self.logger.info("update_edit_success message_id=%s", self.leaderboard_message_id)
+                    return
+                except discord.NotFound:
+                    self.logger.info("update_existing_message_missing message_id=%s", self.leaderboard_message_id)
+                    self.leaderboard_message_id = None
+                except discord.Forbidden:
+                    self.logger.error("update_edit_forbidden message_id=%s", self.leaderboard_message_id)
+                    return
+                except discord.HTTPException as exc:
+                    self.logger.error("update_edit_failed message_id=%s error=%s", self.leaderboard_message_id, exc)
+                    return
+
+            message = await channel.send(embed=embed)
+            self._save_leaderboard_message_id(message.id)
+            self.logger.info("update_post_success message_id=%s", message.id)
+
+    def _can_manage_leaderboard(self, interaction: discord.Interaction) -> bool:
+        user = interaction.user
+        return isinstance(user, discord.Member) and user.guild_permissions.manage_guild
+
+    @app_commands.command(name="set_hellor_t17", description="Override a Basic trained member's T17 ID for the hellor leaderboard")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
-    async def post_hellor(self, interaction: discord.Interaction):
-        # Permission: require Manage Guild or be a guild admin
-        inv = interaction.user
-        if not isinstance(inv, discord.Member) or not inv.guild_permissions.manage_guild:
-            await interaction.response.send_message("You don't have permission to run this.", ephemeral=True)
+    async def set_hellor_t17(self, interaction: discord.Interaction, member: discord.Member, t17_id: str):
+        if not self._can_manage_leaderboard(interaction):
+            await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
             return
-
-        await interaction.response.send_message("Updating leaderboard... gathering resolution report...", ephemeral=True)
 
         guild = interaction.guild
         if guild is None:
-            await interaction.followup.send("Command must be run in a guild.", ephemeral=True)
+            await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
             return
-
-        mapping = self._load_mapping()
 
         role = discord.utils.get(guild.roles, name=ROLE_NAME)
         if role is None:
-            await interaction.followup.send(f"Role '{ROLE_NAME}' not found in this guild.", ephemeral=True)
+            await interaction.response.send_message(f"Role '{ROLE_NAME}' was not found.", ephemeral=True)
+            return
+        if role not in member.roles:
+            await interaction.response.send_message(f"{member.display_name} does not currently have the '{ROLE_NAME}' role.", ephemeral=True)
             return
 
-        members = role.members
-        lines: list[str] = []
-        for m in members:
-            try:
-                t17 = await self.resolve_t17(m, mapping)
-            except Exception as e:
-                t17 = None
-                try:
-                    self.logger.debug(f"HELLOR: resolve_t17 error for {m.display_name}: {e}")
-                except Exception:
-                    pass
-            lines.append(f"{m.display_name} -> {t17 or 'MISSING'}")
+        clean_t17_id = t17_id.strip()
+        if not clean_t17_id:
+            await interaction.response.send_message("Provide a non-empty T17 ID.", ephemeral=True)
+            return
 
-        # Persist mapping file after lookups
-        try:
-            self._save_mapping(mapping)
-        except Exception:
-            pass
+        await interaction.response.defer(ephemeral=True, thinking=True)
 
-        summary = "\n".join(lines)
-        max_len = 1800
-        if len(summary) > max_len:
-            shown = summary[:max_len]
-            shown += f"\n...({len(summary) - max_len} chars truncated)"
-        else:
-            shown = summary
+        mapping = self._load_mapping()
+        member_key = self._member_key(guild.id, member.id)
+        mapping["manual_overrides"][member_key] = {
+            "t17_id": clean_t17_id,
+            "updated_at": utc_now_iso(),
+            "updated_by": interaction.user.id,
+        }
 
-        await interaction.followup.send(f"Resolved IDs ({len(lines)} members):\n```\n{shown}\n```", ephemeral=True)
+        queries = self._build_lookup_queries(member)
+        self._write_name_cache(mapping, queries, clean_t17_id, "manual_override")
+        self._store_resolved_member(mapping, member, t17_id=clean_t17_id, source="manual_override", queries=queries)
+        self._save_mapping(mapping)
+
+        self.logger.info(
+            "manual_override_set guild_id=%s target_member_id=%s target_display_name=%r t17_id=%s updated_by=%s",
+            guild.id,
+            member.id,
+            member.display_name,
+            clean_t17_id,
+            interaction.user.id,
+        )
 
         try:
             await self.update_or_post_leaderboard()
-            await interaction.followup.send("Leaderboard updated.", ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f"Failed to update leaderboard: {e}", ephemeral=True)
+        except Exception as exc:
+            self.logger.exception("manual_override_refresh_failed target_member_id=%s error=%s", member.id, exc)
+            await interaction.followup.send(
+                f"Stored override for {member.display_name} -> {clean_t17_id}, but refreshing the leaderboard failed: {exc}",
+                ephemeral=True,
+            )
+            return
 
-    # ---------- LOOP ----------
+        await interaction.followup.send(
+            f"Stored override for {member.display_name} -> {clean_t17_id} and refreshed the leaderboard.",
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="refresh_hellor_leaderboard", description="Force a refresh of the hellor leaderboard")
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    async def refresh_hellor_leaderboard(self, interaction: discord.Interaction):
+        if not self._can_manage_leaderboard(interaction):
+            await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            await self.update_or_post_leaderboard()
+        except Exception as exc:
+            self.logger.exception("manual_refresh_failed error=%s", exc)
+            await interaction.followup.send(f"Refresh failed: {exc}", ephemeral=True)
+            return
+
+        await interaction.followup.send("Leaderboard refreshed.", ephemeral=True)
+
     @commands.Cog.listener()
     async def on_ready(self):
         if not self._synced:
             try:
                 await self.bot.tree.sync(guild=discord.Object(id=GUILD_ID))
                 self._synced = True
-            except Exception as e:
-                print("HELLOR command sync failed:", e)
+            except Exception as exc:
+                self.logger.exception("command_sync_failed error=%s", exc)
 
-        # Perform one immediate update on first ready, then start recurring loop
         if not self._initial_posted:
             try:
                 await self.update_or_post_leaderboard()
-            except Exception as e:
-                print("HELLOR initial post failed:", e)
+            except Exception as exc:
+                self.logger.exception("initial_update_failed error=%s", exc)
             self._initial_posted = True
 
         if not self.post_leaderboard.is_running():
@@ -481,8 +741,8 @@ class HellorLeaderboard(commands.Cog):
     async def post_leaderboard(self):
         try:
             await self.update_or_post_leaderboard()
-        except Exception as e:
-            print("Leaderboard error:", e)
+        except Exception as exc:
+            self.logger.exception("scheduled_update_failed error=%s", exc)
 
     @post_leaderboard.before_loop
     async def before_post_leaderboard(self):
