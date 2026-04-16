@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 import json
 import os
 import re
@@ -9,7 +10,7 @@ import urllib.parse
 from typing import Optional
 
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 
 import requests
@@ -122,8 +123,48 @@ class HellorLeaderboard(commands.Cog):
         self.bot = bot
         self.lock = asyncio.Lock()
         self.session = make_session()
+        self._synced = False
+        self.leaderboard_message_id = self._load_leaderboard_message_id()
+
+    def cog_unload(self):
+        if self.post_leaderboard.is_running():
+            self.post_leaderboard.cancel()
 
     # ---------- STATE ----------
+    def _load_state(self):
+        try:
+            if not os.path.exists(STATE_FILE):
+                return {}
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                state = json.load(f)
+            return state if isinstance(state, dict) else {}
+        except Exception:
+            return {}
+
+    def _save_state(self, state):
+        tmp_path = STATE_FILE + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2)
+        os.replace(tmp_path, STATE_FILE)
+
+    def _load_leaderboard_message_id(self) -> Optional[int]:
+        state = self._load_state()
+        if state.get("channel_id") != POST_CHANNEL_ID:
+            return None
+
+        message_id = state.get("message_id")
+        return message_id if isinstance(message_id, int) else None
+
+    def _save_leaderboard_message_id(self, message_id: Optional[int]):
+        self.leaderboard_message_id = message_id
+        self._save_state(
+            {
+                "channel_id": POST_CHANNEL_ID,
+                "message_id": message_id,
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+        )
+
     def _load_mapping(self):
         try:
             with open(MAPPING_FILE, "r", encoding="utf-8") as f:
@@ -217,13 +258,19 @@ class HellorLeaderboard(commands.Cog):
 
             async def worker(i, name, t17):
                 await asyncio.sleep(i * REQUEST_PACE_SECONDS)
-                html = await asyncio.to_thread(self.fetch, t17)
+                try:
+                    html = await asyncio.to_thread(self.fetch, t17)
+                except Exception as e:
+                    print(f"HELLOR fetch failed for {name} ({t17}): {e}")
+                    return name, None
                 return name, parse_scores(html)
 
-            tasks = [asyncio.create_task(worker(i, n, t)) for i, (n, t) in enumerate(targets)]
+            worker_tasks = [asyncio.create_task(worker(i, n, t)) for i, (n, t) in enumerate(targets)]
 
-            for t in asyncio.as_completed(tasks):
+            for t in asyncio.as_completed(worker_tasks):
                 name, sc = await t
+                if sc is None:
+                    continue
                 scores[name] = sc
 
             results = {k: [] for k in ["Overall", "Team", "Impact", "Fight"]}
@@ -249,6 +296,39 @@ class HellorLeaderboard(commands.Cog):
 
             return embed
 
+    async def _get_post_channel(self) -> Optional[discord.TextChannel]:
+        channel = self.bot.get_channel(POST_CHANNEL_ID)
+        if channel is None:
+            channel = await self.bot.fetch_channel(POST_CHANNEL_ID)
+
+        if not isinstance(channel, discord.TextChannel):
+            print(f"HELLOR channel {POST_CHANNEL_ID} is not a text channel")
+            return None
+
+        return channel
+
+    async def update_or_post_leaderboard(self):
+        channel = await self._get_post_channel()
+        if channel is None:
+            return
+
+        embed = await self.build(channel.guild)
+
+        if self.leaderboard_message_id:
+            try:
+                message = await channel.fetch_message(self.leaderboard_message_id)
+                await message.edit(embed=embed)
+                return
+            except discord.NotFound:
+                self.leaderboard_message_id = None
+            except discord.Forbidden:
+                print("HELLOR missing permission to edit existing leaderboard message")
+            except Exception as e:
+                print(f"HELLOR failed to edit existing leaderboard message: {e}")
+
+        message = await channel.send(embed=embed)
+        self._save_leaderboard_message_id(message.id)
+
     # ---------- SLASH COMMAND: EDIT T17 ----------
     @app_commands.command(name="set_t17", description="Set or override a player's T17 ID")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
@@ -270,23 +350,28 @@ class HellorLeaderboard(commands.Cog):
         )
 
     # ---------- LOOP ----------
+    @commands.Cog.listener()
     async def on_ready(self):
-        if getattr(self, "_ready", False):
-            return
-        self._ready = True
-
-        await self.bot.tree.sync(guild=discord.Object(id=GUILD_ID))
-
-        while True:
+        if not self._synced:
             try:
-                channel = self.bot.get_channel(POST_CHANNEL_ID)
-                if channel:
-                    embed = await self.build(channel.guild)
-                    await channel.send(embed=embed)
+                await self.bot.tree.sync(guild=discord.Object(id=GUILD_ID))
+                self._synced = True
             except Exception as e:
-                print("Leaderboard error:", e)
+                print("HELLOR command sync failed:", e)
 
-            await asyncio.sleep(UPDATE_INTERVAL_SECONDS)
+        if not self.post_leaderboard.is_running():
+            self.post_leaderboard.start()
+
+    @tasks.loop(seconds=UPDATE_INTERVAL_SECONDS)
+    async def post_leaderboard(self):
+        try:
+            await self.update_or_post_leaderboard()
+        except Exception as e:
+            print("Leaderboard error:", e)
+
+    @post_leaderboard.before_loop
+    async def before_post_leaderboard(self):
+        await self.bot.wait_until_ready()
 
 
 async def setup(bot: commands.Bot):
