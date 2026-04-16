@@ -407,7 +407,49 @@ class HellorLeaderboard(commands.Cog):
             await interaction.response.send_message("You don't have permission to run this.", ephemeral=True)
             return
 
-        await interaction.response.send_message("Updating leaderboard...", ephemeral=True)
+        await interaction.response.send_message("Updating leaderboard... gathering resolution report...", ephemeral=True)
+
+        guild = interaction.guild
+        if guild is None:
+            await interaction.followup.send("Command must be run in a guild.", ephemeral=True)
+            return
+
+        mapping = self._load_mapping()
+
+        role = discord.utils.get(guild.roles, name=ROLE_NAME)
+        if role is None:
+            await interaction.followup.send(f"Role '{ROLE_NAME}' not found in this guild.", ephemeral=True)
+            return
+
+        members = role.members
+        lines: list[str] = []
+        for m in members:
+            try:
+                t17 = await self.resolve_t17(m, mapping)
+            except Exception as e:
+                t17 = None
+                try:
+                    self.logger.debug(f"HELLOR: resolve_t17 error for {m.display_name}: {e}")
+                except Exception:
+                    pass
+            lines.append(f"{m.display_name} -> {t17 or 'MISSING'}")
+
+        # Persist mapping file after lookups
+        try:
+            self._save_mapping(mapping)
+        except Exception:
+            pass
+
+        summary = "\n".join(lines)
+        max_len = 1800
+        if len(summary) > max_len:
+            shown = summary[:max_len]
+            shown += f"\n...({len(summary) - max_len} chars truncated)"
+        else:
+            shown = summary
+
+        await interaction.followup.send(f"Resolved IDs ({len(lines)} members):\n```\n{shown}\n```", ephemeral=True)
+
         try:
             await self.update_or_post_leaderboard()
             await interaction.followup.send("Leaderboard updated.", ephemeral=True)
