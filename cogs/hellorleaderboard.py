@@ -233,6 +233,28 @@ class HellorLeaderboard(commands.Cog):
         state["updated_at"] = utc_now_iso()
         self._save_state(state)
 
+    def _upsert_cached_member_score(self, member_score: dict[str, Any]) -> None:
+        state = self._load_state()
+        raw_scores = state.get("member_scores")
+        cached_scores = list(raw_scores) if isinstance(raw_scores, list) else []
+
+        target_member_id = member_score.get("member_id")
+        target_t17_id = member_score.get("t17_id")
+        kept_scores: list[dict[str, Any]] = []
+
+        for item in cached_scores:
+            same_member = item.get("member_id") == target_member_id
+            same_t17 = bool(target_t17_id) and item.get("t17_id") == target_t17_id
+            if same_member or same_t17:
+                continue
+            kept_scores.append(item)
+
+        kept_scores.append(member_score)
+        state["member_scores"] = kept_scores
+        state["role_name"] = ROLE_NAME
+        state["updated_at"] = utc_now_iso()
+        self._save_state(state)
+
     def _cached_scores_stale(self, updated_at: str | None) -> bool:
         if not updated_at:
             return True
@@ -267,11 +289,13 @@ class HellorLeaderboard(commands.Cog):
 
         return member_scores
 
-    async def _get_member_scores(self, guild: discord.Guild, *, force_refresh: bool = False) -> list[dict[str, Any]]:
+    async def _get_member_scores(
+        self, guild: discord.Guild, *, force_refresh: bool = False, allow_stale_cache: bool = False
+    ) -> list[dict[str, Any]]:
         targets, _mapping = await self._collect_basic_trained_targets(guild)
         cached_scores, updated_at = self._load_cached_member_scores()
 
-        if force_refresh or not cached_scores or self._cached_scores_stale(updated_at):
+        if force_refresh or not cached_scores or (self._cached_scores_stale(updated_at) and not allow_stale_cache):
             member_scores = await self._fetch_member_scores(targets)
             self._save_cached_member_scores(member_scores)
             self.logger.info(
@@ -291,6 +315,45 @@ class HellorLeaderboard(commands.Cog):
             updated_at,
         )
         return member_scores
+
+    async def _fetch_single_member_score(
+        self, member: discord.Member, t17_id: str, *, source: str, queries: list[str]
+    ) -> dict[str, Any] | None:
+        self.logger.info(
+            "hellor_single_fetch_start member_id=%s display_name=%r t17_id=%s",
+            member.id,
+            member.display_name,
+            t17_id,
+        )
+        try:
+            html = await asyncio.to_thread(self._fetch_hellor_html, t17_id)
+            scores = parse_scores(html)
+        except Exception as exc:
+            self.logger.exception(
+                "hellor_single_fetch_failed member_id=%s display_name=%r t17_id=%s error=%s",
+                member.id,
+                member.display_name,
+                t17_id,
+                exc,
+            )
+            return None
+
+        result = {
+            "member_id": member.id,
+            "display_name": member.display_name,
+            "t17_id": t17_id,
+            "source": source,
+            "queries": queries,
+            "scores": scores,
+        }
+        self.logger.info(
+            "hellor_single_fetch_result member_id=%s display_name=%r t17_id=%s scores=%s",
+            member.id,
+            member.display_name,
+            t17_id,
+            scores,
+        )
+        return result
 
     def _empty_mapping(self) -> dict[str, Any]:
         return {
@@ -778,7 +841,7 @@ class HellorLeaderboard(commands.Cog):
             return self._build_empty_embed(str(exc))
         return self._build_leaderboard_embed(guild, member_scores)
 
-    async def update_or_post_leaderboard(self, *, force_refresh: bool = False) -> None:
+    async def update_or_post_leaderboard(self, *, force_refresh: bool = False, allow_stale_cache: bool = False) -> None:
         async with self._update_lock:
             channel = await self._get_post_channel()
             if channel is None:
@@ -791,7 +854,11 @@ class HellorLeaderboard(commands.Cog):
                 channel.id,
                 self.leaderboard_message_id,
             )
-            member_scores = await self._get_member_scores(channel.guild, force_refresh=force_refresh)
+            member_scores = await self._get_member_scores(
+                channel.guild,
+                force_refresh=force_refresh,
+                allow_stale_cache=allow_stale_cache,
+            )
             embed = self._build_leaderboard_embed(channel.guild, member_scores)
             view = self._make_details_view(channel.guild)
 
@@ -859,6 +926,15 @@ class HellorLeaderboard(commands.Cog):
         self._store_resolved_member(mapping, member, t17_id=clean_t17_id, source="manual_override", queries=queries)
         self._save_mapping(mapping)
 
+        refreshed_member_score = await self._fetch_single_member_score(
+            member,
+            clean_t17_id,
+            source="manual_override",
+            queries=queries,
+        )
+        if refreshed_member_score is not None:
+            self._upsert_cached_member_score(refreshed_member_score)
+
         self.logger.info(
             "manual_override_set guild_id=%s target_member_id=%s target_display_name=%r t17_id=%s updated_by=%s",
             guild.id,
@@ -869,7 +945,7 @@ class HellorLeaderboard(commands.Cog):
         )
 
         try:
-            await self.update_or_post_leaderboard()
+            await self.update_or_post_leaderboard(allow_stale_cache=True)
         except Exception as exc:
             self.logger.exception("manual_override_refresh_failed target_member_id=%s error=%s", member.id, exc)
             await interaction.followup.send(
@@ -879,7 +955,7 @@ class HellorLeaderboard(commands.Cog):
             return
 
         await interaction.followup.send(
-            f"Stored override for {member.display_name} -> {clean_t17_id} and refreshed the leaderboard.",
+            f"Stored override for {member.display_name} -> {clean_t17_id} and refreshed that member's cached score.",
             ephemeral=True,
         )
 
