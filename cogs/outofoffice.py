@@ -25,6 +25,7 @@ OUT_OF_OFFICE_SETUP_ROLE_IDS = {
 TIMEZONE_NAME = "Europe/London"
 STATE_FILE = data_path("out_of_office_state.json")
 REPLY_COOLDOWN_SECONDS = 900
+OFFLINE_REPLY_DELAY = timedelta(hours=6)
 MAX_SHORT_LOA_DURATION = timedelta(hours=10)
 MIN_FORM_LOA_DURATION = timedelta(hours=10)
 LOA_CHANNEL_ID = 1099608133267095612
@@ -162,16 +163,17 @@ class OutOfOffice(commands.Cog):
     def _load_state(self) -> dict:
         try:
             if not os.path.exists(STATE_FILE):
-                return {"version": 1, "users": {}}
+                return {"version": 1, "users": {}, "preferences": {}}
             with open(STATE_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if not isinstance(data, dict):
-                return {"version": 1, "users": {}}
+                return {"version": 1, "users": {}, "preferences": {}}
             data.setdefault("version", 1)
             data.setdefault("users", {})
+            data.setdefault("preferences", {})
             return data
         except Exception:
-            return {"version": 1, "users": {}}
+            return {"version": 1, "users": {}, "preferences": {}}
 
     def _save_state(self) -> None:
         self.state["updated_at"] = utc_now().isoformat()
@@ -182,6 +184,61 @@ class OutOfOffice(commands.Cog):
 
     def _user_entries(self, user_id: int) -> list[dict]:
         return self.state.setdefault("users", {}).setdefault(str(user_id), [])
+
+    def _user_preferences(self, user_id: int) -> dict:
+        return self.state.setdefault("preferences", {}).setdefault(str(user_id), {})
+
+    def _prune_user_preferences(self, user_id: int) -> None:
+        preferences = self.state.setdefault("preferences", {})
+        raw_user_id = str(user_id)
+        user_preferences = preferences.get(raw_user_id)
+        if not user_preferences:
+            preferences.pop(raw_user_id, None)
+
+    def _responses_enabled(self, user_id: int) -> bool:
+        user_preferences = self.state.setdefault("preferences", {}).get(str(user_id), {})
+        return user_preferences.get("responses_enabled", True)
+
+    def _set_responses_enabled(self, user_id: int, enabled: bool) -> bool:
+        user_preferences = self._user_preferences(user_id)
+        previous = user_preferences.get("responses_enabled", True)
+        if previous == enabled:
+            return False
+
+        if enabled:
+            user_preferences.pop("responses_enabled", None)
+        else:
+            user_preferences["responses_enabled"] = False
+
+        self._prune_user_preferences(user_id)
+        return True
+
+    def _offline_since(self, user_id: int) -> datetime | None:
+        user_preferences = self.state.setdefault("preferences", {}).get(str(user_id), {})
+        raw_value = user_preferences.get("offline_since")
+        if not isinstance(raw_value, str):
+            return None
+
+        try:
+            return parse_iso_utc(raw_value)
+        except ValueError:
+            return None
+
+    def _set_offline_since(self, user_id: int, value: datetime | None) -> bool:
+        user_preferences = self._user_preferences(user_id)
+        previous = user_preferences.get("offline_since")
+        next_value = value.isoformat() if value is not None else None
+
+        if previous == next_value:
+            return False
+
+        if next_value is None:
+            user_preferences.pop("offline_since", None)
+        else:
+            user_preferences["offline_since"] = next_value
+
+        self._prune_user_preferences(user_id)
+        return True
 
     def _entry_duration(self, entry: dict) -> timedelta:
         if entry["kind"] == "one_off":
@@ -269,8 +326,22 @@ class OutOfOffice(commands.Cog):
     def _entry_is_long_loa(self, entry: dict) -> bool:
         return self._entry_duration(entry) > MIN_FORM_LOA_DURATION
 
-    def _should_suppress_reply(self, member: discord.Member) -> bool:
-        return member.status == discord.Status.online
+    def _member_has_loa_role(self, member: discord.Member) -> bool:
+        return any(role.id == LOA_ROLE_ID for role in member.roles)
+
+    def _reply_delay_elapsed(self, member: discord.Member) -> bool:
+        if member.status != discord.Status.offline:
+            if self._set_offline_since(member.id, None):
+                self._save_state()
+            return False
+
+        offline_since = self._offline_since(member.id)
+        if offline_since is None:
+            if self._set_offline_since(member.id, utc_now()):
+                self._save_state()
+            return False
+
+        return utc_now() - offline_since >= OFFLINE_REPLY_DELAY
 
     def _entry_summary(self, entry: dict) -> str:
         if entry["kind"] == "one_off":
@@ -307,13 +378,9 @@ class OutOfOffice(commands.Cog):
         )
 
     def _build_generic_role_reply(self, member: discord.Member) -> str | None:
-        role_ids = {role.id for role in member.roles}
-        if LOA_ROLE_ID in role_ids:
-            if self._should_suppress_reply(member):
-                return None
+        if self._member_has_loa_role(member):
             return (
-                f"{member.display_name} is currently away. "
-                "This person has the LOA tag :( meaning they're away, but they haven't set a custom away message with the bot."
+                f"{member.display_name} is currently away and has an LOA tag. "
             )
         return None
 
@@ -429,8 +496,9 @@ class OutOfOffice(commands.Cog):
             "**LOA** :beach: can be set up here in two ways.\n\n"
             "**Short LOA**: this covers one-off, daily, or weekday-based absences that are **10 hours total or less**. Example: `8am - 12pm` starting `30/03/2026` every weekday. Short LOAs still use the **LOA role**, but they do **not** post a confirmation in <#1099608133267095612>.\n\n"
             "**Long LOA**: this covers a single continuous block that is **more than 10 hours** long. Example: `12pm 30/03/2026` until `1pm 01/05/2026`. Long LOAs **do** post a confirmation in <#1099608133267095612> for SNCO review, so treat this as an automated LOA form.\n\n"
-            "**Manually adding/removing the LOA role** is still completely possible. You can add it to yourself or other people (on request), and the bot will send a generic message when that person is tagged if they have not set a custom away message.\n\n"
-            "Reply with `one` for a one-off schedule or `daily` for a recurring daily or weekday schedule."
+            "**Manually adding/removing the LOA role** is still completely possible. You can add it to yourself or other people (on request), and the bot will send a generic message when that person is tagged if they have not set a custom away message. Automated replies only start once you have been offline for **6 hours**.\n\n"
+            f"Automated responses are currently **{'on' if self._responses_enabled(user.id) else 'off'}**.\n\n"
+            "Reply with `one` for a one-off schedule, `daily` for a recurring daily or weekday schedule, `off` to disable automated responses completely, or `on` to re-enable them."
         )
         return True
 
@@ -455,8 +523,20 @@ class OutOfOffice(commands.Cog):
         draft = session["draft"]
 
         if session["step"] == "kind":
+            if lowered in {"off", "on"}:
+                changed = self._set_responses_enabled(message.author.id, lowered == "on")
+                if changed:
+                    self._save_state()
+                self.dm_sessions.pop(message.author.id, None)
+                await message.channel.send(
+                    "Automated LOA responses are now disabled."
+                    if lowered == "off"
+                    else "Automated LOA responses are now enabled."
+                )
+                return
+
             if lowered not in {"one", "daily"}:
-                await message.channel.send("Reply with `one` or `daily`.")
+                await message.channel.send("Reply with `one`, `daily`, `off`, or `on`.")
                 return
 
             draft["kind"] = "one_off" if lowered == "one" else "daily"
@@ -661,6 +741,23 @@ class OutOfOffice(commands.Cog):
         except Exception:
             pass
 
+    @commands.Cog.listener()
+    async def on_presence_update(self, before: discord.Member, after: discord.Member) -> None:
+        if after.guild.id != GUILD_ID or after.bot:
+            return
+
+        if before.status == after.status:
+            return
+
+        changed = False
+        if after.status == discord.Status.offline:
+            changed = self._set_offline_since(after.id, utc_now())
+        else:
+            changed = self._set_offline_since(after.id, None)
+
+        if changed:
+            self._save_state()
+
     async def schedule_id_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
@@ -709,6 +806,32 @@ class OutOfOffice(commands.Cog):
 
         await interaction.response.send_message(
             "\n\n".join(self._entry_summary(entry) for entry in entries),
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="loa_responseoff", description="Disable your automated LOA replies.")
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    @app_commands.guild_only()
+    async def outofoffice_responseoff(self, interaction: discord.Interaction) -> None:
+        changed = self._set_responses_enabled(interaction.user.id, False)
+        if changed:
+            self._save_state()
+
+        await interaction.response.send_message(
+            "Your automated LOA replies are now disabled.",
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="loa_responseon", description="Re-enable your automated LOA replies.")
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    @app_commands.guild_only()
+    async def outofoffice_responseon(self, interaction: discord.Interaction) -> None:
+        changed = self._set_responses_enabled(interaction.user.id, True)
+        if changed:
+            self._save_state()
+
+        await interaction.response.send_message(
+            "Your automated LOA replies are now enabled. Replies will resume once you have been offline for 6 hours.",
             ephemeral=True,
         )
 
@@ -784,18 +907,26 @@ class OutOfOffice(commands.Cog):
             seen_ids.add(member.id)
 
             active_entries = self._active_entries_for_user(member.id)
+            generic_reply = self._build_generic_role_reply(member)
+
+            if not active_entries and generic_reply is None:
+                continue
+
+            if not self._responses_enabled(member.id):
+                continue
+
+            if not self._reply_delay_elapsed(member):
+                continue
+
             if active_entries:
                 entry = self._primary_entry(active_entries)
                 if entry is None:
-                    continue
-                if self._should_suppress_reply(member):
                     continue
                 if not self._cooldown_allows_reply(message.author.id, member.id, message.channel.id):
                     continue
                 replies.append(self._build_auto_reply(member, entry))
                 continue
 
-            generic_reply = self._build_generic_role_reply(member)
             if generic_reply:
                 if not self._cooldown_allows_reply(message.author.id, member.id, message.channel.id):
                     continue

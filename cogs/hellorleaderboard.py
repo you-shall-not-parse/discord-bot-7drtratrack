@@ -24,7 +24,7 @@ from data_paths import data_path
 
 GUILD_ID = 1097913605082579024
 POST_CHANNEL_ID = 1099806153170489485
-ROLE_NAME = "Basic trained"
+ROLE_NAME = "131st Infantry Brigade"
 
 STATE_FILE = data_path("hellor_leaderboard_state.json")
 MAPPING_FILE = data_path("hellor_t17_map.json")
@@ -269,7 +269,6 @@ class HellorLeaderboard(commands.Cog):
         raw_candidates: list[str] = []
         if member.display_name:
             raw_candidates.append(member.display_name)
-        raw_candidates.append(member.name)
         global_name = getattr(member, "global_name", None)
         if global_name:
             raw_candidates.append(global_name)
@@ -582,6 +581,56 @@ class HellorLeaderboard(commands.Cog):
 
         return embed
 
+    def _make_details_view(self, guild: discord.Guild, member_scores: list[dict[str, Any]]) -> discord.ui.View:
+        options: list[discord.SelectOption] = []
+        for item in member_scores[:25]:
+            label = (item.get("display_name") or "")[:100]
+            desc = (item.get("t17_id") or "No T17")[:80]
+            options.append(discord.SelectOption(label=label or "(unknown)", description=desc, value=str(item.get("member_id"))))
+
+        view = discord.ui.View(timeout=None)
+        if not options:
+            return view
+
+        select = discord.ui.Select(placeholder="Show member details...", options=options, max_values=1)
+
+        async def _on_select(interaction: discord.Interaction) -> None:
+            try:
+                member_id = int(select.values[0])
+            except Exception:
+                await interaction.response.send_message("Invalid selection.", ephemeral=True)
+                return
+
+            mapping = self._load_mapping()
+            key = f"{guild.id}:{member_id}"
+            resolved = mapping.get("resolved_members", {}).get(key, {})
+
+            lines: list[str] = []
+            display = resolved.get("display_name")
+            username = resolved.get("username")
+            global_name = resolved.get("global_name")
+            t17_id = resolved.get("t17_id")
+
+            if display:
+                lines.append(f"Display name: {display}")
+            if username:
+                lines.append(f"Username: {username}")
+            if global_name:
+                lines.append(f"Global name: {global_name}")
+
+            if t17_id:
+                url = f"https://hellor.pro/player/{t17_id}"
+                lines.append(f"T17 ID: {t17_id} — {url}")
+            else:
+                lines.append("T17 ID: none")
+
+            lines.append("\nIs this wrong? Contact an admin.")
+            await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
+        select.callback = _on_select
+        view.add_item(select)
+        return view
+
     async def build_embed(self, guild: discord.Guild) -> discord.Embed:
         try:
             targets, _mapping = await self._collect_basic_trained_targets(guild)
@@ -611,12 +660,16 @@ class HellorLeaderboard(commands.Cog):
                 channel.id,
                 self.leaderboard_message_id,
             )
-            embed = await self.build_embed(channel.guild)
+            # build targets, mapping and member scores so we can attach a details view
+            targets, _mapping = await self._collect_basic_trained_targets(channel.guild)
+            member_scores = await self._fetch_member_scores(targets)
+            embed = self._build_leaderboard_embed(channel.guild, member_scores)
 
             if self.leaderboard_message_id:
                 try:
                     message = await channel.fetch_message(self.leaderboard_message_id)
-                    await message.edit(embed=embed)
+                    view = self._make_details_view(channel.guild, member_scores)
+                    await message.edit(embed=embed, view=view)
                     self.logger.info("update_edit_success message_id=%s", self.leaderboard_message_id)
                     return
                 except discord.NotFound:
