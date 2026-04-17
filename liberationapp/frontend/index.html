@@ -1000,9 +1000,11 @@
     const renderer = new THREE.WebGLRenderer({ canvas: mapCanvas, antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
 
     const scene = new THREE.Scene();
-    scene.fog = new THREE.Fog(0xa4a39b, 10, 85);
+    scene.fog = null;
 
     const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 300);
     const controls = new OrbitControls(camera, mapCanvas);
@@ -1209,20 +1211,30 @@
     }
 
     function fitCameraToModel(root) {
+      const originalBox = new THREE.Box3().setFromObject(root);
+      const originalSize = originalBox.getSize(new THREE.Vector3());
+      const originalCenter = originalBox.getCenter(new THREE.Vector3());
+      const originalMaxDim = Math.max(originalSize.x, originalSize.y, originalSize.z) || 10;
+      const desiredSize = 26;
+      const scaleFactor = desiredSize / originalMaxDim;
+
+      root.scale.setScalar(scaleFactor);
+      root.position.copy(originalCenter).multiplyScalar(-scaleFactor);
+
       const box = new THREE.Box3().setFromObject(root);
       const size = box.getSize(new THREE.Vector3());
       const center = box.getCenter(new THREE.Vector3());
-      const maxDim = Math.max(size.x, size.y, size.z) || 10;
+      const maxDim = Math.max(size.x, size.y, size.z) || desiredSize;
 
-      root.position.sub(center);
-      controls.target.set(0, Math.max(size.y * 0.05, 0), 0);
-      camera.near = Math.max(maxDim / 500, 0.1);
-      camera.far = maxDim * 20;
-      camera.position.set(maxDim * 0.16, maxDim * 0.82, maxDim * 0.88);
+      controls.target.set(center.x, center.y + size.y * 0.06, center.z);
+      camera.near = Math.max(maxDim / 200, 0.05);
+      camera.far = maxDim * 12;
+      camera.position.set(center.x + maxDim * 0.08, center.y + maxDim * 0.78, center.z + maxDim * 0.72);
       camera.lookAt(controls.target);
       controls.minDistance = maxDim * 0.35;
       controls.maxDistance = maxDim * 2.8;
-      controls.panSpeed = Math.max(maxDim / 28, 1.2);
+      controls.panSpeed = Math.max(maxDim / 18, 0.9);
+      scene.fog = new THREE.Fog(0xa4a39b, maxDim * 0.85, maxDim * 2.6);
       controls.update();
       initialCameraPosition = camera.position.clone();
       initialControlTarget = controls.target.clone();
