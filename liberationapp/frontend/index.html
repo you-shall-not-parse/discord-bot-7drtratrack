@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>HLL Frontlines</title>
+  <title>HLL Frontlines </title>
   <style>
     :root {
       --paper: #efe1c0;
@@ -424,7 +424,7 @@
     }
 
     .map-marker-name {
-      font-size: 0.88rem;
+      font-size: 0.82rem;
       line-height: 1.08;
       max-width: 12ch;
       letter-spacing: 0.08em;
@@ -459,6 +459,7 @@
 
     .map-marker-state,
     .front-chip-state {
+      font-size: 0.72rem;
       letter-spacing: 0.14em;
       text-transform: uppercase;
     }
@@ -534,7 +535,7 @@
     }
 
     .front-chip-name {
-      font-size: 0.98rem;
+      font-size: 0.92rem;
       line-height: 1.08;
       max-width: 12ch;
       letter-spacing: 0.08em;
@@ -1160,20 +1161,6 @@
         <div class="hero-actions">
           <button id="open-battle-map" class="hero-button" type="button">Open Battle Map</button>
         </div>
-        <div class="hero-objective">
-          <div class="hero-objective-top">
-            <div>
-              <span class="hero-label">All-Time Objective</span>
-              <div id="all-time-objective-total" class="hero-objective-value">0 / 25,000,000</div>
-            </div>
-            <div id="all-time-objective-copy" class="hero-objective-subcopy">All kills on all tracked maps and all sides feed the long-war theatre objective.</div>
-          </div>
-          <div class="hero-objective-track"><span id="all-time-objective-bar" class="hero-objective-fill" style="width: 0%"></span></div>
-          <div class="hero-objective-bottom">
-            <span id="all-time-objective-progress">0%</span>
-            <span id="all-time-objective-remaining">25,000,000 remaining</span>
-          </div>
-        </div>
         <div class="hero-grid">
           <div class="hero-stat">
             <span class="hero-label">Servers Tracked</span>
@@ -1191,7 +1178,7 @@
         <div class="section-header">
           <div>
             <span class="section-label">Frontline Board</span>
-            <h2>Campaign Tiles</h2>
+            <h2>Campaigns</h2>
           </div>
         </div>
 
@@ -1221,7 +1208,7 @@
         <div class="section-header">
           <div>
             <span class="section-label">Operations Board</span>
-            <h2>Challenge Tracks</h2>
+            <h2>Weekly Operations</h2>
           </div>
           <p id="challenge-summary">Current campaign is active. Weekly and monthly slots are staged next.</p>
         </div>
@@ -1379,11 +1366,6 @@
     const heroServerCount = document.getElementById('hero-server-count');
     const heroServerNames = document.getElementById('hero-server-names');
     const heroLiveCount = document.getElementById('hero-live-count');
-    const allTimeObjectiveTotal = document.getElementById('all-time-objective-total');
-    const allTimeObjectiveCopy = document.getElementById('all-time-objective-copy');
-    const allTimeObjectiveBar = document.getElementById('all-time-objective-bar');
-    const allTimeObjectiveProgress = document.getElementById('all-time-objective-progress');
-    const allTimeObjectiveRemaining = document.getElementById('all-time-objective-remaining');
     const boardAllTimeObjectiveTotal = document.getElementById('board-all-time-objective-total');
     const boardAllTimeObjectiveCopy = document.getElementById('board-all-time-objective-copy');
     const boardAllTimeObjectiveBar = document.getElementById('board-all-time-objective-bar');
@@ -1398,6 +1380,7 @@
 
     let currentMaps = [];
     let selectedMapName = null;
+    let currentTargetKills = 500;
     let initialCameraPosition = null;
     let initialControlTarget = null;
     let modelLoaded = false;
@@ -1424,7 +1407,7 @@
 
     const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 300);
     const controls = new OrbitControls(camera, mapCanvas);
-    controls.enableDamping = true;
+    controls.enableDamping = false;
     controls.enableRotate = false;
     controls.enablePan = true;
     controls.screenSpacePanning = false;
@@ -1453,6 +1436,12 @@
     const loader = new GLTFLoader();
     const mapRoot = new THREE.Group();
     scene.add(mapRoot);
+
+    function requestRender() {
+      if (!battleMapPage.classList.contains('hidden')) {
+        renderFrame();
+      }
+    }
 
     function formatFaction(value) {
       return (value || 'neutral').replace(/^./, (char) => char.toUpperCase());
@@ -1501,16 +1490,39 @@
       const remainingKills = objective?.remaining_kills ?? Math.max(targetKills - totalKills, 0);
       const progressPercent = objective?.progress_percent || 0;
 
-      allTimeObjectiveTotal.textContent = `${formatCount(totalKills)} / ${formatCount(targetKills)}`;
-      allTimeObjectiveCopy.textContent = '';
-      allTimeObjectiveBar.style.width = `${progressPercent}%`;
-      allTimeObjectiveProgress.textContent = `${progressPercent}% complete`;
-      allTimeObjectiveRemaining.textContent = `${formatCount(remainingKills)} remaining`;
       boardAllTimeObjectiveTotal.textContent = `${formatCount(totalKills)} / ${formatCount(targetKills)}`;
       boardAllTimeObjectiveCopy.textContent = '';
       boardAllTimeObjectiveBar.style.width = `${progressPercent}%`;
       boardAllTimeObjectiveProgress.textContent = `${progressPercent}% complete`;
       boardAllTimeObjectiveRemaining.textContent = `${formatCount(remainingKills)} remaining`;
+    }
+
+    function mergeMapPayloadIntoState(payload) {
+      const mapName = payload?.map_name;
+      if (!mapName) {
+        return;
+      }
+
+      const nextEntry = {
+        map_name: mapName,
+        map_id: payload.map_id,
+        allied_kills: payload.allied_kills || 0,
+        axis_kills: payload.axis_kills || 0,
+        total_kills: payload.total_kills || 0,
+        updated_at: payload.updated_at,
+        servers: payload.servers || [],
+        is_active_battle: Boolean(payload.is_active_battle),
+        active_servers: payload.active_servers || [],
+        liberation: payload.liberation || {},
+      };
+
+      const existingIndex = currentMaps.findIndex((item) => item.map_name === mapName);
+      if (existingIndex >= 0) {
+        currentMaps[existingIndex] = { ...currentMaps[existingIndex], ...nextEntry };
+        return;
+      }
+
+      currentMaps.push(nextEntry);
     }
 
     function formatActiveServers(activeServers) {
@@ -1719,10 +1731,13 @@
         return;
       }
       const payload = await response.json();
+      mergeMapPayloadIntoState(payload);
+      renderFrontStrip(currentMaps, currentTargetKills);
       renderDetail(payload);
     }
 
     function renderFrontStrip(maps, target) {
+      currentTargetKills = target || currentTargetKills;
       frontStrip.innerHTML = '';
       const trackedServers = new Map();
       maps.forEach((map) => {
@@ -1803,14 +1818,8 @@
     }
 
     function renderFrame() {
-      controls.update();
       renderer.render(scene, camera);
       updateOverlayPositions();
-    }
-
-    function animate() {
-      requestAnimationFrame(animate);
-      renderFrame();
     }
 
     function fitCameraToModel(root) {
@@ -1855,8 +1864,7 @@
       const nextDistance = THREE.MathUtils.clamp(offset.length() * multiplier, controls.minDistance, controls.maxDistance);
       offset.setLength(nextDistance);
       camera.position.copy(controls.target).add(offset);
-      controls.update();
-      renderFrame();
+      requestRender();
     }
 
     async function loadModel() {
@@ -1875,14 +1883,14 @@
                 child.material.metalness = Math.max(child.material.metalness ?? 0, 0);
               }
               if (child.material.map) {
-                child.material.map.anisotropy = renderer.capabilities.getMaxAnisotropy();
+                child.material.map.anisotropy = Math.min(renderer.capabilities.getMaxAnisotropy(), 4);
                 child.material.map.colorSpace = THREE.SRGBColorSpace;
               }
               if (child.material.normalMap) {
-                child.material.normalMap.anisotropy = renderer.capabilities.getMaxAnisotropy();
+                child.material.normalMap.anisotropy = Math.min(renderer.capabilities.getMaxAnisotropy(), 4);
               }
               if (child.material.aoMap) {
-                child.material.aoMap.anisotropy = renderer.capabilities.getMaxAnisotropy();
+                child.material.aoMap.anisotropy = Math.min(renderer.capabilities.getMaxAnisotropy(), 4);
               }
               child.material.needsUpdate = true;
             }
@@ -1907,6 +1915,7 @@
       const maps = payload.maps || [];
       const target = payload.target_kills || 500;
       currentMaps = maps;
+      currentTargetKills = target;
 
       renderAllTimeObjective(payload.all_time_objective);
       renderChallengeTracks(payload.challenge_tracks);
@@ -1925,8 +1934,7 @@
       }
       camera.position.copy(initialCameraPosition);
       controls.target.copy(initialControlTarget);
-      controls.update();
-      renderFrame();
+      requestRender();
     }
 
     function setBattleMapOpen(isOpen) {
@@ -1934,7 +1942,7 @@
       battleMapPage.classList.toggle('hidden', !isOpen);
       if (isOpen) {
         resizeRenderer();
-        renderFrame();
+        requestRender();
       }
     }
 
@@ -1946,8 +1954,7 @@
       const offset = camera.position.clone().sub(controls.target);
       controls.target.copy(worldPosition);
       camera.position.copy(worldPosition).add(offset);
-      controls.update();
-      renderFrame();
+      requestRender();
     }
 
     function focusActiveFront() {
@@ -1966,11 +1973,12 @@
 
     function initializeInteractions() {
       resizeRenderer();
-      animate();
 
       mapCanvas.addEventListener('contextmenu', (event) => {
         event.preventDefault();
       });
+
+      controls.addEventListener('change', requestRender);
 
       zoomInButton.addEventListener('click', () => zoomCamera(0.84));
       zoomOutButton.addEventListener('click', () => zoomCamera(1.18));
@@ -1981,7 +1989,7 @@
 
       window.addEventListener('resize', () => {
         resizeRenderer();
-        renderFrame();
+        requestRender();
       });
     }
 

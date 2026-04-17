@@ -572,6 +572,30 @@ class LiberationStore:
 				error_message,
 			)
 
+	async def get_server_state(self, server_id: str) -> dict[str, Any] | None:
+		async with self.pool.acquire() as conn:
+			row = await conn.fetchrow(
+				"""
+				SELECT current_map, current_map_id, active_session_id, last_poll_at, last_error
+				FROM server_state
+				WHERE server_id = $1
+				""",
+				server_id,
+			)
+		return dict(row) if row else None
+
+	async def touch_server_poll(self, server_id: str) -> None:
+		async with self.pool.acquire() as conn:
+			await conn.execute(
+				"""
+				UPDATE server_state
+				SET last_poll_at = $2, last_error = NULL
+				WHERE server_id = $1
+				""",
+				server_id,
+				utc_now(),
+			)
+
 	async def ensure_map_session(self, server_id: str, map_name: str, map_id: str | None) -> tuple[int, bool]:
 		now = utc_now()
 		async with self.pool.acquire() as conn:
@@ -906,20 +930,40 @@ class CRCONPoller:
 			await asyncio.sleep(LIBERATION_POLL_SECONDS)
 
 	async def _poll_once(self, server: ServerConfig) -> None:
-		gamestate_payload = await self._request_json(server, "get_gamestate")
-		gamestate_result = gamestate_payload.get("result", gamestate_payload) if isinstance(gamestate_payload, dict) else {}
-		current_map_info = gamestate_result.get("current_map", {}) if isinstance(gamestate_result, dict) else {}
 		current_map_id = None
 		current_map_name = None
+		session_changed = False
 
-		if isinstance(current_map_info, dict):
-			current_map_id = str(current_map_info.get("id") or "").strip() or None
-			current_map_name = str(current_map_info.get("pretty_name") or "").strip() or None
-		elif isinstance(current_map_info, str):
-			current_map_id = current_map_info.strip() or None
+		try:
+			gamestate_payload = await self._request_json(server, "get_gamestate")
+		except RuntimeError as exc:
+			cached_state = await self.store.get_server_state(server.server_id)
+			current_map = str(cached_state.get("current_map") or "").strip() if cached_state else ""
+			current_map_id = str(cached_state.get("current_map_id") or "").strip() or None if cached_state else None
+			active_session_id = cached_state.get("active_session_id") if cached_state else None
+			if not current_map or active_session_id is None:
+				raise RuntimeError(
+					f"get_gamestate failed and no cached active session is available: {exc}"
+				) from exc
+			session_id = int(active_session_id)
+			LOG.warning(
+				"get_gamestate failed for %s, using cached map session %s on %s",
+				server.server_id,
+				session_id,
+				current_map,
+			)
+		else:
+			gamestate_result = gamestate_payload.get("result", gamestate_payload) if isinstance(gamestate_payload, dict) else {}
+			current_map_info = gamestate_result.get("current_map", {}) if isinstance(gamestate_result, dict) else {}
 
-		current_map = canonical_map_name(current_map_name, current_map_id)
-		session_id, session_changed = await self.store.ensure_map_session(server.server_id, current_map, current_map_id)
+			if isinstance(current_map_info, dict):
+				current_map_id = str(current_map_info.get("id") or "").strip() or None
+				current_map_name = str(current_map_info.get("pretty_name") or "").strip() or None
+			elif isinstance(current_map_info, str):
+				current_map_id = current_map_info.strip() or None
+
+			current_map = canonical_map_name(current_map_name, current_map_id)
+			session_id, session_changed = await self.store.ensure_map_session(server.server_id, current_map, current_map_id)
 
 		logs_payload = await self._request_json(
 			server,
@@ -956,6 +1000,7 @@ class CRCONPoller:
 					current_map,
 				)
 
+		await self.store.touch_server_poll(server.server_id)
 		await self.store.prune_processed_events(server.server_id)
 		await self.cache.delete_patterns(["maps:*", "map:*"])
 
