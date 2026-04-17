@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import time
 import urllib.parse
 from datetime import datetime, timezone
 
@@ -17,6 +18,11 @@ STATE_FILE = data_path("rosterizer_state.json")
 UPDATE_DEBOUNCE_SECONDS = 2.0
 INCLUDE_HLLRECORDS_LINK = False
 ROSTER_LOCK_ADMIN_ROLE_IDS: list[int] = [1213495462632361994, 1098342675389890670, 1098342769468125214]
+LOCKED_DM_MESSAGE = (
+    "The roster is currently locked. Please contact the ICs to unlock the roster before changing roster roles."
+)
+LOCKED_DM_COOLDOWN_SECONDS = 60
+LOCK_REVERT_SUPPRESSION_SECONDS = 5
 
 ROSTER_DEFINITIONS = [
     {
@@ -44,6 +50,8 @@ class Rosterizer(commands.Cog):
         self._update_task: asyncio.Task | None = None
         self._update_lock = asyncio.Lock()
         self._state = self._load_state()
+        self._dm_last_sent: dict[int, float] = {}
+        self._locked_revert_suppression: dict[int, float] = {}
 
     def _load_state(self) -> dict:
         try:
@@ -63,6 +71,25 @@ class Rosterizer(commands.Cog):
     def _roster_state(self, guild_id: int, roster_key: str) -> dict:
         return self._guild_state(guild_id).setdefault(roster_key, {})
 
+    def _tracked_role_ids(self) -> set[int]:
+        return {int(roster["role_id"]) for roster in ROSTER_DEFINITIONS}
+
+    def _member_tracked_role_ids(self, member: discord.Member) -> set[int]:
+        tracked_role_ids = self._tracked_role_ids()
+        return {role.id for role in member.roles if role.id in tracked_role_ids}
+
+    def _suppress_locked_revert_for_member(self, member_id: int) -> None:
+        self._locked_revert_suppression[member_id] = time.time() + LOCK_REVERT_SUPPRESSION_SECONDS
+
+    def _is_locked_revert_suppressed(self, member_id: int) -> bool:
+        expires_at = self._locked_revert_suppression.get(member_id)
+        if expires_at is None:
+            return False
+        if time.time() > expires_at:
+            self._locked_revert_suppression.pop(member_id, None)
+            return False
+        return True
+
     def _is_roster_locked(self, guild_id: int) -> bool:
         return bool(self._state.setdefault(str(guild_id), {}).get("roster_locked", False))
 
@@ -71,6 +98,37 @@ class Rosterizer(commands.Cog):
         guild_state["roster_locked"] = bool(locked)
         guild_state["updated_at"] = datetime.now(timezone.utc).isoformat()
         self._save_state()
+
+    async def _maybe_dm_locked_notice(self, member: discord.Member) -> None:
+        now = time.time()
+        last = self._dm_last_sent.get(member.id, 0.0)
+        if now - last < LOCKED_DM_COOLDOWN_SECONDS:
+            return
+
+        try:
+            await member.send(LOCKED_DM_MESSAGE)
+            self._dm_last_sent[member.id] = now
+        except (discord.Forbidden, discord.HTTPException):
+            return
+
+    async def _revert_locked_roster_change(self, before: discord.Member, after: discord.Member) -> bool:
+        before_tracked_ids = self._member_tracked_role_ids(before)
+        after_tracked_ids = self._member_tracked_role_ids(after)
+        added_role_ids = after_tracked_ids - before_tracked_ids
+        removed_role_ids = before_tracked_ids - after_tracked_ids
+
+        if not added_role_ids and not removed_role_ids:
+            return False
+
+        roles_to_remove = [role for role in after.roles if role.id in added_role_ids]
+        roles_to_add = [role for role in before.roles if role.id in removed_role_ids]
+
+        self._suppress_locked_revert_for_member(after.id)
+        if roles_to_remove:
+            await after.remove_roles(*roles_to_remove, reason="Roster locked")
+        if roles_to_add:
+            await after.add_roles(*roles_to_add, reason="Roster locked")
+        return True
 
     def _get_roster_message_ids(self, guild_id: int, roster_key: str) -> list[int]:
         state = self._roster_state(guild_id, roster_key)
@@ -330,7 +388,22 @@ class Rosterizer(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member) -> None:
-        tracked_role_ids = {int(roster["role_id"]) for roster in ROSTER_DEFINITIONS}
+        tracked_role_ids = self._tracked_role_ids()
+        before_tracked_ids = self._member_tracked_role_ids(before)
+        after_tracked_ids = self._member_tracked_role_ids(after)
+
+        if self._is_locked_revert_suppressed(after.id):
+            return
+
+        if self._is_roster_locked(after.guild.id) and before_tracked_ids != after_tracked_ids:
+            try:
+                reverted = await self._revert_locked_roster_change(before, after)
+            except (discord.Forbidden, discord.HTTPException):
+                return
+            if reverted:
+                await self._maybe_dm_locked_notice(after)
+            return
+
         before_has = any(role.id in tracked_role_ids for role in before.roles)
         after_has = any(role.id in tracked_role_ids for role in after.roles)
         name_changed = (
