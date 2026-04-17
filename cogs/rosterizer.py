@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import time
 import urllib.parse
@@ -45,6 +46,7 @@ def _can_manage_roster_lock(interaction: discord.Interaction) -> bool:
 class Rosterizer(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self.logger = logging.getLogger(__name__)
         self.lookup = ClanT17Lookup()
         self._ran_once = False
         self._update_task: asyncio.Task | None = None
@@ -103,6 +105,7 @@ class Rosterizer(commands.Cog):
         now = time.time()
         last = self._dm_last_sent.get(member.id, 0.0)
         if now - last < LOCKED_DM_COOLDOWN_SECONDS:
+            self.logger.info("roster_lock_dm_skipped_cooldown member_id=%s", member.id)
             return
 
         target_user: discord.abc.User | discord.Member = member
@@ -115,9 +118,14 @@ class Rosterizer(commands.Cog):
                 target_user = fetched_user
 
         try:
-            await target_user.send(LOCKED_DM_MESSAGE)
+            dm_channel = target_user.dm_channel
+            if dm_channel is None:
+                dm_channel = await target_user.create_dm()
+            await dm_channel.send(LOCKED_DM_MESSAGE)
             self._dm_last_sent[member.id] = now
-        except (discord.Forbidden, discord.HTTPException):
+            self.logger.info("roster_lock_dm_sent member_id=%s", member.id)
+        except (discord.Forbidden, discord.HTTPException) as exc:
+            self.logger.warning("roster_lock_dm_failed member_id=%s error=%s", member.id, exc)
             return
 
     async def _revert_locked_roster_change(self, before: discord.Member, after: discord.Member) -> bool:
@@ -134,8 +142,18 @@ class Rosterizer(commands.Cog):
 
         self._suppress_locked_revert_for_member(after.id)
         if roles_to_remove:
+            self.logger.info(
+                "roster_lock_revert_remove member_id=%s role_ids=%s",
+                after.id,
+                sorted(role.id for role in roles_to_remove),
+            )
             await after.remove_roles(*roles_to_remove, reason="Roster locked")
         if roles_to_add:
+            self.logger.info(
+                "roster_lock_revert_add member_id=%s role_ids=%s",
+                after.id,
+                sorted(role.id for role in roles_to_add),
+            )
             await after.add_roles(*roles_to_add, reason="Roster locked")
         return True
 
@@ -415,13 +433,21 @@ class Rosterizer(commands.Cog):
         after_tracked_ids = self._member_tracked_role_ids(after)
 
         if self._is_locked_revert_suppressed(after.id):
+            self.logger.info("roster_lock_suppressed member_id=%s", after.id)
             return
 
         if self._is_roster_locked(after.guild.id) and before_tracked_ids != after_tracked_ids:
+            self.logger.info(
+                "roster_lock_triggered member_id=%s before_role_ids=%s after_role_ids=%s",
+                after.id,
+                sorted(before_tracked_ids),
+                sorted(after_tracked_ids),
+            )
             await self._maybe_dm_locked_notice(after)
             try:
-                reverted = await self._revert_locked_roster_change(before, after)
-            except (discord.Forbidden, discord.HTTPException):
+                await self._revert_locked_roster_change(before, after)
+            except (discord.Forbidden, discord.HTTPException) as exc:
+                self.logger.warning("roster_lock_revert_failed member_id=%s error=%s", after.id, exc)
                 return
             return
 
