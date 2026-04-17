@@ -255,6 +255,100 @@
       display: block;
     }
 
+    .map-overlay-layer {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      overflow: hidden;
+    }
+
+    .map-marker {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      pointer-events: auto;
+      min-width: 138px;
+      max-width: 220px;
+      padding: 0.55rem 0.65rem;
+      border-radius: 16px;
+      border: 1px solid rgba(28, 22, 16, 0.18);
+      background: rgba(250, 244, 229, 0.88);
+      box-shadow: 0 12px 24px rgba(16, 13, 10, 0.22);
+      color: #1b150f;
+      cursor: pointer;
+      text-align: left;
+      backdrop-filter: blur(5px);
+      transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+    }
+
+    .map-marker:hover,
+    .map-marker.active {
+      transform: translate(-50%, -50%) translateY(-3px);
+      border-color: rgba(198, 151, 76, 0.8);
+      box-shadow: 0 18px 28px rgba(16, 13, 10, 0.28);
+    }
+
+    .map-marker.live {
+      box-shadow: 0 0 0 2px rgba(198, 151, 76, 0.5), 0 18px 28px rgba(16, 13, 10, 0.28);
+    }
+
+    .map-marker.hidden {
+      display: none;
+    }
+
+    .map-marker-top,
+    .map-marker-meta,
+    .map-marker-race {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.45rem;
+      align-items: center;
+    }
+
+    .map-marker-top {
+      align-items: start;
+      margin-bottom: 0.32rem;
+    }
+
+    .map-marker-region {
+      font-size: 0.58rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      opacity: 0.72;
+      margin-bottom: 0.18rem;
+    }
+
+    .map-marker-name {
+      font-size: 0.88rem;
+      line-height: 1.08;
+      max-width: 12ch;
+    }
+
+    .map-marker-badge {
+      flex-shrink: 0;
+      padding: 0.18rem 0.38rem;
+      border-radius: 999px;
+      background: rgba(24, 18, 12, 0.08);
+      font-size: 0.56rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .map-marker-badge.live {
+      background: linear-gradient(135deg, var(--gold-soft), var(--gold));
+      color: #20170e;
+    }
+
+    .map-marker-lanes {
+      display: grid;
+      gap: 0.28rem;
+    }
+
+    .map-marker-meta {
+      margin-top: 0.35rem;
+      font-size: 0.72rem;
+      opacity: 0.82;
+    }
+
     .map-loading {
       position: absolute;
       left: 1rem;
@@ -849,6 +943,7 @@
         <div class="map-shell">
           <div id="map-viewport" class="map-viewport">
             <canvas id="map-canvas" class="map-canvas"></canvas>
+            <div id="map-overlay-layer" class="map-overlay-layer"></div>
             <div id="map-loading" class="map-loading">Loading world map model...</div>
           </div>
         </div>
@@ -937,32 +1032,35 @@
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
     const REFRESH_INTERVAL_MS = 15000;
+    const MAP_LAYOUT_WIDTH = 2800;
+    const MAP_LAYOUT_HEIGHT = 1900;
 
     const FRONT_LAYOUT = {
-      'Omaha Beach Warfare': { region: 'Normandy' },
-      'Utah Beach Warfare': { region: 'Normandy' },
-      'Carentan Warfare': { region: 'Normandy' },
-      'Carentan Warfare (Night)': { region: 'Normandy' },
-      'St. Mere Eglise Warfare': { region: 'Normandy' },
-      'St. Marie Du Mont Warfare': { region: 'Normandy' },
-      'Purple Heart Lane Warfare (Rain)': { region: 'Normandy' },
-      'Mortain Warfare (Dusk)': { region: 'Normandy' },
-      'Foy Warfare': { region: 'Ardennes' },
-      'Elsenborn Ridge Warfare (Dawn)': { region: 'Ardennes' },
-      'Hill 400 Warfare': { region: 'Rhineland' },
-      'Hurtgen Forest Warfare': { region: 'Rhineland' },
-      'Remagen Warfare': { region: 'Rhineland' },
-      'Driel Warfare': { region: 'Low Countries' },
-      'Kursk Warfare': { region: 'Eastern Front' },
-      'Kharkov Warfare': { region: 'Eastern Front' },
-      'Stalingrad Warfare': { region: 'Eastern Front' },
-      'Smolensk Warfare (Dusk)': { region: 'Eastern Front' },
-      'El Alamein Warfare': { region: 'North Africa' },
-      'Tobruk Warfare (Dawn)': { region: 'North Africa' }
+      'Omaha Beach Warfare': { region: 'Normandy', x: 1040, y: 690 },
+      'Utah Beach Warfare': { region: 'Normandy', x: 960, y: 640 },
+      'Carentan Warfare': { region: 'Normandy', x: 1015, y: 605 },
+      'Carentan Warfare (Night)': { region: 'Normandy', x: 1045, y: 565 },
+      'St. Mere Eglise Warfare': { region: 'Normandy', x: 935, y: 575 },
+      'St. Marie Du Mont Warfare': { region: 'Normandy', x: 885, y: 620 },
+      'Purple Heart Lane Warfare (Rain)': { region: 'Normandy', x: 1110, y: 635 },
+      'Mortain Warfare (Dusk)': { region: 'Normandy', x: 1095, y: 725 },
+      'Foy Warfare': { region: 'Ardennes', x: 1295, y: 560 },
+      'Elsenborn Ridge Warfare (Dawn)': { region: 'Ardennes', x: 1355, y: 500 },
+      'Hill 400 Warfare': { region: 'Rhineland', x: 1420, y: 610 },
+      'Hurtgen Forest Warfare': { region: 'Rhineland', x: 1460, y: 565 },
+      'Remagen Warfare': { region: 'Rhineland', x: 1505, y: 700 },
+      'Driel Warfare': { region: 'Low Countries', x: 1380, y: 390 },
+      'Kursk Warfare': { region: 'Eastern Front', x: 2150, y: 600 },
+      'Kharkov Warfare': { region: 'Eastern Front', x: 2260, y: 730 },
+      'Stalingrad Warfare': { region: 'Eastern Front', x: 2470, y: 740 },
+      'Smolensk Warfare (Dusk)': { region: 'Eastern Front', x: 2080, y: 520 },
+      'El Alamein Warfare': { region: 'North Africa', x: 1960, y: 1520 },
+      'Tobruk Warfare (Dawn)': { region: 'North Africa', x: 2050, y: 1425 }
     };
 
     const mapViewport = document.getElementById('map-viewport');
     const mapCanvas = document.getElementById('map-canvas');
+    const mapOverlayLayer = document.getElementById('map-overlay-layer');
     const mapLoading = document.getElementById('map-loading');
     const frontStrip = document.getElementById('front-strip');
     const emptyState = document.getElementById('empty-state');
@@ -996,6 +1094,9 @@
     let initialCameraPosition = null;
     let initialControlTarget = null;
     let modelLoaded = false;
+    let modelBounds = null;
+    const overlayMarkers = new Map();
+    const projectionVector = new THREE.Vector3();
 
     const renderer = new THREE.WebGLRenderer({ canvas: mapCanvas, antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -1009,18 +1110,20 @@
     const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 300);
     const controls = new OrbitControls(camera, mapCanvas);
     controls.enableDamping = true;
-    controls.enableRotate = false;
+    controls.enableRotate = true;
     controls.enablePan = true;
     controls.screenSpacePanning = true;
     controls.zoomToCursor = true;
     controls.minPolarAngle = 0.92;
-    controls.maxPolarAngle = 0.92;
+    controls.maxPolarAngle = 1.18;
     controls.minAzimuthAngle = -0.24;
     controls.maxAzimuthAngle = 0.24;
-    controls.mouseButtons.LEFT = THREE.MOUSE.PAN;
+    controls.rotateSpeed = 0.7;
+    controls.zoomSpeed = 1.05;
+    controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
     controls.mouseButtons.MIDDLE = THREE.MOUSE.DOLLY;
     controls.mouseButtons.RIGHT = THREE.MOUSE.PAN;
-    controls.touches.ONE = THREE.TOUCH.PAN;
+    controls.touches.ONE = THREE.TOUCH.ROTATE;
     controls.touches.TWO = THREE.TOUCH.DOLLY_PAN;
 
     scene.add(new THREE.HemisphereLight(0xf6e6c6, 0x3b3227, 1.8));
@@ -1057,9 +1160,130 @@
       return FRONT_LAYOUT[mapName]?.region || 'Reserve Front';
     }
 
+    function getFrontLayout(mapName, index) {
+      const known = FRONT_LAYOUT[mapName];
+      if (known) {
+        return known;
+      }
+
+      const columns = 4;
+      return {
+        region: 'Reserve Front',
+        x: 860 + (index % columns) * 220,
+        y: 1010 + Math.floor(index / columns) * 170,
+      };
+    }
+
     function setActiveFront(mapName) {
       document.querySelectorAll('.front-chip').forEach((chip) => {
         chip.classList.toggle('active', chip.dataset.mapName === mapName);
+      });
+
+      overlayMarkers.forEach((marker, name) => {
+        marker.classList.toggle('active', name === mapName);
+      });
+    }
+
+    function buildOverlayMarker(map, index, target) {
+      const lib = map.liberation || {};
+      const activeServers = formatActiveServers(map.active_servers);
+      const layout = getFrontLayout(map.map_name, index);
+      const marker = document.createElement('button');
+      marker.type = 'button';
+      marker.className = `map-marker ${map.is_active_battle ? 'live' : ''}`;
+      marker.dataset.mapName = map.map_name;
+      marker.innerHTML = `
+        <div class="map-marker-top">
+          <div>
+            <div class="map-marker-region">${layout.region}</div>
+            <div class="map-marker-name">${map.map_name}</div>
+          </div>
+          <span class="map-marker-badge ${map.is_active_battle ? 'live' : ''}">${map.is_active_battle ? `ACTIVE - ${activeServers || 'tracked server'}` : layout.region}</span>
+        </div>
+        <div class="map-marker-lanes">
+          <div>
+            <div class="map-marker-race"><span>Allies</span><span>${map.allied_kills}</span></div>
+            <div class="race-lane"><span class="allies-fill" style="width: ${lib.allies_progress_percent || percent(map.allied_kills, target)}%"></span></div>
+          </div>
+          <div>
+            <div class="map-marker-race"><span>Axis</span><span>${map.axis_kills}</span></div>
+            <div class="race-lane"><span class="axis-fill" style="width: ${lib.axis_progress_percent || percent(map.axis_kills, target)}%"></span></div>
+          </div>
+        </div>
+        <div class="map-marker-meta"><span>${formatFaction(lib.leading_faction || lib.controlling_faction)} leading</span><span>Lead ${lib.race_margin || 0}</span></div>
+      `;
+      marker.addEventListener('click', () => fetchMapDetail(map.map_name));
+      return marker;
+    }
+
+    function ensureOverlayMarkers(maps, target) {
+      const nextNames = new Set(maps.map((map) => map.map_name));
+
+      overlayMarkers.forEach((marker, name) => {
+        if (!nextNames.has(name)) {
+          marker.remove();
+          overlayMarkers.delete(name);
+        }
+      });
+
+      maps.forEach((map, index) => {
+        const marker = buildOverlayMarker(map, index, target);
+        const existing = overlayMarkers.get(map.map_name);
+        if (existing) {
+          existing.replaceWith(marker);
+        } else {
+          mapOverlayLayer.appendChild(marker);
+        }
+        overlayMarkers.set(map.map_name, marker);
+      });
+    }
+
+    function mapToWorldPosition(mapName, index) {
+      if (!modelBounds) {
+        return null;
+      }
+
+      const layout = getFrontLayout(mapName, index);
+      const normalizedX = layout.x / MAP_LAYOUT_WIDTH;
+      const normalizedY = layout.y / MAP_LAYOUT_HEIGHT;
+      const x = THREE.MathUtils.lerp(modelBounds.min.x, modelBounds.max.x, normalizedX);
+      const z = THREE.MathUtils.lerp(modelBounds.min.z, modelBounds.max.z, normalizedY);
+      const y = modelBounds.max.y + Math.max(modelBounds.size.y * 0.12, 0.18);
+      return new THREE.Vector3(x, y, z);
+    }
+
+    function updateOverlayPositions() {
+      if (!modelLoaded || !modelBounds) {
+        return;
+      }
+
+      const rect = mapViewport.getBoundingClientRect();
+      currentMaps.forEach((map, index) => {
+        const marker = overlayMarkers.get(map.map_name);
+        if (!marker) {
+          return;
+        }
+
+        const worldPosition = mapToWorldPosition(map.map_name, index);
+        if (!worldPosition) {
+          marker.classList.add('hidden');
+          return;
+        }
+
+        projectionVector.copy(worldPosition).project(camera);
+        const inView = projectionVector.z > -1 && projectionVector.z < 1;
+        const x = (projectionVector.x * 0.5 + 0.5) * rect.width;
+        const y = (-projectionVector.y * 0.5 + 0.5) * rect.height;
+        const withinBounds = x >= -180 && x <= rect.width + 180 && y >= -100 && y <= rect.height + 100;
+
+        if (!inView || !withinBounds) {
+          marker.classList.add('hidden');
+          return;
+        }
+
+        marker.classList.remove('hidden');
+        marker.style.left = `${x}px`;
+        marker.style.top = `${y}px`;
       });
     }
 
@@ -1145,7 +1369,8 @@
 
       maps.forEach((map, index) => {
         const lib = map.liberation || {};
-        const region = getFrontRegion(map.map_name);
+        const layout = getFrontLayout(map.map_name, index);
+        const region = layout.region;
         const activeServers = formatActiveServers(map.active_servers);
         const chip = document.createElement('button');
         chip.type = 'button';
@@ -1187,6 +1412,7 @@
         renderDetail(maps[0]);
       }
 
+      ensureOverlayMarkers(maps, target);
       setActiveFront(selectedMapName || '');
     }
 
@@ -1203,6 +1429,7 @@
     function renderFrame() {
       controls.update();
       renderer.render(scene, camera);
+      updateOverlayPositions();
     }
 
     function animate() {
@@ -1225,6 +1452,12 @@
       const size = box.getSize(new THREE.Vector3());
       const center = box.getCenter(new THREE.Vector3());
       const maxDim = Math.max(size.x, size.y, size.z) || desiredSize;
+      modelBounds = {
+        min: box.min.clone(),
+        max: box.max.clone(),
+        size: size.clone(),
+        center: center.clone(),
+      };
 
       controls.target.set(center.x, center.y + size.y * 0.06, center.z);
       camera.near = Math.max(maxDim / 200, 0.05);
@@ -1266,6 +1499,7 @@
         fitCameraToModel(gltf.scene);
         modelLoaded = true;
         mapLoading.classList.add('hidden');
+        updateOverlayPositions();
       } catch (error) {
         console.error(error);
         mapLoading.textContent = 'Failed to load world_map.glb';
@@ -1324,6 +1558,10 @@
     function initializeInteractions() {
       resizeRenderer();
       animate();
+
+      mapCanvas.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+      });
 
       zoomInButton.addEventListener('click', () => zoomCamera(0.84));
       zoomOutButton.addEventListener('click', () => zoomCamera(1.18));
