@@ -230,7 +230,7 @@
       border-radius: 22px;
       overflow: hidden;
       border: 1px solid rgba(32, 24, 16, 0.14);
-      background: linear-gradient(180deg, rgba(44, 51, 54, 0.5), rgba(19, 23, 25, 0.44));
+      background: linear-gradient(180deg, rgba(11, 11, 13, 0.98), rgba(0, 0, 0, 0.98));
       box-shadow: inset 0 0 0 1px rgba(255, 252, 245, 0.18);
     }
 
@@ -243,8 +243,8 @@
       cursor: grab;
       touch-action: none;
       background:
-        radial-gradient(circle at 20% 15%, rgba(255, 252, 239, 0.12), transparent 22%),
-        linear-gradient(180deg, rgba(93, 113, 123, 0.4), rgba(56, 68, 76, 0.42));
+        radial-gradient(circle at 20% 15%, rgba(255, 250, 230, 0.06), transparent 22%),
+        linear-gradient(180deg, rgba(16, 16, 18, 1), rgba(0, 0, 0, 1));
     }
 
     .map-canvas {
@@ -1025,6 +1025,7 @@
   <script type="module">
     import * as THREE from 'three';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
     const MAP_LAYOUT_WIDTH = 2800;
@@ -1091,17 +1092,22 @@
     const overlayMarkers = new Map();
     const projectionVector = new THREE.Vector3();
 
-    const FIXED_POLAR_ANGLE = 0.9;
-    const FIXED_AZIMUTH_ANGLE = 0.48;
+    const FIXED_POLAR_ANGLE = 0.88;
+    const FIXED_AZIMUTH_ANGLE = -0.52;
 
     const renderer = new THREE.WebGLRenderer({ canvas: mapCanvas, antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.05;
+    renderer.toneMappingExposure = 1.22;
 
     const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x000000);
     scene.fog = null;
+
+    const pmremGenerator = new THREE.PMREMGenerator(renderer);
+    const environmentTexture = pmremGenerator.fromScene(new RoomEnvironment(), 0.05).texture;
+    scene.environment = environmentTexture;
 
     const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 300);
     const controls = new OrbitControls(camera, mapCanvas);
@@ -1121,14 +1127,14 @@
     controls.touches.ONE = THREE.TOUCH.PAN;
     controls.touches.TWO = THREE.TOUCH.DOLLY_PAN;
 
-    scene.add(new THREE.HemisphereLight(0xf6e6c6, 0x3b3227, 1.8));
+    scene.add(new THREE.HemisphereLight(0xf3ead3, 0x050505, 1.15));
 
-    const sunLight = new THREE.DirectionalLight(0xfff0d8, 2.1);
-    sunLight.position.set(10, 18, 8);
+    const sunLight = new THREE.DirectionalLight(0xfff1cf, 2.8);
+    sunLight.position.set(13, 17, -10);
     scene.add(sunLight);
 
-    const fillLight = new THREE.DirectionalLight(0xa7bfd1, 0.75);
-    fillLight.position.set(-8, 10, -12);
+    const fillLight = new THREE.DirectionalLight(0x6f87a1, 0.58);
+    fillLight.position.set(-10, 9, 12);
     scene.add(fillLight);
 
     const loader = new GLTFLoader();
@@ -1456,12 +1462,12 @@
       controls.target.set(center.x, center.y, center.z);
       camera.near = Math.max(maxDim / 200, 0.05);
       camera.far = maxDim * 12;
-      camera.position.set(center.x + maxDim * 0.42, center.y + maxDim * 0.74, center.z + maxDim * 0.54);
+      camera.position.set(center.x + maxDim * 0.56, center.y + maxDim * 0.69, center.z - maxDim * 0.52);
       camera.lookAt(controls.target);
-      controls.minDistance = maxDim * 0.45;
-      controls.maxDistance = maxDim * 1.8;
+      controls.minDistance = maxDim * 0.18;
+      controls.maxDistance = maxDim * 2.2;
       controls.panSpeed = Math.max(maxDim / 20, 0.85);
-      scene.fog = new THREE.Fog(0xa4a39b, maxDim * 0.85, maxDim * 2.6);
+      scene.fog = new THREE.Fog(0x000000, maxDim * 1.35, maxDim * 3.8);
       controls.update();
       initialCameraPosition = camera.position.clone();
       initialControlTarget = controls.target.clone();
@@ -1485,7 +1491,14 @@
             child.castShadow = false;
             child.receiveShadow = false;
             if (child.material) {
-              child.material.side = THREE.DoubleSide;
+              child.material.envMapIntensity = 0.85;
+              if ('roughness' in child.material) {
+                child.material.roughness = Math.min(child.material.roughness ?? 1, 0.96);
+              }
+              if ('metalness' in child.material) {
+                child.material.metalness = Math.max(child.material.metalness ?? 0, 0.02);
+              }
+              child.material.needsUpdate = true;
             }
           }
         });
