@@ -5,6 +5,7 @@ import urllib.parse
 from datetime import datetime, timezone
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 from clan_t17_lookup import ClanT17Lookup, DEFAULT_RANK_ORDER
@@ -15,6 +16,7 @@ OUTPUT_CHANNEL_ID = 1459904650831724806
 STATE_FILE = data_path("rosterizer_state.json")
 UPDATE_DEBOUNCE_SECONDS = 2.0
 INCLUDE_HLLRECORDS_LINK = False
+ROSTER_LOCK_ADMIN_ROLE_IDS: list[int] = [1213495462632361994, 1098342675389890670, 1098342769468125214]
 
 ROSTER_DEFINITIONS = [
     {
@@ -25,6 +27,13 @@ ROSTER_DEFINITIONS = [
 ]
 
 RANK_ORDER: list[tuple[str, list[str]]] = DEFAULT_RANK_ORDER
+
+
+def _can_manage_roster_lock(interaction: discord.Interaction) -> bool:
+    user = interaction.user
+    if not isinstance(user, discord.Member):
+        return False
+    return any(role.id in ROSTER_LOCK_ADMIN_ROLE_IDS for role in user.roles)
 
 
 class Rosterizer(commands.Cog):
@@ -53,6 +62,15 @@ class Rosterizer(commands.Cog):
 
     def _roster_state(self, guild_id: int, roster_key: str) -> dict:
         return self._guild_state(guild_id).setdefault(roster_key, {})
+
+    def _is_roster_locked(self, guild_id: int) -> bool:
+        return bool(self._state.setdefault(str(guild_id), {}).get("roster_locked", False))
+
+    def _set_roster_locked(self, guild_id: int, locked: bool) -> None:
+        guild_state = self._state.setdefault(str(guild_id), {})
+        guild_state["roster_locked"] = bool(locked)
+        guild_state["updated_at"] = datetime.now(timezone.utc).isoformat()
+        self._save_state()
 
     def _get_roster_message_ids(self, guild_id: int, roster_key: str) -> list[int]:
         state = self._roster_state(guild_id, roster_key)
@@ -222,11 +240,57 @@ class Rosterizer(commands.Cog):
             guild = self.bot.get_guild(GUILD_ID)
             if guild is None:
                 return
+            if self._is_roster_locked(guild.id):
+                return
 
             for roster in ROSTER_DEFINITIONS:
                 entries = await self._build_roster_entries(guild, roster, force_resolve=force_resolve)
                 embeds = self._build_roster_embeds(guild, str(roster["title"]), entries)
                 await self._sync_roster_messages(guild, roster, embeds)
+
+    @app_commands.command(name="lockroster", description="Lock the roster.")
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    @app_commands.check(_can_manage_roster_lock)
+    async def lockroster(self, interaction: discord.Interaction) -> None:
+        if interaction.guild_id is None:
+            await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+            return
+
+        self._set_roster_locked(interaction.guild_id, True)
+        await interaction.response.send_message("Roster locked.", ephemeral=True)
+
+    @lockroster.error
+    async def lockroster_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
+        if isinstance(error, app_commands.CheckFailure):
+            if interaction.response.is_done():
+                await interaction.followup.send("You don't have permission to use this command.", ephemeral=True)
+            else:
+                await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
+            return
+        raise error
+
+    @app_commands.command(name="unlockroster", description="Unlock the roster.")
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    @app_commands.check(_can_manage_roster_lock)
+    async def unlockroster(self, interaction: discord.Interaction) -> None:
+        if interaction.guild_id is None:
+            await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        self._set_roster_locked(interaction.guild_id, False)
+        await self.update_all_rosters(force_resolve=False)
+        await interaction.followup.send("Roster unlocked.", ephemeral=True)
+
+    @unlockroster.error
+    async def unlockroster_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
+        if isinstance(error, app_commands.CheckFailure):
+            if interaction.response.is_done():
+                await interaction.followup.send("You don't have permission to use this command.", ephemeral=True)
+            else:
+                await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
+            return
+        raise error
 
     async def refresh_member_override(self, member: discord.Member) -> None:
         if member.guild.id != GUILD_ID:
