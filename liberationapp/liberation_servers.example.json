@@ -1,0 +1,14 @@
+[
+  {
+    "id": "7dr-main",
+    "name": "7DR Main",
+    "base_url": "https://7dr.hlladmin.com/api/",
+    "api_key_env": "CRCON_API_KEY"
+  },
+  {
+    "id": "7dr-second",
+    "name": "7DR Secondary",
+    "base_url": "https://example-second-server.hlladmin.com/api/",
+    "api_key_env": "CRCON_API_KEY_SECOND"
+  }
+]

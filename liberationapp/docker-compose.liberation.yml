@@ -1,0 +1,65 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    depends_on:
+      liberation-api:
+        condition: service_started
+    ports:
+      - "8081:80"
+    restart: unless-stopped
+
+  liberation-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.liberation
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: "postgresql://liberation:liberation@postgres:5432/liberation"
+      REDIS_URL: "redis://redis:6379/0"
+      LIBERATION_PORT: "8080"
+      LIBERATION_POLL_SECONDS: "10"
+      LIBERATION_TARGET_KILLS: "500"
+      LIBERATION_CACHE_TTL_SECONDS: "15"
+      CRCON_PANEL_URL: "https://7dr.hlladmin.com/api/"
+      CRCON_API_KEY: "${CRCON_API_KEY}"
+      LIBERATION_SERVER_ID: "7dr-main"
+      LIBERATION_SERVER_NAME: "7DR Main"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: liberation
+      POSTGRES_USER: liberation
+      POSTGRES_PASSWORD: liberation
+    volumes:
+      - liberation-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U liberation -d liberation"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  liberation-postgres:

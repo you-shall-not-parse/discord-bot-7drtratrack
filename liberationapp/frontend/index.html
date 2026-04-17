@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>7DR Liberation Map</title>
+  <style>
+    :root {
+      --bg: #e9dfcc;
+      --panel: rgba(43, 35, 27, 0.88);
+      --panel-soft: rgba(255, 248, 235, 0.72);
+      --ink: #201814;
+      --accent: #8e5c2d;
+      --accent-soft: #d9b37b;
+      --allies: #476f88;
+      --axis: #8c4032;
+      --neutral: #63584c;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Georgia, "Times New Roman", serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top, rgba(255, 244, 214, 0.9), transparent 34%),
+        linear-gradient(180deg, rgba(250, 238, 212, 0.9), rgba(217, 200, 170, 0.95)),
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180' viewBox='0 0 180 180'%3E%3Cg fill='none' stroke='rgba(32,24,20,0.08)' stroke-width='1'%3E%3Cpath d='M0 45h180M0 90h180M0 135h180M45 0v180M90 0v180M135 0v180'/%3E%3C/g%3E%3C/svg%3E");
+    }
+
+    .shell {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(320px, 420px);
+      min-height: 100vh;
+    }
+
+    .atlas {
+      padding: 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .title {
+      max-width: 720px;
+    }
+
+    .eyebrow {
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      font-size: 0.8rem;
+      color: rgba(32, 24, 20, 0.7);
+      margin-bottom: 0.75rem;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(2.4rem, 5vw, 4.5rem);
+      line-height: 0.95;
+      text-transform: uppercase;
+    }
+
+    .subtitle {
+      max-width: 50rem;
+      font-size: 1rem;
+      line-height: 1.6;
+      margin: 1rem 0 0;
+    }
+
+    .map-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 1rem;
+      align-content: start;
+    }
+
+    .map-card {
+      border: 1px solid rgba(32, 24, 20, 0.18);
+      background: var(--panel-soft);
+      border-radius: 18px;
+      padding: 1rem;
+      cursor: pointer;
+      transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+      box-shadow: 0 10px 24px rgba(77, 52, 31, 0.08);
+    }
+
+    .map-card:hover,
+    .map-card.active {
+      transform: translateY(-2px);
+      box-shadow: 0 16px 28px rgba(77, 52, 31, 0.18);
+      border-color: rgba(142, 92, 45, 0.6);
+    }
+
+    .map-card h2 {
+      margin: 0 0 0.75rem;
+      font-size: 1.05rem;
+      line-height: 1.2;
+    }
+
+    .meter {
+      height: 10px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: rgba(43, 35, 27, 0.12);
+      margin-bottom: 0.75rem;
+    }
+
+    .meter > span {
+      display: block;
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), var(--accent-soft));
+    }
+
+    .meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.75rem;
+      font-size: 0.88rem;
+    }
+
+    .panel {
+      background: var(--panel);
+      color: #f6ead8;
+      padding: 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .panel::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at top right, rgba(217, 179, 123, 0.24), transparent 30%);
+      pointer-events: none;
+    }
+
+    .status-pill {
+      align-self: flex-start;
+      padding: 0.35rem 0.75rem;
+      border-radius: 999px;
+      border: 1px solid rgba(246, 234, 216, 0.25);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+    }
+
+    .panel h3 {
+      margin: 0;
+      font-size: 2rem;
+      line-height: 1;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.75rem;
+    }
+
+    .stat {
+      background: rgba(255, 250, 240, 0.06);
+      border: 1px solid rgba(255, 250, 240, 0.08);
+      border-radius: 16px;
+      padding: 0.85rem;
+    }
+
+    .label {
+      font-size: 0.74rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      opacity: 0.7;
+      margin-bottom: 0.25rem;
+    }
+
+    .value {
+      font-size: 1.4rem;
+    }
+
+    .teams {
+      display: grid;
+      gap: 0.75rem;
+    }
+
+    .team-row {
+      display: grid;
+      grid-template-columns: 70px 1fr 70px;
+      gap: 0.75rem;
+      align-items: center;
+    }
+
+    .team-bar {
+      height: 12px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .team-bar > span {
+      display: block;
+      height: 100%;
+    }
+
+    .allies { background: var(--allies); }
+    .axis { background: var(--axis); }
+
+    .server-list {
+      display: grid;
+      gap: 0.75rem;
+    }
+
+    .server-item {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.8rem 0.9rem;
+      border-radius: 12px;
+      background: rgba(255, 250, 240, 0.06);
+      border: 1px solid rgba(255, 250, 240, 0.08);
+      font-size: 0.92rem;
+    }
+
+    .footer-note {
+      margin-top: auto;
+      font-size: 0.85rem;
+      opacity: 0.7;
+    }
+
+    @media (max-width: 960px) {
+      .shell { grid-template-columns: 1fr; }
+      .panel { min-height: 40vh; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="atlas">
+      <div class="title">
+        <div class="eyebrow">Hell Let Loose Campaign Layer</div>
+        <h1>7DR Liberation Theatre</h1>
+        <p class="subtitle">This is a minimal frontend container for the Docker stack. It reads live map totals from the backend API, which now persists data in Postgres and can cache read payloads in Redis.</p>
+      </div>
+      <section id="map-grid" class="map-grid"></section>
+    </section>
+
+    <aside class="panel">
+      <div id="status-pill" class="status-pill">Awaiting data</div>
+      <h3 id="detail-title">Select a battlefield</h3>
+      <div class="stats">
+        <div class="stat"><div class="label">Total Kills</div><div id="total-kills" class="value">0</div></div>
+        <div class="stat"><div class="label">Progress</div><div id="progress" class="value">0%</div></div>
+        <div class="stat"><div class="label">Control</div><div id="control" class="value">Neutral</div></div>
+        <div class="stat"><div class="label">Remaining</div><div id="remaining" class="value">0</div></div>
+      </div>
+      <div class="teams">
+        <div class="team-row">
+          <strong>Allies</strong>
+          <div class="team-bar"><span id="allies-bar" class="allies" style="width: 0%"></span></div>
+          <span id="allies-kills">0</span>
+        </div>
+        <div class="team-row">
+          <strong>Axis</strong>
+          <div class="team-bar"><span id="axis-bar" class="axis" style="width: 0%"></span></div>
+          <span id="axis-kills">0</span>
+        </div>
+      </div>
+      <div>
+        <div class="label">Per Server</div>
+        <div id="servers" class="server-list"></div>
+      </div>
+      <div id="footer-note" class="footer-note">Loading from /api/maps...</div>
+    </aside>
+  </main>
+
+  <script>
+    const grid = document.getElementById('map-grid');
+    const detailTitle = document.getElementById('detail-title');
+    const statusPill = document.getElementById('status-pill');
+    const totalKills = document.getElementById('total-kills');
+    const progress = document.getElementById('progress');
+    const control = document.getElementById('control');
+    const remaining = document.getElementById('remaining');
+    const alliesKills = document.getElementById('allies-kills');
+    const axisKills = document.getElementById('axis-kills');
+    const alliesBar = document.getElementById('allies-bar');
+    const axisBar = document.getElementById('axis-bar');
+    const servers = document.getElementById('servers');
+    const footerNote = document.getElementById('footer-note');
+
+    function percent(part, total) {
+      if (!total) return 0;
+      return Math.round((part / total) * 100);
+    }
+
+    function setActiveCard(mapName) {
+      document.querySelectorAll('.map-card').forEach((card) => {
+        card.classList.toggle('active', card.dataset.mapName === mapName);
+      });
+    }
+
+    function renderDetail(payload) {
+      const total = payload.total_kills || 0;
+      const allies = payload.allied_kills || 0;
+      const axis = payload.axis_kills || 0;
+      const lib = payload.liberation || {};
+
+      detailTitle.textContent = payload.map_name || 'Unknown map';
+      statusPill.textContent = lib.state || 'unknown';
+      totalKills.textContent = total;
+      progress.textContent = `${lib.progress_percent || 0}%`;
+      control.textContent = (lib.controlling_faction || 'neutral').replace(/^./, (s) => s.toUpperCase());
+      remaining.textContent = lib.remaining_kills || 0;
+      alliesKills.textContent = allies;
+      axisKills.textContent = axis;
+      alliesBar.style.width = `${percent(allies, Math.max(total, 1))}%`;
+      axisBar.style.width = `${percent(axis, Math.max(total, 1))}%`;
+      servers.innerHTML = '';
+
+      (payload.servers || []).forEach((server) => {
+        const row = document.createElement('div');
+        row.className = 'server-item';
+        row.innerHTML = `<span>${server.server_id}</span><span>${server.allied_kills} / ${server.axis_kills}</span>`;
+        servers.appendChild(row);
+      });
+
+      footerNote.textContent = payload.updated_at ? `Last updated ${payload.updated_at}` : 'No update timestamp available';
+      setActiveCard(payload.map_name || '');
+    }
+
+    async function fetchMapDetail(mapName) {
+      const response = await fetch(`/api/maps/${encodeURIComponent(mapName)}`);
+      if (!response.ok) return;
+      const payload = await response.json();
+      renderDetail(payload);
+    }
+
+    async function loadMaps() {
+      const response = await fetch('/api/maps');
+      const payload = await response.json();
+      const maps = payload.maps || [];
+      grid.innerHTML = '';
+
+      maps.forEach((map, index) => {
+        const card = document.createElement('article');
+        card.className = 'map-card';
+        card.dataset.mapName = map.map_name;
+        card.innerHTML = `
+          <h2>${map.map_name}</h2>
+          <div class="meter"><span style="width: ${map.liberation.progress_percent || 0}%"></span></div>
+          <div class="meta">
+            <span>${map.total_kills} kills</span>
+            <span>${map.liberation.state}</span>
+          </div>
+        `;
+        card.addEventListener('click', () => fetchMapDetail(map.map_name));
+        grid.appendChild(card);
+
+        if (index === 0) {
+          renderDetail(map);
+        }
+      });
+
+      footerNote.textContent = `${maps.length} maps loaded from Postgres-backed API`;
+    }
+
+    loadMaps().catch((error) => {
+      footerNote.textContent = `Failed to load maps: ${error.message}`;
+    });
+  </script>
+</body>
+</html>
