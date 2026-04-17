@@ -29,7 +29,7 @@ LIBERATION_PORT = int(os.getenv("LIBERATION_PORT", os.getenv("PORT", "8080")))
 LIBERATION_HOST = os.getenv("LIBERATION_HOST", "0.0.0.0")
 LIBERATION_POLL_SECONDS = max(3, int(os.getenv("LIBERATION_POLL_SECONDS", "10")))
 LIBERATION_TARGET_KILLS = max(1, int(os.getenv("LIBERATION_TARGET_KILLS", "500")))
-LIBERATION_ALL_TIME_TARGET_KILLS = max(1, int(os.getenv("LIBERATION_ALL_TIME_TARGET_KILLS", "2500000")))
+LIBERATION_ALL_TIME_TARGET_KILLS = max(1, int(os.getenv("LIBERATION_ALL_TIME_TARGET_KILLS", "25000000")))
 LIBERATION_RECENT_LOG_LIMIT = max(10, int(os.getenv("LIBERATION_RECENT_LOG_LIMIT", "250")))
 LIBERATION_CACHE_TTL_SECONDS = max(3, int(os.getenv("LIBERATION_CACHE_TTL_SECONDS", "15")))
 LIBERATION_PROCESSED_EVENT_KEEP = max(1000, int(os.getenv("LIBERATION_PROCESSED_EVENT_KEEP", "5000")))
@@ -1103,8 +1103,6 @@ async def build_maps_payload(store: LiberationStore, server_id: str | None, targ
 			"all_time_objective": build_all_time_objective(all_time_total_kills),
 			"server_id": server_id,
 			"source": "postgres",
-			"weighted_kills_supported": False,
-			"weighted_kills_reason": "Current CRCON polling only uses parsed kill teams. Role-weighted liberation needs reliable role metadata joined to each kill event.",
 			"challenge_tracks": build_challenge_tracks(target_kills),
 		}
 	)
@@ -1236,8 +1234,6 @@ async def map_detail_handler(request: web.Request) -> web.Response:
 				occupied_faction=occupied_faction,
 			),
 			"source": "postgres",
-			"weighted_kills_supported": False,
-			"weighted_kills_reason": "Current CRCON polling only uses parsed kill teams. Role-weighted liberation needs reliable role metadata joined to each kill event.",
 			"challenge_tracks": build_challenge_tracks(target_kills),
 		}
 	)
