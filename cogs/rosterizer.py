@@ -4,7 +4,7 @@ import logging
 import os
 import time
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import discord
 from discord import app_commands
@@ -24,6 +24,7 @@ LOCKED_DM_MESSAGE = (
 )
 LOCKED_DM_COOLDOWN_SECONDS = 60
 LOCK_REVERT_SUPPRESSION_SECONDS = 5
+AUDIT_LOG_LOOKBACK_SECONDS = 15
 
 ROSTER_DEFINITIONS = [
     {
@@ -101,17 +102,58 @@ class Rosterizer(commands.Cog):
         guild_state["updated_at"] = datetime.now(timezone.utc).isoformat()
         self._save_state()
 
-    async def _maybe_dm_locked_notice(self, member: discord.Member) -> None:
+    async def _find_role_change_actor(
+        self,
+        before: discord.Member,
+        after: discord.Member,
+    ) -> discord.abc.User | discord.Member | None:
+        bot_member = after.guild.me or after.guild.get_member(self.bot.user.id if self.bot.user else 0)
+        if bot_member is None or not bot_member.guild_permissions.view_audit_log:
+            self.logger.warning("roster_lock_audit_log_unavailable guild_id=%s", after.guild.id)
+            return None
+
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=AUDIT_LOG_LOOKBACK_SECONDS)
+        try:
+            async for entry in after.guild.audit_logs(limit=10, action=discord.AuditLogAction.member_role_update):
+                target = entry.target
+                if getattr(target, "id", None) != after.id:
+                    continue
+                if entry.created_at < cutoff:
+                    continue
+                actor = entry.user
+                if actor is None:
+                    continue
+                if self.bot.user is not None and actor.id == self.bot.user.id:
+                    continue
+                self.logger.info(
+                    "roster_lock_actor_found target_member_id=%s actor_id=%s",
+                    after.id,
+                    actor.id,
+                )
+                return actor
+        except (discord.Forbidden, discord.HTTPException) as exc:
+            self.logger.warning("roster_lock_audit_log_failed guild_id=%s error=%s", after.guild.id, exc)
+            return None
+
+        self.logger.warning("roster_lock_actor_not_found target_member_id=%s", after.id)
+        return None
+
+    async def _maybe_dm_locked_notice(
+        self,
+        actor: discord.abc.User | discord.Member,
+        *,
+        target_member: discord.Member,
+    ) -> None:
         now = time.time()
-        last = self._dm_last_sent.get(member.id, 0.0)
+        last = self._dm_last_sent.get(actor.id, 0.0)
         if now - last < LOCKED_DM_COOLDOWN_SECONDS:
-            self.logger.info("roster_lock_dm_skipped_cooldown member_id=%s", member.id)
+            self.logger.info("roster_lock_dm_skipped_cooldown actor_id=%s", actor.id)
             return
 
-        target_user: discord.abc.User | discord.Member = member
+        target_user: discord.abc.User | discord.Member = actor
         if getattr(target_user, "dm_channel", None) is None:
             try:
-                fetched_user = await self.bot.fetch_user(member.id)
+                fetched_user = await self.bot.fetch_user(actor.id)
             except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                 fetched_user = None
             if fetched_user is not None:
@@ -122,10 +164,15 @@ class Rosterizer(commands.Cog):
             if dm_channel is None:
                 dm_channel = await target_user.create_dm()
             await dm_channel.send(LOCKED_DM_MESSAGE)
-            self._dm_last_sent[member.id] = now
-            self.logger.info("roster_lock_dm_sent member_id=%s", member.id)
+            self._dm_last_sent[actor.id] = now
+            self.logger.info("roster_lock_dm_sent actor_id=%s target_member_id=%s", actor.id, target_member.id)
         except (discord.Forbidden, discord.HTTPException) as exc:
-            self.logger.warning("roster_lock_dm_failed member_id=%s error=%s", member.id, exc)
+            self.logger.warning(
+                "roster_lock_dm_failed actor_id=%s target_member_id=%s error=%s",
+                actor.id,
+                target_member.id,
+                exc,
+            )
             return
 
     async def _revert_locked_roster_change(self, before: discord.Member, after: discord.Member) -> bool:
@@ -443,7 +490,9 @@ class Rosterizer(commands.Cog):
                 sorted(before_tracked_ids),
                 sorted(after_tracked_ids),
             )
-            await self._maybe_dm_locked_notice(after)
+            actor = await self._find_role_change_actor(before, after)
+            if actor is not None:
+                await self._maybe_dm_locked_notice(actor, target_member=after)
             try:
                 await self._revert_locked_roster_change(before, after)
             except (discord.Forbidden, discord.HTTPException) as exc:
