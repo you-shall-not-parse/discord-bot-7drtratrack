@@ -54,14 +54,17 @@
       max-width: 1600px;
       margin: 0 auto;
       padding: 1.35rem;
-      display: grid;
-      grid-template-columns: minmax(0, 1.6fr) minmax(360px, 430px);
-      gap: 1.25rem;
+      display: block;
     }
 
     .main-column {
       display: grid;
       gap: 1.1rem;
+    }
+
+    .dashboard-only.hidden,
+    .battle-map-page.hidden {
+      display: none;
     }
 
     .hero,
@@ -81,7 +84,6 @@
         linear-gradient(135deg, rgba(255, 248, 235, 0.88), rgba(233, 216, 176, 0.92));
     }
 
-    .eyebrow,
     .hero-label,
     .section-label,
     .detail-label,
@@ -96,16 +98,11 @@
       margin-bottom: 0.3rem;
     }
 
-    .eyebrow {
-      margin-bottom: 0.85rem;
-      color: rgba(26, 21, 17, 0.7);
-    }
-
     h1 {
-      font-size: clamp(2.8rem, 6vw, 5.4rem);
-      line-height: 0.92;
+      font-size: clamp(2rem, 4vw, 3.35rem);
+      line-height: 0.96;
       text-transform: uppercase;
-      max-width: 9ch;
+      max-width: 12ch;
     }
 
     .hero-copy {
@@ -118,8 +115,32 @@
     .hero-grid {
       margin-top: 1.35rem;
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 0.85rem;
+    }
+
+    .hero-actions {
+      margin-top: 1rem;
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .hero-button {
+      border: 1px solid rgba(32, 24, 16, 0.14);
+      border-radius: 999px;
+      padding: 0.7rem 1rem;
+      background: rgba(25, 21, 15, 0.92);
+      color: #f7ead5;
+      font: inherit;
+      cursor: pointer;
+      transition: transform 140ms ease, box-shadow 140ms ease;
+      box-shadow: 0 12px 24px rgba(26, 21, 17, 0.16);
+    }
+
+    .hero-button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 16px 28px rgba(26, 21, 17, 0.2);
     }
 
     .hero-stat {
@@ -143,6 +164,11 @@
       background:
         radial-gradient(circle at top left, rgba(198, 151, 76, 0.12), transparent 24%),
         linear-gradient(180deg, rgba(253, 249, 240, 0.84), rgba(227, 210, 171, 0.88));
+      display: grid;
+      gap: 1rem;
+    }
+
+    .tile-board {
       display: grid;
       gap: 1rem;
     }
@@ -371,12 +397,10 @@
 
     .front-strip {
       display: grid;
-      grid-auto-flow: column;
-      grid-auto-columns: minmax(190px, 220px);
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
       gap: 0.75rem;
-      overflow-x: auto;
-      padding-bottom: 0.35rem;
-      scrollbar-width: thin;
+      overflow: visible;
+      padding-bottom: 0;
     }
 
     .front-chip {
@@ -761,6 +785,101 @@
       align-content: start;
     }
 
+    .battle-map-page {
+      position: fixed;
+      inset: 0;
+      z-index: 40;
+      background: #000;
+      display: grid;
+      grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+    }
+
+    .map-menu-panel {
+      position: relative;
+      padding: 1.25rem 1.1rem 1.1rem;
+      background: linear-gradient(180deg, rgba(18, 18, 20, 0.98), rgba(7, 7, 9, 0.98));
+      color: #f6ead8;
+      border-right: 1px solid rgba(255, 248, 235, 0.1);
+      display: grid;
+      gap: 1rem;
+      align-content: start;
+      overflow-y: auto;
+      transition: transform 180ms ease, opacity 180ms ease;
+    }
+
+    .battle-map-page.menu-collapsed {
+      grid-template-columns: 0 minmax(0, 1fr);
+    }
+
+    .battle-map-page.menu-collapsed .map-menu-panel {
+      transform: translateX(-100%);
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .map-stage {
+      position: relative;
+      min-width: 0;
+      min-height: 100vh;
+      background: #000;
+    }
+
+    .map-stage .map-shell {
+      min-height: 100vh;
+      height: 100vh;
+      border: 0;
+      border-radius: 0;
+      box-shadow: none;
+    }
+
+    .map-stage .map-viewport {
+      min-height: 100vh;
+    }
+
+    .menu-toggle,
+    .map-back-button {
+      border: 1px solid rgba(255, 248, 235, 0.16);
+      border-radius: 999px;
+      background: rgba(9, 9, 11, 0.82);
+      color: #f6ead8;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .menu-toggle {
+      position: absolute;
+      top: 1rem;
+      left: 1rem;
+      z-index: 3;
+      width: 2.8rem;
+      height: 2.8rem;
+      font-size: 1.2rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .map-back-button {
+      padding: 0.55rem 0.9rem;
+      justify-self: start;
+    }
+
+    .map-menu-header {
+      display: grid;
+      gap: 0.65rem;
+      padding-top: 3.2rem;
+    }
+
+    .map-menu-copy {
+      line-height: 1.5;
+      opacity: 0.8;
+    }
+
+    .map-menu-section {
+      display: grid;
+      gap: 0.7rem;
+    }
+
     .status-pill {
       justify-self: start;
       padding: 0.36rem 0.7rem;
@@ -850,10 +969,6 @@
     }
 
     @media (max-width: 1180px) {
-      .page {
-        grid-template-columns: 1fr;
-      }
-
       .intel-panel {
         position: static;
       }
@@ -887,16 +1002,30 @@
       .map-shell {
         min-height: 56vh;
       }
+
+      .battle-map-page,
+      .battle-map-page.menu-collapsed {
+        grid-template-columns: 1fr;
+      }
+
+      .map-menu-panel {
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: min(90vw, 360px);
+        z-index: 4;
+      }
     }
   </style>
 </head>
 <body>
   <main class="page">
-    <section class="main-column">
+    <section id="dashboard-view" class="main-column dashboard-only">
       <header class="hero">
-        <div class="eyebrow">Hell Let Loose Campaign Theatre</div>
         <h1>HLL Frontlines</h1>
         <p class="hero-copy">A scrollable war theatre inspired by strategy campaign maps. Pan across Europe and North Africa, zoom into active fronts, and select battle nodes to inspect the Allies versus Axis race on each Hell Let Loose map.</p>
+        <div class="hero-actions">
+          <button id="open-battle-map" class="hero-button" type="button">Open Battle Map</button>
+        </div>
         <div class="hero-grid">
           <div class="hero-stat">
             <span class="hero-label">Tracked Fronts</span>
@@ -916,35 +1045,15 @@
       <section class="theatre">
         <div class="section-header">
           <div>
-            <span class="section-label">Campaign Map</span>
-            <h2>European Theatre</h2>
+            <span class="section-label">Frontline Board</span>
+            <h2>Campaign Tiles</h2>
           </div>
-          <p>Drag to pan, use the controls to zoom, and click any battle marker to inspect the live race. Active battles surface the server name directly on the map.</p>
+          <p>Select any front tile to inspect the live race, or open the battle map for the full-screen campaign view.</p>
         </div>
 
-        <div class="map-toolbar">
-          <div class="toolbar-group">
-            <button id="zoom-out" class="toolbar-button" type="button" aria-label="Zoom out">−</button>
-            <button id="zoom-reset" class="toolbar-button" type="button">Reset View</button>
-            <button id="zoom-in" class="toolbar-button" type="button" aria-label="Zoom in">+</button>
-            <button id="focus-active" class="toolbar-button" type="button">Focus Active</button>
-          </div>
-          <div class="map-legend">
-            <span class="legend-chip"><span class="legend-dot live"></span>Live battle</span>
-            <span class="legend-chip"><span class="legend-dot allies"></span>Allies progress</span>
-            <span class="legend-chip"><span class="legend-dot axis"></span>Axis progress</span>
-          </div>
+        <div class="tile-board">
+          <div id="front-strip" class="front-strip"></div>
         </div>
-
-        <div class="map-shell">
-          <div id="map-viewport" class="map-viewport">
-            <canvas id="map-canvas" class="map-canvas"></canvas>
-            <div id="map-overlay-layer" class="map-overlay-layer"></div>
-            <div id="map-loading" class="map-loading">Loading world map model...</div>
-          </div>
-        </div>
-
-        <div id="front-strip" class="front-strip"></div>
 
         <div id="empty-state" class="empty-state" hidden>No campaign fronts tracked yet.</div>
       </section>
@@ -960,14 +1069,33 @@
         <div id="challenge-grid" class="challenge-grid"></div>
       </section>
     </section>
+  </main>
 
-    <aside class="intel-panel">
-      <div id="status-pill" class="status-pill">Awaiting data</div>
-      <div>
-        <span class="panel-label">Intel Panel</span>
-        <h3 id="detail-title" class="detail-title">Select a front</h3>
+  <section id="battle-map-page" class="battle-map-page hidden menu-collapsed">
+    <aside id="map-menu-panel" class="map-menu-panel">
+      <button id="return-dashboard" class="map-back-button" type="button">← Dashboard</button>
+      <div class="map-menu-header">
+        <div id="status-pill" class="status-pill">Awaiting data</div>
+        <div>
+          <span class="panel-label">Battle Map</span>
+          <h3 id="detail-title" class="detail-title">Select a front</h3>
+        </div>
+        <p id="detail-copy" class="detail-subtext map-menu-copy">Select any campaign marker to inspect its progress, current live server, and the first-to-500 race between Allies and Axis.</p>
       </div>
-      <p id="detail-copy" class="detail-subtext">Select any campaign marker to inspect its progress, current live server, and the first-to-500 race between Allies and Axis.</p>
+
+      <section class="map-menu-section">
+        <div class="toolbar-group">
+          <button id="zoom-out" class="toolbar-button" type="button" aria-label="Zoom out">−</button>
+          <button id="zoom-reset" class="toolbar-button" type="button">Reset View</button>
+          <button id="zoom-in" class="toolbar-button" type="button" aria-label="Zoom in">+</button>
+          <button id="focus-active" class="toolbar-button" type="button">Focus Active</button>
+        </div>
+        <div class="map-legend">
+          <span class="legend-chip"><span class="legend-dot live"></span>Live battle</span>
+          <span class="legend-chip"><span class="legend-dot allies"></span>Allies progress</span>
+          <span class="legend-chip"><span class="legend-dot axis"></span>Axis progress</span>
+        </div>
+      </section>
 
       <div class="detail-grid">
         <div class="detail-card">
@@ -1005,14 +1133,25 @@
         </div>
       </section>
 
-      <section>
+      <section class="map-menu-section">
         <span class="panel-label">Server Breakdown</span>
         <div id="servers" class="server-list"></div>
       </section>
 
       <div id="footer-note" class="footer-note">Loading campaign data...</div>
     </aside>
-  </main>
+
+    <div class="map-stage">
+      <button id="menu-toggle" class="menu-toggle" type="button" aria-label="Toggle menu">➜</button>
+      <div class="map-shell">
+        <div id="map-viewport" class="map-viewport">
+          <canvas id="map-canvas" class="map-canvas"></canvas>
+          <div id="map-overlay-layer" class="map-overlay-layer"></div>
+          <div id="map-loading" class="map-loading">Loading world map model...</div>
+        </div>
+      </div>
+    </div>
+  </section>
 
   <script type="importmap">
     {
@@ -1058,6 +1197,11 @@
     const mapCanvas = document.getElementById('map-canvas');
     const mapOverlayLayer = document.getElementById('map-overlay-layer');
     const mapLoading = document.getElementById('map-loading');
+    const dashboardView = document.getElementById('dashboard-view');
+    const battleMapPage = document.getElementById('battle-map-page');
+    const openBattleMapButton = document.getElementById('open-battle-map');
+    const returnDashboardButton = document.getElementById('return-dashboard');
+    const menuToggleButton = document.getElementById('menu-toggle');
     const frontStrip = document.getElementById('front-strip');
     const emptyState = document.getElementById('empty-state');
     const challengeGrid = document.getElementById('challenge-grid');
@@ -1092,8 +1236,8 @@
     const overlayMarkers = new Map();
     const projectionVector = new THREE.Vector3();
 
-    const FIXED_POLAR_ANGLE = 0.88;
-    const FIXED_AZIMUTH_ANGLE = -0.52;
+    const FIXED_POLAR_ANGLE = 0.8;
+    const FIXED_AZIMUTH_ANGLE = -0.4;
 
     const renderer = new THREE.WebGLRenderer({ canvas: mapCanvas, antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -1462,7 +1606,7 @@
       controls.target.set(center.x, center.y, center.z);
       camera.near = Math.max(maxDim / 200, 0.05);
       camera.far = maxDim * 12;
-      camera.position.set(center.x + maxDim * 0.56, center.y + maxDim * 0.69, center.z - maxDim * 0.52);
+      camera.position.set(center.x + maxDim * 0.42, center.y + maxDim * 0.78, center.z - maxDim * 0.34);
       camera.lookAt(controls.target);
       controls.minDistance = maxDim * 0.18;
       controls.maxDistance = maxDim * 2.2;
@@ -1542,6 +1686,24 @@
       renderFrame();
     }
 
+    function setBattleMapOpen(isOpen) {
+      dashboardView.classList.toggle('hidden', isOpen);
+      battleMapPage.classList.toggle('hidden', !isOpen);
+      if (isOpen) {
+        resizeRenderer();
+        renderFrame();
+      }
+    }
+
+    function toggleMapMenu() {
+      battleMapPage.classList.toggle('menu-collapsed');
+      menuToggleButton.textContent = battleMapPage.classList.contains('menu-collapsed') ? '➜' : '←';
+      requestAnimationFrame(() => {
+        resizeRenderer();
+        renderFrame();
+      });
+    }
+
     function moveCameraToWorldPosition(worldPosition) {
       if (!worldPosition) {
         return;
@@ -1580,6 +1742,9 @@
       zoomOutButton.addEventListener('click', () => zoomCamera(1.18));
       zoomResetButton.addEventListener('click', resetCamera);
       focusActiveButton.addEventListener('click', focusActiveFront);
+      openBattleMapButton.addEventListener('click', () => setBattleMapOpen(true));
+      returnDashboardButton.addEventListener('click', () => setBattleMapOpen(false));
+      menuToggleButton.addEventListener('click', toggleMapMenu);
 
       window.addEventListener('resize', () => {
         resizeRenderer();
@@ -1589,6 +1754,7 @@
 
     initializeInteractions();
     await loadModel();
+    setBattleMapOpen(false);
     loadMaps().catch((error) => {
       footerNote.textContent = `Failed to load campaign data: ${error.message}`;
     });
