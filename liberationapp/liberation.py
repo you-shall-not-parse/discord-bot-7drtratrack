@@ -244,7 +244,10 @@ def extract_attacking_team(item: dict[str, Any]) -> str | None:
 
 def build_liberation_status(allied_kills: int, axis_kills: int, target_kills: int) -> dict[str, Any]:
 	total_kills = allied_kills + axis_kills
-	progress = min((total_kills / target_kills) * 100.0, 100.0) if target_kills > 0 else 0.0
+	leading_kills = max(allied_kills, axis_kills)
+	allies_progress = min((allied_kills / target_kills) * 100.0, 100.0) if target_kills > 0 else 0.0
+	axis_progress = min((axis_kills / target_kills) * 100.0, 100.0) if target_kills > 0 else 0.0
+	race_progress = min((leading_kills / target_kills) * 100.0, 100.0) if target_kills > 0 else 0.0
 
 	if allied_kills > axis_kills:
 		controlling_faction = "allies"
@@ -253,19 +256,69 @@ def build_liberation_status(allied_kills: int, axis_kills: int, target_kills: in
 	else:
 		controlling_faction = "neutral"
 
+	winner = None
+	if allied_kills >= target_kills and allied_kills > axis_kills:
+		winner = "allies"
+	elif axis_kills >= target_kills and axis_kills > allied_kills:
+		winner = "axis"
+	elif allied_kills >= target_kills and axis_kills >= target_kills and allied_kills == axis_kills:
+		winner = "draw"
+
 	if total_kills == 0:
 		state = "idle"
-	elif total_kills >= target_kills:
-		state = "liberated"
+	elif winner == "allies":
+		state = "allies_victory"
+	elif winner == "axis":
+		state = "axis_victory"
+	elif winner == "draw":
+		state = "sudden_death"
+	elif controlling_faction == "neutral":
+		state = "deadlocked"
 	else:
-		state = "contested"
+		state = "race_on"
 
 	return {
 		"state": state,
-		"progress_percent": round(progress, 2),
+		"mode": "first_to_target",
+		"progress_percent": round(race_progress, 2),
 		"target_kills": target_kills,
-		"remaining_kills": max(target_kills - total_kills, 0),
+		"remaining_kills": max(target_kills - leading_kills, 0),
 		"controlling_faction": controlling_faction,
+		"leading_faction": controlling_faction,
+		"winner": winner,
+		"total_kills": total_kills,
+		"leading_kills": leading_kills,
+		"race_margin": abs(allied_kills - axis_kills),
+		"allies_progress_percent": round(allies_progress, 2),
+		"axis_progress_percent": round(axis_progress, 2),
+		"allies_remaining_kills": max(target_kills - allied_kills, 0),
+		"axis_remaining_kills": max(target_kills - axis_kills, 0),
+	}
+
+
+def build_challenge_tracks(target_kills: int) -> dict[str, Any]:
+	return {
+		"current": {
+			"slug": "frontline-race",
+			"label": "Frontline Race",
+			"description": "Allies versus Axis. First faction to 500 kills secures the map.",
+			"target_kills": target_kills,
+			"mode": "first_to_target",
+			"window": "campaign",
+			"status": "active",
+		},
+		"weekly": {
+			"slug": "weekly-operation",
+			"label": "Weekly Operation",
+			"description": "Reserved for weekly map-specific kill objectives.",
+			"status": "planned",
+		},
+		"monthly": {
+			"slug": "monthly-theatre",
+			"label": "Monthly Theatre",
+			"description": "Reserved for monthly campaigns and rotating map challenges.",
+			"status": "planned",
+		},
 	}
 
 
@@ -876,8 +929,16 @@ async def build_maps_payload(store: LiberationStore, server_id: str | None, targ
 			}
 		)
 
-	maps.sort(key=lambda item: item["map_name"])
-	return normalize_payload({"maps": maps, "target_kills": target_kills, "server_id": server_id, "source": "postgres"})
+	maps.sort(key=lambda item: (-item["liberation"]["progress_percent"], item["map_name"]))
+	return normalize_payload(
+		{
+			"maps": maps,
+			"target_kills": target_kills,
+			"server_id": server_id,
+			"source": "postgres",
+			"challenge_tracks": build_challenge_tracks(target_kills),
+		}
+	)
 
 
 @web.middleware
@@ -978,6 +1039,7 @@ async def map_detail_handler(request: web.Request) -> web.Response:
 			],
 			"liberation": build_liberation_status(allied_kills, axis_kills, target_kills),
 			"source": "postgres",
+			"challenge_tracks": build_challenge_tracks(target_kills),
 		}
 	)
 	await cache.set_json(cache_key, payload, LIBERATION_CACHE_TTL_SECONDS)
