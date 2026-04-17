@@ -128,6 +128,64 @@
       flex-wrap: wrap;
     }
 
+    .hero-objective {
+      margin-top: 1.15rem;
+      padding: 1rem 1.05rem;
+      border-radius: 18px;
+      background: rgba(25, 21, 15, 0.9);
+      color: #f6ead8;
+      box-shadow: 0 14px 30px rgba(26, 21, 17, 0.18);
+      display: grid;
+      gap: 0.7rem;
+    }
+
+    .hero-objective-top,
+    .hero-objective-bottom {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      align-items: baseline;
+    }
+
+    .hero-objective-value {
+      font-size: clamp(1.4rem, 3vw, 2.1rem);
+      line-height: 1;
+    }
+
+    .hero-objective-subcopy {
+      opacity: 0.74;
+      text-align: right;
+      max-width: 24rem;
+      line-height: 1.45;
+    }
+
+    .hero-objective-track,
+    .control-track,
+    .mini-control-track {
+      position: relative;
+      overflow: hidden;
+      border-radius: 999px;
+      background:
+        linear-gradient(90deg, rgba(166, 82, 65, 0.32) 0%, rgba(166, 82, 65, 0.16) 50%, rgba(93, 136, 167, 0.16) 50%, rgba(93, 136, 167, 0.32) 100%);
+    }
+
+    .hero-objective-track {
+      height: 14px;
+    }
+
+    .hero-objective-fill {
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 0%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--gold-soft), var(--gold));
+    }
+
+    .hero-objective-bottom {
+      font-size: 0.88rem;
+      opacity: 0.78;
+    }
+
     .hero-button {
       border: 1px solid rgba(32, 24, 16, 0.14);
       border-radius: 999px;
@@ -919,6 +977,64 @@
       font-size: 1.45rem;
     }
 
+    .control-board {
+      display: grid;
+      gap: 0.75rem;
+      padding: 1rem;
+      border-radius: 18px;
+      background: rgba(255, 248, 235, 0.05);
+      border: 1px solid rgba(255, 248, 235, 0.08);
+    }
+
+    .control-track {
+      height: 18px;
+    }
+
+    .mini-control-track {
+      height: 12px;
+    }
+
+    .control-track::after,
+    .mini-control-track::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 50%;
+      width: 2px;
+      transform: translateX(-50%);
+      background: rgba(255, 248, 235, 0.72);
+      opacity: 0.8;
+    }
+
+    .control-fill,
+    .mini-control-fill {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 0%;
+    }
+
+    .control-fill.allies,
+    .mini-control-fill.allies {
+      background: linear-gradient(90deg, rgba(93, 136, 167, 0.42), rgba(93, 136, 167, 0.96));
+    }
+
+    .control-fill.axis,
+    .mini-control-fill.axis {
+      background: linear-gradient(90deg, rgba(166, 82, 65, 0.96), rgba(166, 82, 65, 0.42));
+    }
+
+    .control-scale {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.5rem;
+      font-size: 0.78rem;
+      opacity: 0.72;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
     .versus-board {
       display: grid;
       gap: 0.85rem;
@@ -1023,6 +1139,20 @@
         <div class="hero-actions">
           <button id="open-battle-map" class="hero-button" type="button">Open Battle Map</button>
         </div>
+        <div class="hero-objective">
+          <div class="hero-objective-top">
+            <div>
+              <span class="hero-label">All-Time Objective</span>
+              <div id="all-time-objective-total" class="hero-objective-value">0 / 25,000,000</div>
+            </div>
+            <div id="all-time-objective-copy" class="hero-objective-subcopy">All kills on all tracked maps and all sides feed the long-war theatre objective.</div>
+          </div>
+          <div class="hero-objective-track"><span id="all-time-objective-bar" class="hero-objective-fill" style="width: 0%"></span></div>
+          <div class="hero-objective-bottom">
+            <span id="all-time-objective-progress">0%</span>
+            <span id="all-time-objective-remaining">25,000,000 remaining</span>
+          </div>
+        </div>
         <div class="hero-grid">
           <div class="hero-stat">
             <span class="hero-label">Servers Tracked</span>
@@ -1070,39 +1200,48 @@
         <span class="panel-label">Intel Panel</span>
         <h3 id="detail-title" class="detail-title">Select a front</h3>
       </div>
-      <p id="detail-copy" class="detail-subtext">Select any front tile to inspect its progress, current live server, and the first-to-500 race between Allies and Axis.</p>
+      <p id="detail-copy" class="detail-subtext">Select any front tile to inspect the live tug-of-war control state, current live server, and the all-time kill totals still accumulating behind that front.</p>
 
       <div class="detail-grid">
         <div class="detail-card">
-          <span class="detail-label">Target</span>
-          <div id="target-kills" class="detail-value">500</div>
+          <span class="detail-label">Occupation Threshold</span>
+          <div id="target-kills" class="detail-value">100%</div>
         </div>
         <div class="detail-card">
-          <span class="detail-label">Lead Margin</span>
+          <span class="detail-label">Current Control</span>
           <div id="race-margin" class="detail-value">0</div>
         </div>
         <div class="detail-card">
-          <span class="detail-label">Leading Faction</span>
+          <span class="detail-label">Controlling Faction</span>
           <div id="control" class="detail-value">Neutral</div>
         </div>
         <div class="detail-card">
-          <span class="detail-label">Kills to Win</span>
-          <div id="remaining" class="detail-value">500</div>
+          <span class="detail-label">Front Status</span>
+          <div id="remaining" class="detail-value">Idle</div>
         </div>
       </div>
+
+      <section class="control-board">
+        <div class="team-header">
+          <strong>Liberation Status</strong>
+          <span id="control-value-label">0%</span>
+        </div>
+        <div class="control-track"><span id="control-bar-fill" class="control-fill allies" style="left: 50%; width: 0%"></span></div>
+        <div class="control-scale"><span>Axis</span><span>Neutral</span><span>Allies</span></div>
+      </section>
 
       <section class="versus-board">
         <div>
           <div class="team-header">
-            <strong>Allies</strong>
-            <span id="allies-kills">0 / 500</span>
+            <strong>Allies Total Kills</strong>
+            <span id="allies-kills">0</span>
           </div>
           <div class="team-progress"><span id="allies-bar" class="allies-fill" style="width: 0%"></span></div>
         </div>
         <div>
           <div class="team-header">
-            <strong>Axis</strong>
-            <span id="axis-kills">0 / 500</span>
+            <strong>Axis Total Kills</strong>
+            <span id="axis-kills">0</span>
           </div>
           <div class="team-progress"><span id="axis-bar" class="axis-fill" style="width: 0%"></span></div>
         </div>
@@ -1205,6 +1344,13 @@
     const heroServerCount = document.getElementById('hero-server-count');
     const heroServerNames = document.getElementById('hero-server-names');
     const heroLiveCount = document.getElementById('hero-live-count');
+    const allTimeObjectiveTotal = document.getElementById('all-time-objective-total');
+    const allTimeObjectiveCopy = document.getElementById('all-time-objective-copy');
+    const allTimeObjectiveBar = document.getElementById('all-time-objective-bar');
+    const allTimeObjectiveProgress = document.getElementById('all-time-objective-progress');
+    const allTimeObjectiveRemaining = document.getElementById('all-time-objective-remaining');
+    const controlBarFill = document.getElementById('control-bar-fill');
+    const controlValueLabel = document.getElementById('control-value-label');
     const zoomInButton = document.getElementById('zoom-in');
     const zoomOutButton = document.getElementById('zoom-out');
     const zoomResetButton = document.getElementById('zoom-reset');
@@ -1277,6 +1423,49 @@
       return Math.max(0, Math.min(100, Math.round((value / target) * 100)));
     }
 
+    function formatCount(value) {
+      return new Intl.NumberFormat('en-GB').format(value || 0);
+    }
+
+    function formatStateLabel(value) {
+      return String(value || 'idle').replace(/_/g, ' ');
+    }
+
+    function controlBarConfig(controlValue) {
+      const safeValue = Math.max(-100, Math.min(100, Number(controlValue || 0)));
+      const width = `${Math.abs(safeValue) / 2}%`;
+      if (safeValue >= 0) {
+        return {
+          className: 'allies',
+          left: '50%',
+          width,
+        };
+      }
+      return {
+        className: 'axis',
+        left: `${50 - (Math.abs(safeValue) / 2)}%`,
+        width,
+      };
+    }
+
+    function buildMiniControlTrack(controlValue) {
+      const config = controlBarConfig(controlValue);
+      return `<div class="mini-control-track"><span class="mini-control-fill ${config.className}" style="left: ${config.left}; width: ${config.width}"></span></div>`;
+    }
+
+    function renderAllTimeObjective(objective) {
+      const targetKills = objective?.target_kills || 25000000;
+      const totalKills = objective?.total_kills || 0;
+      const remainingKills = objective?.remaining_kills ?? Math.max(targetKills - totalKills, 0);
+      const progressPercent = objective?.progress_percent || 0;
+
+      allTimeObjectiveTotal.textContent = `${formatCount(totalKills)} / ${formatCount(targetKills)}`;
+      allTimeObjectiveCopy.textContent = 'All kills on all tracked maps and both factions feed this permanent theatre objective.';
+      allTimeObjectiveBar.style.width = `${progressPercent}%`;
+      allTimeObjectiveProgress.textContent = `${progressPercent}% complete`;
+      allTimeObjectiveRemaining.textContent = `${formatCount(remainingKills)} remaining`;
+    }
+
     function formatActiveServers(activeServers) {
       return (activeServers || [])
         .map((server) => server.server_name || server.server_id)
@@ -1316,6 +1505,7 @@
       const lib = map.liberation || {};
       const activeServers = formatActiveServers(map.active_servers);
       const layout = getFrontLayout(map.map_name, index);
+      const controlLane = buildMiniControlTrack(lib.control_value || 0);
       const marker = document.createElement('button');
       marker.type = 'button';
       marker.className = `map-marker ${map.is_active_battle ? 'live' : ''}`;
@@ -1329,16 +1519,9 @@
           <span class="map-marker-badge ${map.is_active_battle ? 'live' : ''}">${map.is_active_battle ? `ACTIVE - ${activeServers || 'tracked server'}` : layout.region}</span>
         </div>
         <div class="map-marker-lanes">
-          <div>
-            <div class="map-marker-race"><span>Allies</span><span>${map.allied_kills}</span></div>
-            <div class="race-lane"><span class="allies-fill" style="width: ${lib.allies_progress_percent || percent(map.allied_kills, target)}%"></span></div>
-          </div>
-          <div>
-            <div class="map-marker-race"><span>Axis</span><span>${map.axis_kills}</span></div>
-            <div class="race-lane"><span class="axis-fill" style="width: ${lib.axis_progress_percent || percent(map.axis_kills, target)}%"></span></div>
-          </div>
+          ${controlLane}
         </div>
-        <div class="map-marker-meta"><span>${formatFaction(lib.leading_faction || lib.controlling_faction)} leading</span><span>Lead ${lib.race_margin || 0}</span></div>
+        <div class="map-marker-meta"><span>${formatStateLabel(lib.state)}</span><span>${lib.control_value || 0}% · ${formatCount(map.total_kills || 0)} kills</span></div>
       `;
       marker.addEventListener('click', () => fetchMapDetail(map.map_name));
       return marker;
@@ -1440,27 +1623,32 @@
 
     function renderDetail(payload) {
       const lib = payload.liberation || {};
-      const target = lib.target_kills || 500;
       const allies = payload.allied_kills || 0;
       const axis = payload.axis_kills || 0;
+      const total = payload.total_kills || (allies + axis);
       const activeBattle = Boolean(payload.is_active_battle);
       const activeServerNames = formatActiveServers(payload.active_servers);
+      const controlConfig = controlBarConfig(lib.control_value || 0);
 
       statusPill.textContent = activeBattle
         ? `active - ${activeServerNames || 'tracked server'}`
-        : (lib.state || 'idle').replace(/_/g, ' ');
+        : formatStateLabel(lib.state || 'idle');
       detailTitle.textContent = payload.map_name || 'Unknown front';
       detailCopy.textContent = activeBattle
-        ? `${activeServerNames || 'Tracked server'} is currently fighting on this front. First to ${target} kills wins the map, and replaying it later continues the campaign total.`
-        : `This front is tracked in the campaign roster. First to ${target} kills wins the race, and totals persist if the map is replayed later.`;
-      targetKills.textContent = target;
-      raceMargin.textContent = lib.race_margin || 0;
-      control.textContent = formatFaction(lib.leading_faction || lib.controlling_faction);
-      remaining.textContent = lib.remaining_kills || target;
-      alliesKills.textContent = `${allies} / ${target}`;
-      axisKills.textContent = `${axis} / ${target}`;
-      alliesBar.style.width = `${lib.allies_progress_percent || percent(allies, target)}%`;
-      axisBar.style.width = `${lib.axis_progress_percent || percent(axis, target)}%`;
+        ? `${activeServerNames || 'Tracked server'} is actively pulling this front through a liberation tug-of-war. The map drifts slowly back toward neutral when the fighting stops.`
+        : 'This front keeps its control state across matches. More activity pushes it toward occupation, while inactivity slowly drifts it back toward neutral.';
+      targetKills.textContent = `${lib.control_target || 100}%`;
+      raceMargin.textContent = `${lib.control_value || 0}%`;
+      control.textContent = formatFaction(lib.occupied_faction || lib.controlling_faction);
+      remaining.textContent = formatStateLabel(lib.state || 'idle');
+      controlValueLabel.textContent = `${lib.control_value || 0}%`;
+      controlBarFill.className = `control-fill ${controlConfig.className}`;
+      controlBarFill.style.left = controlConfig.left;
+      controlBarFill.style.width = controlConfig.width;
+      alliesKills.textContent = formatCount(allies);
+      axisKills.textContent = formatCount(axis);
+      alliesBar.style.width = `${total > 0 ? (allies / total) * 100 : 0}%`;
+      axisBar.style.width = `${total > 0 ? (axis / total) * 100 : 0}%`;
 
       servers.innerHTML = '';
       (payload.servers || []).forEach((server) => {
@@ -1519,6 +1707,7 @@
         const layout = getFrontLayout(map.map_name, index);
         const region = layout.region;
         const activeServers = formatActiveServers(map.active_servers);
+        const controlLane = buildMiniControlTrack(lib.control_value || 0);
         const chip = document.createElement('button');
         chip.type = 'button';
         chip.className = `front-chip ${map.is_active_battle ? 'live' : ''}`;
@@ -1532,16 +1721,9 @@
             <span class="front-chip-badge ${map.is_active_battle ? 'live' : ''}">${map.is_active_battle ? `ACTIVE - ${activeServers || 'tracked server'}` : region}</span>
           </div>
           <div class="front-chip-lanes">
-            <div>
-              <div class="front-chip-race"><span>Allies</span><span>${map.allied_kills}</span></div>
-              <div class="race-lane"><span class="allies-fill" style="width: ${lib.allies_progress_percent || percent(map.allied_kills, target)}%"></span></div>
-            </div>
-            <div>
-              <div class="front-chip-race"><span>Axis</span><span>${map.axis_kills}</span></div>
-              <div class="race-lane"><span class="axis-fill" style="width: ${lib.axis_progress_percent || percent(map.axis_kills, target)}%"></span></div>
-            </div>
+            ${controlLane}
           </div>
-          <div class="front-chip-meta"><span>${formatFaction(lib.leading_faction || lib.controlling_faction)} leading</span><span>Lead ${lib.race_margin || 0}</span></div>
+          <div class="front-chip-meta"><span>${formatStateLabel(lib.state)}</span><span>${lib.control_value || 0}% · ${formatCount(map.total_kills || 0)} kills</span></div>
         `;
         chip.addEventListener('click', () => fetchMapDetail(map.map_name));
         frontStrip.appendChild(chip);
@@ -1679,6 +1861,7 @@
       const target = payload.target_kills || 500;
       currentMaps = maps;
 
+      renderAllTimeObjective(payload.all_time_objective);
       renderChallengeTracks(payload.challenge_tracks);
       renderFrontStrip(maps, target);
 

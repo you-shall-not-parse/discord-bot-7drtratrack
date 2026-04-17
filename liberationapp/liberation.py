@@ -29,11 +29,17 @@ LIBERATION_PORT = int(os.getenv("LIBERATION_PORT", os.getenv("PORT", "8080")))
 LIBERATION_HOST = os.getenv("LIBERATION_HOST", "0.0.0.0")
 LIBERATION_POLL_SECONDS = max(3, int(os.getenv("LIBERATION_POLL_SECONDS", "10")))
 LIBERATION_TARGET_KILLS = max(1, int(os.getenv("LIBERATION_TARGET_KILLS", "500")))
+LIBERATION_ALL_TIME_TARGET_KILLS = max(1, int(os.getenv("LIBERATION_ALL_TIME_TARGET_KILLS", "2500000")))
 LIBERATION_RECENT_LOG_LIMIT = max(10, int(os.getenv("LIBERATION_RECENT_LOG_LIMIT", "250")))
 LIBERATION_CACHE_TTL_SECONDS = max(3, int(os.getenv("LIBERATION_CACHE_TTL_SECONDS", "15")))
 LIBERATION_PROCESSED_EVENT_KEEP = max(1000, int(os.getenv("LIBERATION_PROCESSED_EVENT_KEEP", "5000")))
 LIBERATION_IMPORT_RECENT_ON_START = os.getenv("LIBERATION_IMPORT_RECENT_ON_START", "false").lower() == "true"
 LIBERATION_SERVERS_FILE = os.getenv("LIBERATION_SERVERS_FILE")
+LIBERATION_CONTROL_MAX = max(1.0, float(os.getenv("LIBERATION_CONTROL_MAX", "100")))
+LIBERATION_CONTROL_DOMINANCE_THRESHOLD = max(1.0, float(os.getenv("LIBERATION_CONTROL_DOMINANCE_THRESHOLD", "90")))
+LIBERATION_CONTROL_WEIGHT = max(0.1, float(os.getenv("LIBERATION_CONTROL_WEIGHT", "12")))
+LIBERATION_CONTROL_ACTIVITY_SCALE = max(1.0, float(os.getenv("LIBERATION_CONTROL_ACTIVITY_SCALE", "100")))
+LIBERATION_CONTROL_DECAY_PER_HOUR = max(0.0, float(os.getenv("LIBERATION_CONTROL_DECAY_PER_HOUR", "0.05")))
 
 MAP_ID_TO_PRETTY: dict[str, str] = {
 	"elsenbornridge_warfare_morning": "Elsenborn Ridge Warfare (Dawn)",
@@ -109,6 +115,15 @@ CREATE TABLE IF NOT EXISTS map_totals (
   axis_kills INTEGER NOT NULL DEFAULT 0,
   updated_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (server_id, map_name)
+);
+
+CREATE TABLE IF NOT EXISTS map_objectives (
+	map_name TEXT PRIMARY KEY,
+	map_id TEXT,
+	control_value DOUBLE PRECISION NOT NULL DEFAULT 0,
+	occupied_faction TEXT,
+	last_activity_at TIMESTAMPTZ,
+	updated_at TIMESTAMPTZ NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_processed_events_server_ts
@@ -242,53 +257,99 @@ def extract_attacking_team(item: dict[str, Any]) -> str | None:
 	return None
 
 
-def build_liberation_status(allied_kills: int, axis_kills: int, target_kills: int) -> dict[str, Any]:
+def clamp_control(value: float) -> float:
+	return max(-LIBERATION_CONTROL_MAX, min(LIBERATION_CONTROL_MAX, value))
+
+
+def decay_control(value: float, elapsed_seconds: float) -> float:
+	if value == 0 or elapsed_seconds <= 0 or LIBERATION_CONTROL_DECAY_PER_HOUR <= 0:
+		return value
+
+	decay_amount = LIBERATION_CONTROL_DECAY_PER_HOUR * (elapsed_seconds / 3600.0)
+	if value > 0:
+		return max(0.0, value - decay_amount)
+	return min(0.0, value + decay_amount)
+
+
+def compute_control_delta(allied_kills: int, axis_kills: int) -> float:
 	total_kills = allied_kills + axis_kills
-	leading_kills = max(allied_kills, axis_kills)
+	if total_kills <= 0:
+		return 0.0
+
+	delta_ratio = (allied_kills - axis_kills) / total_kills
+	activity_factor = min(total_kills / LIBERATION_CONTROL_ACTIVITY_SCALE, 1.0)
+	return delta_ratio * LIBERATION_CONTROL_WEIGHT * activity_factor
+
+
+def resolve_occupied_faction(control_value: float, occupied_faction: str | None) -> str | None:
+	if control_value >= LIBERATION_CONTROL_MAX:
+		return "allies"
+	if control_value <= -LIBERATION_CONTROL_MAX:
+		return "axis"
+	if occupied_faction == "allies" and control_value >= LIBERATION_CONTROL_DOMINANCE_THRESHOLD:
+		return "allies"
+	if occupied_faction == "axis" and control_value <= -LIBERATION_CONTROL_DOMINANCE_THRESHOLD:
+		return "axis"
+	return None
+
+
+def build_liberation_status(
+	allied_kills: int,
+	axis_kills: int,
+	target_kills: int,
+	*,
+	control_value: float = 0.0,
+	occupied_faction: str | None = None,
+) -> dict[str, Any]:
+	total_kills = allied_kills + axis_kills
 	allies_progress = min((allied_kills / target_kills) * 100.0, 100.0) if target_kills > 0 else 0.0
 	axis_progress = min((axis_kills / target_kills) * 100.0, 100.0) if target_kills > 0 else 0.0
-	race_progress = min((leading_kills / target_kills) * 100.0, 100.0) if target_kills > 0 else 0.0
+	control_value = clamp_control(control_value)
+	control_position_percent = ((control_value + LIBERATION_CONTROL_MAX) / (LIBERATION_CONTROL_MAX * 2.0)) * 100.0
+	control_abs_percent = abs(control_value)
+	kill_margin = allied_kills - axis_kills
 
-	if allied_kills > axis_kills:
+	if control_value > 0:
 		controlling_faction = "allies"
-	elif axis_kills > allied_kills:
+	elif control_value < 0:
 		controlling_faction = "axis"
 	else:
 		controlling_faction = "neutral"
 
-	winner = None
-	if allied_kills >= target_kills and allied_kills > axis_kills:
-		winner = "allies"
-	elif axis_kills >= target_kills and axis_kills > allied_kills:
-		winner = "axis"
-	elif allied_kills >= target_kills and axis_kills >= target_kills and allied_kills == axis_kills:
-		winner = "draw"
-
 	if total_kills == 0:
 		state = "idle"
-	elif winner == "allies":
-		state = "allies_victory"
-	elif winner == "axis":
-		state = "axis_victory"
-	elif winner == "draw":
-		state = "sudden_death"
+	elif occupied_faction == "allies":
+		state = "allies_occupied"
+	elif occupied_faction == "axis":
+		state = "axis_occupied"
+	elif control_value >= LIBERATION_CONTROL_DOMINANCE_THRESHOLD:
+		state = "allies_control"
+	elif control_value <= -LIBERATION_CONTROL_DOMINANCE_THRESHOLD:
+		state = "axis_control"
 	elif controlling_faction == "neutral":
 		state = "deadlocked"
 	else:
-		state = "race_on"
+		state = "contested"
 
 	return {
 		"state": state,
-		"mode": "first_to_target",
-		"progress_percent": round(race_progress, 2),
+		"mode": "tug_of_war",
+		"progress_percent": round(control_abs_percent, 2),
 		"target_kills": target_kills,
-		"remaining_kills": max(target_kills - leading_kills, 0),
+		"remaining_kills": max(target_kills - total_kills, 0),
 		"controlling_faction": controlling_faction,
 		"leading_faction": controlling_faction,
-		"winner": winner,
+		"winner": occupied_faction,
+		"occupied_faction": occupied_faction,
 		"total_kills": total_kills,
-		"leading_kills": leading_kills,
-		"race_margin": abs(allied_kills - axis_kills),
+		"leading_kills": max(allied_kills, axis_kills),
+		"race_margin": abs(kill_margin),
+		"kill_margin": kill_margin,
+		"control_value": round(control_value, 2),
+		"control_position_percent": round(control_position_percent, 2),
+		"control_abs_percent": round(control_abs_percent, 2),
+		"control_target": LIBERATION_CONTROL_MAX,
+		"control_dominance_threshold": LIBERATION_CONTROL_DOMINANCE_THRESHOLD,
 		"allies_progress_percent": round(allies_progress, 2),
 		"axis_progress_percent": round(axis_progress, 2),
 		"allies_remaining_kills": max(target_kills - allied_kills, 0),
@@ -299,11 +360,11 @@ def build_liberation_status(allied_kills: int, axis_kills: int, target_kills: in
 def build_challenge_tracks(target_kills: int) -> dict[str, Any]:
 	return {
 		"current": {
-			"slug": "frontline-race",
-			"label": "Frontline Race",
-			"description": "Allies versus Axis. First faction to 500 kills secures the map.",
+			"slug": "frontline-liberation",
+			"label": "Frontline Liberation",
+			"description": "Maps shift through a tug-of-war control model that drifts back toward neutral when the front goes quiet.",
 			"target_kills": target_kills,
-			"mode": "first_to_target",
+			"mode": "tug_of_war",
 			"window": "campaign",
 			"status": "active",
 		},
@@ -695,6 +756,42 @@ class LiberationStore:
 					axis_increment,
 					now,
 				)
+
+				objective_row = await conn.fetchrow(
+					"""
+					SELECT control_value, occupied_faction, updated_at
+					FROM map_objectives
+					WHERE map_name = $1
+					FOR UPDATE
+					""",
+					map_name,
+				)
+				base_control = 0.0
+				occupied_faction = None
+				if objective_row:
+					elapsed_seconds = max((now - objective_row["updated_at"]).total_seconds(), 0.0)
+					base_control = decay_control(float(objective_row["control_value"]), elapsed_seconds)
+					occupied_faction = objective_row["occupied_faction"]
+
+				next_control = clamp_control(base_control + compute_control_delta(allied_increment, axis_increment))
+				next_occupied_faction = resolve_occupied_faction(next_control, occupied_faction)
+				await conn.execute(
+					"""
+					INSERT INTO map_objectives (map_name, map_id, control_value, occupied_faction, last_activity_at, updated_at)
+					VALUES ($1, $2, $3, $4, $5, $5)
+					ON CONFLICT (map_name) DO UPDATE SET
+					  map_id = EXCLUDED.map_id,
+					  control_value = EXCLUDED.control_value,
+					  occupied_faction = EXCLUDED.occupied_faction,
+					  last_activity_at = EXCLUDED.last_activity_at,
+					  updated_at = EXCLUDED.updated_at
+					""",
+					map_name,
+					map_id,
+					next_control,
+					next_occupied_faction,
+					now,
+				)
 				return len(new_events)
 
 	async def prune_processed_events(self, server_id: str, keep: int = LIBERATION_PROCESSED_EVENT_KEEP) -> None:
@@ -757,6 +854,17 @@ class LiberationStore:
 					ORDER BY map_name ASC, server_id ASC
 					"""
 				)
+		return [dict(row) for row in rows]
+
+	async def list_map_objectives(self) -> list[dict[str, Any]]:
+		async with self.pool.acquire() as conn:
+			rows = await conn.fetch(
+				"""
+				SELECT map_name, map_id, control_value, occupied_faction, last_activity_at, updated_at
+				FROM map_objectives
+				ORDER BY map_name ASC
+				"""
+			)
 		return [dict(row) for row in rows]
 
 
@@ -890,9 +998,23 @@ def normalize_payload(value: Any) -> Any:
 	return value
 
 
+def build_all_time_objective(total_kills: int) -> dict[str, Any]:
+	progress_percent = min((total_kills / LIBERATION_ALL_TIME_TARGET_KILLS) * 100.0, 100.0) if LIBERATION_ALL_TIME_TARGET_KILLS > 0 else 0.0
+	return {
+		"label": "All-Time Theatre Objective",
+		"mode": "all_maps_all_sides",
+		"target_kills": LIBERATION_ALL_TIME_TARGET_KILLS,
+		"total_kills": total_kills,
+		"remaining_kills": max(LIBERATION_ALL_TIME_TARGET_KILLS - total_kills, 0),
+		"progress_percent": round(progress_percent, 2),
+	}
+
+
 async def build_maps_payload(store: LiberationStore, server_id: str | None, target_kills: int) -> dict[str, Any]:
 	rows = await store.list_map_rows(server_id=server_id)
+	objective_rows = {row["map_name"]: row for row in await store.list_map_objectives()}
 	server_rows = await store.list_servers()
+	now = utc_now()
 	active_map_servers: dict[str, list[dict[str, Any]]] = {}
 	for server in server_rows:
 		if server_id and server.get("server_id") != server_id:
@@ -937,7 +1059,20 @@ async def build_maps_payload(store: LiberationStore, server_id: str | None, targ
 
 	maps: list[dict[str, Any]] = []
 	for entry in grouped.values():
-		status = build_liberation_status(entry["allied_kills"], entry["axis_kills"], target_kills)
+		objective = objective_rows.get(entry["map_name"])
+		control_value = 0.0
+		occupied_faction = None
+		if objective:
+			elapsed_seconds = max((now - objective["updated_at"]).total_seconds(), 0.0)
+			control_value = decay_control(float(objective["control_value"]), elapsed_seconds)
+			occupied_faction = resolve_occupied_faction(control_value, objective.get("occupied_faction"))
+		status = build_liberation_status(
+			entry["allied_kills"],
+			entry["axis_kills"],
+			target_kills,
+			control_value=control_value,
+			occupied_faction=occupied_faction,
+		)
 		active_servers = active_map_servers.get(entry["map_name"], [])
 		maps.append(
 			{
@@ -958,14 +1093,18 @@ async def build_maps_payload(store: LiberationStore, server_id: str | None, targ
 	]
 	active_battles.sort(key=lambda item: item["map_name"])
 
-	maps.sort(key=lambda item: (not item["is_active_battle"], -item["liberation"]["progress_percent"], item["map_name"]))
+	all_time_total_kills = sum(int(row["allied_kills"]) + int(row["axis_kills"]) for row in rows)
+	maps.sort(key=lambda item: (not item["is_active_battle"], -item["liberation"]["control_abs_percent"], item["map_name"]))
 	return normalize_payload(
 		{
 			"maps": maps,
 			"active_battles": active_battles,
 			"target_kills": target_kills,
+			"all_time_objective": build_all_time_objective(all_time_total_kills),
 			"server_id": server_id,
 			"source": "postgres",
+			"weighted_kills_supported": False,
+			"weighted_kills_reason": "Current CRCON polling only uses parsed kill teams. Role-weighted liberation needs reliable role metadata joined to each kill event.",
 			"challenge_tracks": build_challenge_tracks(target_kills),
 		}
 	)
@@ -1048,6 +1187,14 @@ async def map_detail_handler(request: web.Request) -> web.Response:
 	axis_kills = sum(int(row["axis_kills"]) for row in matching_rows)
 	updated_at = max(row["updated_at"] for row in matching_rows)
 	map_id = next((row.get("map_id") for row in matching_rows if row.get("map_id")), None)
+	objective_rows = {row["map_name"]: row for row in await store.list_map_objectives()}
+	objective = objective_rows.get(resolved_name)
+	control_value = 0.0
+	occupied_faction = None
+	if objective:
+		elapsed_seconds = max((utc_now() - objective["updated_at"]).total_seconds(), 0.0)
+		control_value = decay_control(float(objective["control_value"]), elapsed_seconds)
+		occupied_faction = resolve_occupied_faction(control_value, objective.get("occupied_faction"))
 	server_rows = await store.list_servers()
 	active_servers = [
 		{
@@ -1081,8 +1228,16 @@ async def map_detail_handler(request: web.Request) -> web.Response:
 			],
 			"is_active_battle": bool(active_servers),
 			"active_servers": active_servers,
-			"liberation": build_liberation_status(allied_kills, axis_kills, target_kills),
+			"liberation": build_liberation_status(
+				allied_kills,
+				axis_kills,
+				target_kills,
+				control_value=control_value,
+				occupied_faction=occupied_faction,
+			),
 			"source": "postgres",
+			"weighted_kills_supported": False,
+			"weighted_kills_reason": "Current CRCON polling only uses parsed kill teams. Role-weighted liberation needs reliable role metadata joined to each kill event.",
 			"challenge_tracks": build_challenge_tracks(target_kills),
 		}
 	)
