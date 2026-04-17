@@ -1091,6 +1091,9 @@
     const overlayMarkers = new Map();
     const projectionVector = new THREE.Vector3();
 
+    const FIXED_POLAR_ANGLE = 0.9;
+    const FIXED_AZIMUTH_ANGLE = 0.48;
+
     const renderer = new THREE.WebGLRenderer({ canvas: mapCanvas, antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -1103,20 +1106,19 @@
     const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 300);
     const controls = new OrbitControls(camera, mapCanvas);
     controls.enableDamping = true;
-    controls.enableRotate = true;
+    controls.enableRotate = false;
     controls.enablePan = true;
-    controls.screenSpacePanning = true;
-    controls.zoomToCursor = true;
-    controls.minPolarAngle = 0.92;
-    controls.maxPolarAngle = 1.18;
-    controls.minAzimuthAngle = -0.24;
-    controls.maxAzimuthAngle = 0.24;
-    controls.rotateSpeed = 0.7;
+    controls.screenSpacePanning = false;
+    controls.zoomToCursor = false;
+    controls.minPolarAngle = FIXED_POLAR_ANGLE;
+    controls.maxPolarAngle = FIXED_POLAR_ANGLE;
+    controls.minAzimuthAngle = FIXED_AZIMUTH_ANGLE;
+    controls.maxAzimuthAngle = FIXED_AZIMUTH_ANGLE;
     controls.zoomSpeed = 1.05;
-    controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
+    controls.mouseButtons.LEFT = THREE.MOUSE.PAN;
     controls.mouseButtons.MIDDLE = THREE.MOUSE.DOLLY;
     controls.mouseButtons.RIGHT = THREE.MOUSE.PAN;
-    controls.touches.ONE = THREE.TOUCH.ROTATE;
+    controls.touches.ONE = THREE.TOUCH.PAN;
     controls.touches.TWO = THREE.TOUCH.DOLLY_PAN;
 
     scene.add(new THREE.HemisphereLight(0xf6e6c6, 0x3b3227, 1.8));
@@ -1451,14 +1453,14 @@
         center: center.clone(),
       };
 
-      controls.target.set(center.x, center.y + size.y * 0.06, center.z);
+      controls.target.set(center.x, center.y, center.z);
       camera.near = Math.max(maxDim / 200, 0.05);
       camera.far = maxDim * 12;
-      camera.position.set(center.x + maxDim * 0.08, center.y + maxDim * 0.78, center.z + maxDim * 0.72);
+      camera.position.set(center.x + maxDim * 0.42, center.y + maxDim * 0.74, center.z + maxDim * 0.54);
       camera.lookAt(controls.target);
-      controls.minDistance = maxDim * 0.35;
-      controls.maxDistance = maxDim * 2.8;
-      controls.panSpeed = Math.max(maxDim / 18, 0.9);
+      controls.minDistance = maxDim * 0.45;
+      controls.maxDistance = maxDim * 1.8;
+      controls.panSpeed = Math.max(maxDim / 20, 0.85);
       scene.fog = new THREE.Fog(0xa4a39b, maxDim * 0.85, maxDim * 2.6);
       controls.update();
       initialCameraPosition = camera.position.clone();
@@ -1471,6 +1473,7 @@
       const nextDistance = THREE.MathUtils.clamp(offset.length() * multiplier, controls.minDistance, controls.maxDistance);
       offset.setLength(nextDistance);
       camera.position.copy(controls.target).add(offset);
+      controls.update();
       renderFrame();
     }
 
@@ -1522,6 +1525,19 @@
       }
       camera.position.copy(initialCameraPosition);
       controls.target.copy(initialControlTarget);
+      controls.update();
+      renderFrame();
+    }
+
+    function moveCameraToWorldPosition(worldPosition) {
+      if (!worldPosition) {
+        return;
+      }
+
+      const offset = camera.position.clone().sub(controls.target);
+      controls.target.copy(worldPosition);
+      camera.position.copy(worldPosition).add(offset);
+      controls.update();
       renderFrame();
     }
 
@@ -1530,10 +1546,13 @@
       if (!activeMap) {
         return;
       }
+
+      const activeIndex = currentMaps.findIndex((map) => map.map_name === activeMap.map_name);
+      const worldPosition = mapToWorldPosition(activeMap.map_name, activeIndex >= 0 ? activeIndex : 0);
       fetchMapDetail(activeMap.map_name).catch((error) => {
         footerNote.textContent = `Active front focus failed: ${error.message}`;
       });
-      resetCamera();
+      moveCameraToWorldPosition(worldPosition);
     }
 
     function initializeInteractions() {
