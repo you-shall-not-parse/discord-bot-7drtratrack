@@ -1048,6 +1048,18 @@ async def map_detail_handler(request: web.Request) -> web.Response:
 	axis_kills = sum(int(row["axis_kills"]) for row in matching_rows)
 	updated_at = max(row["updated_at"] for row in matching_rows)
 	map_id = next((row.get("map_id") for row in matching_rows if row.get("map_id")), None)
+	server_rows = await store.list_servers()
+	active_servers = [
+		{
+			"server_id": server["server_id"],
+			"server_name": server["server_name"],
+			"current_map": server.get("current_map"),
+			"current_map_id": server.get("current_map_id"),
+			"last_poll_at": server.get("last_poll_at"),
+		}
+		for server in server_rows
+		if (not server_id or server.get("server_id") == server_id) and server.get("current_map") == resolved_name
+	]
 
 	payload = normalize_payload(
 		{
@@ -1067,7 +1079,8 @@ async def map_detail_handler(request: web.Request) -> web.Response:
 				}
 				for row in matching_rows
 			],
-			"is_active_battle": any(server.get("current_map") == resolved_name for server in await store.list_servers()),
+			"is_active_battle": bool(active_servers),
+			"active_servers": active_servers,
 			"liberation": build_liberation_status(allied_kills, axis_kills, target_kills),
 			"source": "postgres",
 			"challenge_tracks": build_challenge_tracks(target_kills),
