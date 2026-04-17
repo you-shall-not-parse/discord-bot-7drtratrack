@@ -105,8 +105,17 @@ class Rosterizer(commands.Cog):
         if now - last < LOCKED_DM_COOLDOWN_SECONDS:
             return
 
+        target_user: discord.abc.User | discord.Member = member
+        if getattr(target_user, "dm_channel", None) is None:
+            try:
+                fetched_user = await self.bot.fetch_user(member.id)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                fetched_user = None
+            if fetched_user is not None:
+                target_user = fetched_user
+
         try:
-            await member.send(LOCKED_DM_MESSAGE)
+            await target_user.send(LOCKED_DM_MESSAGE)
             self._dm_last_sent[member.id] = now
         except (discord.Forbidden, discord.HTTPException):
             return
@@ -216,8 +225,16 @@ class Rosterizer(commands.Cog):
             parts.append(current)
         return parts
 
-    def _build_roster_embeds(self, guild: discord.Guild, roster_title: str, entries: list[str]) -> list[discord.Embed]:
-        header = f"**{roster_title} ({len(entries)})**\n\n"
+    def _build_roster_embeds(
+        self,
+        guild: discord.Guild,
+        roster_title: str,
+        entries: list[str],
+        *,
+        is_locked: bool = False,
+    ) -> list[discord.Embed]:
+        lock_prefix = "LOCKED\n\n" if is_locked else ""
+        header = f"{lock_prefix}**{roster_title} ({len(entries)})**\n\n"
         body = "\n\n".join(entries) if entries else "None"
         pages = self._chunk_embed_descriptions(header + body)
 
@@ -225,9 +242,11 @@ class Rosterizer(commands.Cog):
         total = len(pages)
         now = datetime.now(timezone.utc)
         for index, page in enumerate(pages, start=1):
-            title = roster_title if total == 1 else f"{roster_title} ({index}/{total})"
+            base_title = roster_title if total == 1 else f"{roster_title} ({index}/{total})"
+            title = f"[LOCKED] {base_title}" if is_locked else base_title
             embed = discord.Embed(title=title, description=page, color=discord.Color.blurple(), timestamp=now)
-            embed.set_footer(text=f"Updated • {guild.name}")
+            footer_prefix = "Locked • " if is_locked else "Updated • "
+            embed.set_footer(text=f"{footer_prefix}{guild.name}")
             embeds.append(embed)
         return embeds
 
@@ -293,17 +312,18 @@ class Rosterizer(commands.Cog):
 
         self._set_roster_message_ids(guild.id, str(roster["key"]), saved_ids)
 
-    async def update_all_rosters(self, *, force_resolve: bool = False) -> None:
+    async def update_all_rosters(self, *, force_resolve: bool = False, allow_locked_update: bool = False) -> None:
         async with self._update_lock:
             guild = self.bot.get_guild(GUILD_ID)
             if guild is None:
                 return
-            if self._is_roster_locked(guild.id):
+            is_locked = self._is_roster_locked(guild.id)
+            if is_locked and not allow_locked_update:
                 return
 
             for roster in ROSTER_DEFINITIONS:
                 entries = await self._build_roster_entries(guild, roster, force_resolve=force_resolve)
-                embeds = self._build_roster_embeds(guild, str(roster["title"]), entries)
+                embeds = self._build_roster_embeds(guild, str(roster["title"]), entries, is_locked=is_locked)
                 await self._sync_roster_messages(guild, roster, embeds)
 
     @app_commands.command(name="lockroster", description="Lock the roster.")
@@ -314,8 +334,10 @@ class Rosterizer(commands.Cog):
             await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
             return
 
+        await interaction.response.defer(ephemeral=True, thinking=True)
         self._set_roster_locked(interaction.guild_id, True)
-        await interaction.response.send_message("Roster locked.", ephemeral=True)
+        await self.update_all_rosters(force_resolve=False, allow_locked_update=True)
+        await interaction.followup.send("Roster locked.", ephemeral=True)
 
     @lockroster.error
     async def lockroster_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
@@ -337,7 +359,7 @@ class Rosterizer(commands.Cog):
 
         await interaction.response.defer(ephemeral=True, thinking=True)
         self._set_roster_locked(interaction.guild_id, False)
-        await self.update_all_rosters(force_resolve=False)
+        await self.update_all_rosters(force_resolve=False, allow_locked_update=True)
         await interaction.followup.send("Roster unlocked.", ephemeral=True)
 
     @unlockroster.error
@@ -384,7 +406,7 @@ class Rosterizer(commands.Cog):
         if self._ran_once:
             return
         self._ran_once = True
-        await self.update_all_rosters(force_resolve=True)
+        await self.update_all_rosters(force_resolve=True, allow_locked_update=True)
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member) -> None:
@@ -396,12 +418,11 @@ class Rosterizer(commands.Cog):
             return
 
         if self._is_roster_locked(after.guild.id) and before_tracked_ids != after_tracked_ids:
+            await self._maybe_dm_locked_notice(after)
             try:
                 reverted = await self._revert_locked_roster_change(before, after)
             except (discord.Forbidden, discord.HTTPException):
                 return
-            if reverted:
-                await self._maybe_dm_locked_notice(after)
             return
 
         before_has = any(role.id in tracked_role_ids for role in before.roles)
