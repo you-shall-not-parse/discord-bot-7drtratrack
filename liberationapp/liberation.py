@@ -892,6 +892,23 @@ def normalize_payload(value: Any) -> Any:
 
 async def build_maps_payload(store: LiberationStore, server_id: str | None, target_kills: int) -> dict[str, Any]:
 	rows = await store.list_map_rows(server_id=server_id)
+	server_rows = await store.list_servers()
+	active_map_servers: dict[str, list[dict[str, Any]]] = {}
+	for server in server_rows:
+		if server_id and server.get("server_id") != server_id:
+			continue
+		current_map = server.get("current_map")
+		if not current_map:
+			continue
+		active_map_servers.setdefault(current_map, []).append(
+			{
+				"server_id": server["server_id"],
+				"server_name": server["server_name"],
+				"current_map": current_map,
+				"current_map_id": server.get("current_map_id"),
+				"last_poll_at": server.get("last_poll_at"),
+			}
+		)
 
 	grouped: dict[str, dict[str, Any]] = {}
 	for row in rows:
@@ -921,18 +938,31 @@ async def build_maps_payload(store: LiberationStore, server_id: str | None, targ
 	maps: list[dict[str, Any]] = []
 	for entry in grouped.values():
 		status = build_liberation_status(entry["allied_kills"], entry["axis_kills"], target_kills)
+		active_servers = active_map_servers.get(entry["map_name"], [])
 		maps.append(
 			{
 				**entry,
 				"total_kills": entry["allied_kills"] + entry["axis_kills"],
+				"is_active_battle": bool(active_servers),
+				"active_servers": active_servers,
 				"liberation": status,
 			}
 		)
 
-	maps.sort(key=lambda item: (-item["liberation"]["progress_percent"], item["map_name"]))
+	active_battles = [
+		{
+			"map_name": map_name,
+			"servers": servers,
+		}
+		for map_name, servers in active_map_servers.items()
+	]
+	active_battles.sort(key=lambda item: item["map_name"])
+
+	maps.sort(key=lambda item: (not item["is_active_battle"], -item["liberation"]["progress_percent"], item["map_name"]))
 	return normalize_payload(
 		{
 			"maps": maps,
+			"active_battles": active_battles,
 			"target_kills": target_kills,
 			"server_id": server_id,
 			"source": "postgres",
@@ -1037,6 +1067,7 @@ async def map_detail_handler(request: web.Request) -> web.Response:
 				}
 				for row in matching_rows
 			],
+			"is_active_battle": any(server.get("current_map") == resolved_name for server in await store.list_servers()),
 			"liberation": build_liberation_status(allied_kills, axis_kills, target_kills),
 			"source": "postgres",
 			"challenge_tracks": build_challenge_tracks(target_kills),

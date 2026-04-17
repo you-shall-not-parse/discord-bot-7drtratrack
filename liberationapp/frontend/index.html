@@ -118,6 +118,25 @@
       font-size: 1.85rem;
     }
 
+    .hero-value.compact {
+      font-size: 1.15rem;
+      line-height: 1.2;
+    }
+
+    .active-battle-banner {
+      margin-top: 1rem;
+      padding: 1rem 1.1rem;
+      border-radius: 18px;
+      border: 1px solid rgba(26, 21, 17, 0.1);
+      background: rgba(255, 251, 243, 0.62);
+      display: grid;
+      gap: 0.35rem;
+    }
+
+    .active-battle-title {
+      font-size: 1.2rem;
+    }
+
     .theatre {
       padding: 1.25rem;
       background:
@@ -175,6 +194,25 @@
       border-radius: 50%;
       background: radial-gradient(circle, rgba(185, 139, 69, 0.18), transparent 68%);
       pointer-events: none;
+    }
+
+    .sector-card.live {
+      border-color: rgba(185, 139, 69, 0.8);
+      box-shadow: 0 18px 36px rgba(88, 62, 39, 0.2);
+    }
+
+    .sector-card.live::before {
+      content: "ACTIVE";
+      position: absolute;
+      top: 0.85rem;
+      right: 0.85rem;
+      padding: 0.24rem 0.5rem;
+      border-radius: 999px;
+      background: rgba(185, 139, 69, 0.92);
+      color: #1a1511;
+      font-size: 0.68rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
     }
 
     .sector-name {
@@ -402,8 +440,8 @@
         <p class="hero-copy">A live theatre board for Hell Let Loose. Each battlefield is a race between Allies and Axis. First side to 500 kills secures the map. Weekly and monthly operations are reserved next so the app can expand into time-boxed challenges later.</p>
         <div class="hero-grid">
           <div class="hero-stat">
-            <span class="hero-label">Active Race</span>
-            <div id="hero-mode" class="hero-value">First to 500</div>
+            <span class="hero-label">Active Battle</span>
+            <div id="hero-active-battle" class="hero-value compact">Awaiting live map</div>
           </div>
           <div class="hero-stat">
             <span class="hero-label">Tracked Maps</span>
@@ -413,6 +451,11 @@
             <span class="hero-label">Lead Margin</span>
             <div id="hero-margin" class="hero-value">0</div>
           </div>
+        </div>
+        <div class="active-battle-banner">
+          <span class="hero-label">Current Map Being Played</span>
+          <div id="active-battle-title" class="active-battle-title">Awaiting live map</div>
+          <div id="active-battle-meta">The current server state will appear here once the API reports an active map.</div>
         </div>
       </header>
 
@@ -511,9 +554,11 @@
     const axisBar = document.getElementById('axis-bar');
     const servers = document.getElementById('servers');
     const footerNote = document.getElementById('footer-note');
-    const heroMode = document.getElementById('hero-mode');
+    const heroActiveBattle = document.getElementById('hero-active-battle');
     const heroMapCount = document.getElementById('hero-map-count');
     const heroMargin = document.getElementById('hero-margin');
+    const activeBattleTitle = document.getElementById('active-battle-title');
+    const activeBattleMeta = document.getElementById('active-battle-meta');
 
     let challengeTracks = null;
 
@@ -557,7 +602,30 @@
       });
 
       const currentTarget = tracks?.current?.target_kills || fallbackTarget;
-      heroMode.textContent = `First to ${currentTarget}`;
+      activeBattleMeta.textContent = `Live campaign mode is first to ${currentTarget} kills. Weekly and monthly tracks stay reserved until those modes are added.`;
+    }
+
+    function renderActiveBattleSummary(activeBattles, target) {
+      const liveBattles = activeBattles || [];
+      if (!liveBattles.length) {
+        heroActiveBattle.textContent = 'No live map';
+        activeBattleTitle.textContent = 'No current battle reported';
+        activeBattleMeta.textContent = `Campaign progress is still cumulative by map. When a server starts reporting a current map, it will appear here. First to ${target} kills still decides the race.`;
+        return;
+      }
+
+      if (liveBattles.length === 1) {
+        const battle = liveBattles[0];
+        const serverNames = (battle.servers || []).map((server) => server.server_name || server.server_id).join(', ');
+        heroActiveBattle.textContent = battle.map_name;
+        activeBattleTitle.textContent = battle.map_name;
+        activeBattleMeta.textContent = `${serverNames || 'Tracked server'} is currently playing this map. If this map comes up again later, its progress continues from the stored campaign total.`;
+        return;
+      }
+
+      heroActiveBattle.textContent = `${liveBattles.length} live maps`;
+      activeBattleTitle.textContent = liveBattles.map((battle) => battle.map_name).join(' • ');
+      activeBattleMeta.textContent = `Multiple servers are active. Campaign totals still accumulate per map, so replaying the same map continues its existing progress.`;
     }
 
     function renderDetail(payload) {
@@ -565,10 +633,13 @@
       const target = lib.target_kills || 500;
       const allies = payload.allied_kills || 0;
       const axis = payload.axis_kills || 0;
+      const activeBattle = Boolean(payload.is_active_battle);
 
-      statusPill.textContent = (lib.state || 'idle').replace(/_/g, ' ');
+      statusPill.textContent = activeBattle ? `active · ${(lib.state || 'idle').replace(/_/g, ' ')}` : (lib.state || 'idle').replace(/_/g, ' ');
       detailTitle.textContent = payload.map_name || 'Unknown sector';
-      detailCopy.textContent = `Current battle is a first-to-${target} race. ${formatFaction(lib.leading_faction)} currently holds the edge across this sector.`;
+      detailCopy.textContent = activeBattle
+        ? `This is the current live battle. First to ${target} kills wins the map, and replaying this map later continues the stored campaign total.`
+        : `This sector is tracked in the campaign table. First to ${target} kills wins the race, and totals persist if the map is replayed later.`;
       targetKills.textContent = target;
       raceMargin.textContent = lib.race_margin || 0;
       control.textContent = formatFaction(lib.leading_faction || lib.controlling_faction);
@@ -619,10 +690,10 @@
         const lib = map.liberation || {};
         const card = document.createElement('button');
         card.type = 'button';
-        card.className = 'sector-card';
+        card.className = `sector-card ${map.is_active_battle ? 'live' : ''}`;
         card.dataset.mapName = map.map_name;
         card.innerHTML = `
-          <span class="sector-subtitle">${formatFaction(lib.leading_faction)} leading</span>
+          <span class="sector-subtitle">${map.is_active_battle ? 'Current battle' : `${formatFaction(lib.leading_faction)} leading`}</span>
           <h3 class="sector-name">${map.map_name}</h3>
           <div class="sector-meta"><span>Lead ${lib.race_margin || 0}</span><span>${lib.progress_percent || 0}% to ${target}</span></div>
           <div class="race-track">
@@ -649,9 +720,11 @@
       const response = await fetch('/api/maps');
       const payload = await response.json();
       const maps = payload.maps || [];
+      const activeBattles = payload.active_battles || [];
       const target = payload.target_kills || 500;
 
       renderChallengeTracks(payload.challenge_tracks, target);
+      renderActiveBattleSummary(activeBattles, target);
       renderSectors(maps, target);
 
       if (maps.length) {
