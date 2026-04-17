@@ -2,4 +2,4 @@ FROM nginx:1.27-alpine
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY index.html /usr/share/nginx/html/index.html
-COPY world_map.glb /usr/share/nginx/html/world_map.glb
+COPY europe_with_4k_heightmap.glb /usr/share/nginx/html/europe_with_4k_heightmap.glb

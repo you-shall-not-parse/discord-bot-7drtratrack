@@ -899,10 +899,6 @@
         <p class="hero-copy">A scrollable war theatre inspired by strategy campaign maps. Pan across Europe and North Africa, zoom into active fronts, and select battle nodes to inspect the Allies versus Axis race on each Hell Let Loose map.</p>
         <div class="hero-grid">
           <div class="hero-stat">
-            <span class="hero-label">Auto Refresh</span>
-            <div id="hero-refresh" class="hero-value compact">15 seconds</div>
-          </div>
-          <div class="hero-stat">
             <span class="hero-label">Tracked Fronts</span>
             <div id="hero-map-count" class="hero-value">0</div>
           </div>
@@ -1031,7 +1027,6 @@
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-    const REFRESH_INTERVAL_MS = 15000;
     const MAP_LAYOUT_WIDTH = 2800;
     const MAP_LAYOUT_HEIGHT = 1900;
 
@@ -1079,7 +1074,6 @@
     const axisBar = document.getElementById('axis-bar');
     const servers = document.getElementById('servers');
     const footerNote = document.getElementById('footer-note');
-    const heroRefresh = document.getElementById('hero-refresh');
     const heroMapCount = document.getElementById('hero-map-count');
     const heroLiveCount = document.getElementById('hero-live-count');
     const heroMargin = document.getElementById('hero-margin');
@@ -1088,7 +1082,6 @@
     const zoomResetButton = document.getElementById('zoom-reset');
     const focusActiveButton = document.getElementById('focus-active');
 
-    let refreshTimer = null;
     let currentMaps = [];
     let selectedMapName = null;
     let initialCameraPosition = null;
@@ -1364,7 +1357,6 @@
       heroMapCount.textContent = maps.length;
       heroLiveCount.textContent = maps.filter((map) => map.is_active_battle).length;
       heroMargin.textContent = maps[0]?.liberation?.race_margin || 0;
-      heroRefresh.textContent = `${Math.round(REFRESH_INTERVAL_MS / 1000)} seconds`;
       emptyState.hidden = maps.length > 0;
 
       maps.forEach((map, index) => {
@@ -1484,7 +1476,7 @@
 
     async function loadModel() {
       try {
-        const gltf = await loader.loadAsync('/world_map.glb');
+        const gltf = await loader.loadAsync('/europe_with_4k_heightmap.glb');
         gltf.scene.traverse((child) => {
           if (child.isMesh) {
             child.castShadow = false;
@@ -1502,7 +1494,7 @@
         updateOverlayPositions();
       } catch (error) {
         console.error(error);
-        mapLoading.textContent = 'Failed to load world_map.glb';
+        mapLoading.textContent = 'Failed to load europe_with_4k_heightmap.glb';
         footerNote.textContent = `Model load failed: ${error.message}`;
       }
     }
@@ -1522,17 +1514,6 @@
       } else {
         footerNote.textContent = 'No campaign fronts tracked yet.';
       }
-    }
-
-    function startAutoRefresh() {
-      if (refreshTimer) {
-        clearInterval(refreshTimer);
-      }
-      refreshTimer = setInterval(() => {
-        loadMaps().catch((error) => {
-          footerNote.textContent = `Auto refresh failed: ${error.message}`;
-        });
-      }, REFRESH_INTERVAL_MS);
     }
 
     function resetCamera() {
@@ -1576,7 +1557,7 @@
 
     initializeInteractions();
     await loadModel();
-    loadMaps().then(startAutoRefresh).catch((error) => {
+    loadMaps().catch((error) => {
       footerNote.textContent = `Failed to load campaign data: ${error.message}`;
     });
   </script>
