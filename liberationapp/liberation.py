@@ -37,8 +37,8 @@ LIBERATION_IMPORT_RECENT_ON_START = os.getenv("LIBERATION_IMPORT_RECENT_ON_START
 LIBERATION_SERVERS_FILE = os.getenv("LIBERATION_SERVERS_FILE")
 LIBERATION_CONTROL_MAX = max(1.0, float(os.getenv("LIBERATION_CONTROL_MAX", "100")))
 LIBERATION_CONTROL_DOMINANCE_THRESHOLD = max(1.0, float(os.getenv("LIBERATION_CONTROL_DOMINANCE_THRESHOLD", "90")))
-LIBERATION_CONTROL_WEIGHT = max(0.1, float(os.getenv("LIBERATION_CONTROL_WEIGHT", "12")))
-LIBERATION_CONTROL_ACTIVITY_SCALE = max(1.0, float(os.getenv("LIBERATION_CONTROL_ACTIVITY_SCALE", "100")))
+LIBERATION_CONTROL_WEIGHT = max(0.1, float(os.getenv("LIBERATION_CONTROL_WEIGHT", "45")))
+LIBERATION_CONTROL_ACTIVITY_SCALE = max(1.0, float(os.getenv("LIBERATION_CONTROL_ACTIVITY_SCALE", "20")))
 LIBERATION_CONTROL_DECAY_PER_HOUR = max(0.0, float(os.getenv("LIBERATION_CONTROL_DECAY_PER_HOUR", "0.05")))
 
 MAP_ID_TO_PRETTY: dict[str, str] = {
@@ -362,8 +362,7 @@ def build_challenge_tracks(target_kills: int) -> dict[str, Any]:
 		"current": {
 			"slug": "frontline-liberation",
 			"label": "Frontline Liberation",
-			"description": "Maps shift through a tug-of-war control model that drifts back toward neutral when the front goes quiet.",
-			"target_kills": target_kills,
+			"description": "Persistent control shifts with live combat pressure across tracked fronts.",
 			"mode": "tug_of_war",
 			"window": "campaign",
 			"status": "active",

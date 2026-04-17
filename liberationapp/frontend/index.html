@@ -139,6 +139,11 @@
       gap: 0.7rem;
     }
 
+    .board-objective {
+      margin-top: 0.9rem;
+      background: rgba(25, 21, 15, 0.86);
+    }
+
     .hero-objective-top,
     .hero-objective-bottom {
       display: flex;
@@ -159,7 +164,14 @@
       line-height: 1.45;
     }
 
-    .hero-objective-track,
+    .hero-objective-track {
+      position: relative;
+      overflow: hidden;
+      border-radius: 999px;
+      background: rgba(255, 248, 235, 0.12);
+      border: 1px solid rgba(215, 176, 109, 0.16);
+    }
+
     .control-track,
     .mini-control-track {
       position: relative;
@@ -415,6 +427,8 @@
       font-size: 0.88rem;
       line-height: 1.08;
       max-width: 12ch;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
     }
 
     .map-marker-badge {
@@ -441,6 +455,12 @@
       margin-top: 0.35rem;
       font-size: 0.72rem;
       opacity: 0.82;
+    }
+
+    .map-marker-state,
+    .front-chip-state {
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
     }
 
     .map-loading {
@@ -517,6 +537,8 @@
       font-size: 0.98rem;
       line-height: 1.08;
       max-width: 12ch;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
     }
 
     .front-chip-region {
@@ -1135,7 +1157,6 @@
     <section id="dashboard-view" class="main-column dashboard-only">
       <header class="hero">
         <h1>HLL Frontlines</h1>
-        <p class="hero-copy">A scrollable war theatre inspired by strategy campaign maps. Pan across Europe and North Africa, zoom into active fronts, and select battle nodes to inspect the Allies versus Axis race on each Hell Let Loose map.</p>
         <div class="hero-actions">
           <button id="open-battle-map" class="hero-button" type="button">Open Battle Map</button>
         </div>
@@ -1172,7 +1193,21 @@
             <span class="section-label">Frontline Board</span>
             <h2>Campaign Tiles</h2>
           </div>
-          <p>Select any front tile to inspect the live race, or open the battle map for the full-screen campaign view.</p>
+        </div>
+
+        <div class="hero-objective board-objective">
+          <div class="hero-objective-top">
+            <div>
+              <span class="hero-label">All-Time Objective</span>
+              <div id="board-all-time-objective-total" class="hero-objective-value">0 / 25,000,000</div>
+            </div>
+            <div id="board-all-time-objective-copy" class="hero-objective-subcopy"></div>
+          </div>
+          <div class="hero-objective-track"><span id="board-all-time-objective-bar" class="hero-objective-fill" style="width: 0%"></span></div>
+          <div class="hero-objective-bottom">
+            <span id="board-all-time-objective-progress">0%</span>
+            <span id="board-all-time-objective-remaining">25,000,000 remaining</span>
+          </div>
         </div>
 
         <div class="tile-board">
@@ -1200,7 +1235,7 @@
         <span class="panel-label">Intel Panel</span>
         <h3 id="detail-title" class="detail-title">Select a front</h3>
       </div>
-      <p id="detail-copy" class="detail-subtext">Select any front tile to inspect the live tug-of-war control state, current live server, and the all-time kill totals still accumulating behind that front.</p>
+      <p id="detail-copy" class="detail-subtext"></p>
 
       <div class="detail-grid">
         <div class="detail-card">
@@ -1349,6 +1384,11 @@
     const allTimeObjectiveBar = document.getElementById('all-time-objective-bar');
     const allTimeObjectiveProgress = document.getElementById('all-time-objective-progress');
     const allTimeObjectiveRemaining = document.getElementById('all-time-objective-remaining');
+    const boardAllTimeObjectiveTotal = document.getElementById('board-all-time-objective-total');
+    const boardAllTimeObjectiveCopy = document.getElementById('board-all-time-objective-copy');
+    const boardAllTimeObjectiveBar = document.getElementById('board-all-time-objective-bar');
+    const boardAllTimeObjectiveProgress = document.getElementById('board-all-time-objective-progress');
+    const boardAllTimeObjectiveRemaining = document.getElementById('board-all-time-objective-remaining');
     const controlBarFill = document.getElementById('control-bar-fill');
     const controlValueLabel = document.getElementById('control-value-label');
     const zoomInButton = document.getElementById('zoom-in');
@@ -1428,7 +1468,9 @@
     }
 
     function formatStateLabel(value) {
-      return String(value || 'idle').replace(/_/g, ' ');
+      return String(value || 'idle')
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, (char) => char.toUpperCase());
     }
 
     function controlBarConfig(controlValue) {
@@ -1460,10 +1502,15 @@
       const progressPercent = objective?.progress_percent || 0;
 
       allTimeObjectiveTotal.textContent = `${formatCount(totalKills)} / ${formatCount(targetKills)}`;
-      allTimeObjectiveCopy.textContent = 'All kills on all tracked maps and both factions feed this permanent theatre objective.';
+      allTimeObjectiveCopy.textContent = '';
       allTimeObjectiveBar.style.width = `${progressPercent}%`;
       allTimeObjectiveProgress.textContent = `${progressPercent}% complete`;
       allTimeObjectiveRemaining.textContent = `${formatCount(remainingKills)} remaining`;
+      boardAllTimeObjectiveTotal.textContent = `${formatCount(totalKills)} / ${formatCount(targetKills)}`;
+      boardAllTimeObjectiveCopy.textContent = '';
+      boardAllTimeObjectiveBar.style.width = `${progressPercent}%`;
+      boardAllTimeObjectiveProgress.textContent = `${progressPercent}% complete`;
+      boardAllTimeObjectiveRemaining.textContent = `${formatCount(remainingKills)} remaining`;
     }
 
     function formatActiveServers(activeServers) {
@@ -1521,7 +1568,7 @@
         <div class="map-marker-lanes">
           ${controlLane}
         </div>
-        <div class="map-marker-meta"><span>${formatStateLabel(lib.state)}</span><span>${lib.control_value || 0}% · ${formatCount(map.total_kills || 0)} kills</span></div>
+        <div class="map-marker-meta"><span class="map-marker-state">${formatStateLabel(lib.state)}</span><span>${lib.control_value || 0}% · ${formatCount(map.total_kills || 0)} kills</span></div>
       `;
       marker.addEventListener('click', () => fetchMapDetail(map.map_name));
       return marker;
@@ -1602,11 +1649,11 @@
       challengeGrid.innerHTML = '';
       const items = [tracks?.current, tracks?.weekly, tracks?.monthly].filter(Boolean);
       if (!items.length) {
-        challengeSummary.textContent = 'Frontline race active. Weekly and monthly challenge tracks can be added next.';
+        challengeSummary.textContent = '';
         return;
       }
 
-      challengeSummary.textContent = items[0].description || 'Frontline race active. Weekly and monthly challenge tracks can be added next.';
+      challengeSummary.textContent = '';
 
       items.forEach((track) => {
         const card = document.createElement('article');
@@ -1615,7 +1662,7 @@
           <span class="challenge-label">${track.window || 'reserve'}</span>
           <h3 class="challenge-title">${track.label}</h3>
           <p class="challenge-copy">${track.description || 'Challenge slot reserved.'}</p>
-          <span class="challenge-tag">${track.status || 'planned'}${track.target_kills ? ` · ${track.target_kills} kills` : ''}</span>
+          <span class="challenge-tag">${track.status || 'planned'}</span>
         `;
         challengeGrid.appendChild(card);
       });
@@ -1635,8 +1682,8 @@
         : formatStateLabel(lib.state || 'idle');
       detailTitle.textContent = payload.map_name || 'Unknown front';
       detailCopy.textContent = activeBattle
-        ? `${activeServerNames || 'Tracked server'} is actively pulling this front through a liberation tug-of-war. The map drifts slowly back toward neutral when the fighting stops.`
-        : 'This front keeps its control state across matches. More activity pushes it toward occupation, while inactivity slowly drifts it back toward neutral.';
+        ? `${activeServerNames || 'Tracked server'} is active on this front.`
+        : 'Persistent frontline control across all tracked battles.';
       targetKills.textContent = `${lib.control_target || 100}%`;
       raceMargin.textContent = `${lib.control_value || 0}%`;
       control.textContent = formatFaction(lib.occupied_faction || lib.controlling_faction);
@@ -1723,7 +1770,7 @@
           <div class="front-chip-lanes">
             ${controlLane}
           </div>
-          <div class="front-chip-meta"><span>${formatStateLabel(lib.state)}</span><span>${lib.control_value || 0}% · ${formatCount(map.total_kills || 0)} kills</span></div>
+          <div class="front-chip-meta"><span class="front-chip-state">${formatStateLabel(lib.state)}</span><span>${lib.control_value || 0}% · ${formatCount(map.total_kills || 0)} kills</span></div>
         `;
         chip.addEventListener('click', () => fetchMapDetail(map.map_name));
         frontStrip.appendChild(chip);
