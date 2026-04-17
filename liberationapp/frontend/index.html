@@ -54,7 +54,9 @@
       max-width: 1600px;
       margin: 0 auto;
       padding: 1.35rem;
-      display: block;
+      display: grid;
+      grid-template-columns: minmax(0, 1.6fr) minmax(360px, 430px);
+      gap: 1.25rem;
     }
 
     .main-column {
@@ -115,7 +117,7 @@
     .hero-grid {
       margin-top: 1.35rem;
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 0.85rem;
     }
 
@@ -153,6 +155,14 @@
     .hero-value {
       font-size: 1.7rem;
       line-height: 1.05;
+    }
+
+    .hero-meta {
+      margin-top: 0.28rem;
+      font-size: 0.82rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      opacity: 0.7;
     }
 
     .hero-value.compact {
@@ -791,7 +801,7 @@
       z-index: 40;
       background: #000;
       display: grid;
-      grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+      grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
     }
 
     .map-menu-panel {
@@ -805,6 +815,10 @@
       align-content: start;
       overflow-y: auto;
       transition: transform 180ms ease, opacity 180ms ease;
+    }
+
+    .map-menu-panel.compact {
+      gap: 0.85rem;
     }
 
     .battle-map-page.menu-collapsed {
@@ -878,6 +892,13 @@
     .map-menu-section {
       display: grid;
       gap: 0.7rem;
+    }
+
+    .map-menu-title {
+      font-size: 0.78rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      opacity: 0.72;
     }
 
     .status-pill {
@@ -969,6 +990,10 @@
     }
 
     @media (max-width: 1180px) {
+      .page {
+        grid-template-columns: 1fr;
+      }
+
       .intel-panel {
         position: static;
       }
@@ -1028,16 +1053,13 @@
         </div>
         <div class="hero-grid">
           <div class="hero-stat">
-            <span class="hero-label">Tracked Fronts</span>
-            <div id="hero-map-count" class="hero-value">0</div>
+            <span class="hero-label">Servers Tracked</span>
+            <div id="hero-server-count" class="hero-value">1</div>
+            <div id="hero-server-names" class="hero-meta">7DR</div>
           </div>
           <div class="hero-stat">
             <span class="hero-label">Live Battles</span>
             <div id="hero-live-count" class="hero-value">0</div>
-          </div>
-          <div class="hero-stat">
-            <span class="hero-label">Top Lead</span>
-            <div id="hero-margin" class="hero-value">0</div>
           </div>
         </div>
       </header>
@@ -1069,33 +1091,14 @@
         <div id="challenge-grid" class="challenge-grid"></div>
       </section>
     </section>
-  </main>
 
-  <section id="battle-map-page" class="battle-map-page hidden menu-collapsed">
-    <aside id="map-menu-panel" class="map-menu-panel">
-      <button id="return-dashboard" class="map-back-button" type="button">← Dashboard</button>
-      <div class="map-menu-header">
-        <div id="status-pill" class="status-pill">Awaiting data</div>
-        <div>
-          <span class="panel-label">Battle Map</span>
-          <h3 id="detail-title" class="detail-title">Select a front</h3>
-        </div>
-        <p id="detail-copy" class="detail-subtext map-menu-copy">Select any campaign marker to inspect its progress, current live server, and the first-to-500 race between Allies and Axis.</p>
+    <aside class="intel-panel">
+      <div id="status-pill" class="status-pill">Awaiting data</div>
+      <div>
+        <span class="panel-label">Intel Panel</span>
+        <h3 id="detail-title" class="detail-title">Select a front</h3>
       </div>
-
-      <section class="map-menu-section">
-        <div class="toolbar-group">
-          <button id="zoom-out" class="toolbar-button" type="button" aria-label="Zoom out">−</button>
-          <button id="zoom-reset" class="toolbar-button" type="button">Reset View</button>
-          <button id="zoom-in" class="toolbar-button" type="button" aria-label="Zoom in">+</button>
-          <button id="focus-active" class="toolbar-button" type="button">Focus Active</button>
-        </div>
-        <div class="map-legend">
-          <span class="legend-chip"><span class="legend-dot live"></span>Live battle</span>
-          <span class="legend-chip"><span class="legend-dot allies"></span>Allies progress</span>
-          <span class="legend-chip"><span class="legend-dot axis"></span>Axis progress</span>
-        </div>
-      </section>
+      <p id="detail-copy" class="detail-subtext">Select any front tile to inspect its progress, current live server, and the first-to-500 race between Allies and Axis.</p>
 
       <div class="detail-grid">
         <div class="detail-card">
@@ -1133,12 +1136,35 @@
         </div>
       </section>
 
-      <section class="map-menu-section">
+      <section>
         <span class="panel-label">Server Breakdown</span>
         <div id="servers" class="server-list"></div>
       </section>
 
       <div id="footer-note" class="footer-note">Loading campaign data...</div>
+    </aside>
+  </main>
+
+  <section id="battle-map-page" class="battle-map-page hidden menu-collapsed">
+    <aside id="map-menu-panel" class="map-menu-panel compact">
+      <button id="return-dashboard" class="map-back-button" type="button">← Dashboard</button>
+      <div class="map-menu-header">
+        <div class="map-menu-title">Battle Map</div>
+      </div>
+
+      <section class="map-menu-section">
+        <div class="toolbar-group">
+          <button id="zoom-out" class="toolbar-button" type="button" aria-label="Zoom out">−</button>
+          <button id="zoom-reset" class="toolbar-button" type="button">Reset View</button>
+          <button id="zoom-in" class="toolbar-button" type="button" aria-label="Zoom in">+</button>
+          <button id="focus-active" class="toolbar-button" type="button">Focus Active</button>
+        </div>
+        <div class="map-legend">
+          <span class="legend-chip"><span class="legend-dot live"></span></span>
+          <span class="legend-chip"><span class="legend-dot allies"></span></span>
+          <span class="legend-chip"><span class="legend-dot axis"></span></span>
+        </div>
+      </section>
     </aside>
 
     <div class="map-stage">
@@ -1219,9 +1245,9 @@
     const axisBar = document.getElementById('axis-bar');
     const servers = document.getElementById('servers');
     const footerNote = document.getElementById('footer-note');
-    const heroMapCount = document.getElementById('hero-map-count');
+    const heroServerCount = document.getElementById('hero-server-count');
+    const heroServerNames = document.getElementById('hero-server-names');
     const heroLiveCount = document.getElementById('hero-live-count');
-    const heroMargin = document.getElementById('hero-margin');
     const zoomInButton = document.getElementById('zoom-in');
     const zoomOutButton = document.getElementById('zoom-out');
     const zoomResetButton = document.getElementById('zoom-reset');
@@ -1506,9 +1532,29 @@
 
     function renderFrontStrip(maps, target) {
       frontStrip.innerHTML = '';
-      heroMapCount.textContent = maps.length;
+      const trackedServers = new Map();
+      maps.forEach((map) => {
+        (map.servers || []).forEach((server) => {
+          const key = server.server_id || server.server_name;
+          if (!key) {
+            return;
+          }
+          trackedServers.set(key, server.server_name || server.server_id);
+        });
+
+        (map.active_servers || []).forEach((server) => {
+          const key = server.server_id || server.server_name;
+          if (!key) {
+            return;
+          }
+          trackedServers.set(key, server.server_name || server.server_id);
+        });
+      });
+
+      const trackedServerNames = [...trackedServers.values()];
+      heroServerCount.textContent = trackedServerNames.length || 1;
+      heroServerNames.textContent = trackedServerNames.join(' · ') || '7DR';
       heroLiveCount.textContent = maps.filter((map) => map.is_active_battle).length;
-      heroMargin.textContent = maps[0]?.liberation?.race_margin || 0;
       emptyState.hidden = maps.length > 0;
 
       maps.forEach((map, index) => {
