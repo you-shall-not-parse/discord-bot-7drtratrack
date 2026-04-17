@@ -8,6 +8,7 @@ import re
 import time
 import urllib.parse
 from datetime import datetime, timezone
+from logging.handlers import RotatingFileHandler
 from typing import Any
 
 import requests
@@ -16,6 +17,7 @@ import discord
 from data_paths import data_path
 
 CLAN_T17_MAP_FILE = data_path("clan_t17_map.json")
+T17_LOG_FILE = data_path("t17_lookup.log")
 CRCON_PANEL_URL = "https://7dr.hlladmin.com/api/"
 CRCON_API_KEY = os.getenv("CRCON_API_KEY")
 PLAYER_LOOKUP_CACHE_TTL_SECONDS = 3600
@@ -54,9 +56,28 @@ def utc_now_iso() -> str:
     return utc_now().isoformat()
 
 
+def get_t17_logger() -> logging.Logger:
+    logger = logging.getLogger("ClanT17Lookup")
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+
+    existing = [
+        handler
+        for handler in logger.handlers
+        if isinstance(handler, RotatingFileHandler) and getattr(handler, "baseFilename", None) == T17_LOG_FILE
+    ]
+    if not existing:
+        handler = RotatingFileHandler(T17_LOG_FILE, maxBytes=2 * 1024 * 1024, backupCount=3, encoding="utf-8")
+        handler.setLevel(logging.DEBUG)
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        logger.addHandler(handler)
+
+    return logger
+
+
 class ClanT17Lookup:
     def __init__(self, *, logger: logging.Logger | None = None):
-        self.logger = logger or logging.getLogger("ClanT17Lookup")
+        self.logger = get_t17_logger()
         self._player_id_cache: dict[str, tuple[str | None, float]] = {}
 
     def _load_json_file(self, path: str) -> dict[str, Any]:

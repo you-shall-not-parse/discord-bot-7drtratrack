@@ -2,7 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from clan_t17_lookup import ClanT17Lookup
+from clan_t17_lookup import ClanT17Lookup, get_t17_logger
 
 GUILD_ID = 1097913605082579024
 T17_ADMIN_ROLE_ID = 1213495462632361994
@@ -16,7 +16,8 @@ def _can_manage_t17(interaction: discord.Interaction) -> bool:
 class T17Lookup(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.lookup = ClanT17Lookup()
+        self.logger = get_t17_logger()
+        self.lookup = ClanT17Lookup(logger=self.logger)
 
     @app_commands.command(name="t17_overwrite", description="Override a member's shared clan T17 ID")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
@@ -41,6 +42,7 @@ class T17Lookup(commands.Cog):
             try:
                 await hellor_cog.refresh_member_override(member)
             except Exception as exc:
+                self.logger.exception("t17_overwrite_hellor_refresh_failed member_id=%s error=%s", member.id, exc)
                 refresh_failures.append(f"hellor leaderboard: {exc}")
 
         roster_cog = self.bot.get_cog("Rosterizer")
@@ -48,6 +50,7 @@ class T17Lookup(commands.Cog):
             try:
                 await roster_cog.refresh_member_override(member)
             except Exception as exc:
+                self.logger.exception("t17_overwrite_roster_refresh_failed member_id=%s error=%s", member.id, exc)
                 refresh_failures.append(f"rosterizer: {exc}")
 
         if refresh_failures:
@@ -70,6 +73,7 @@ class T17Lookup(commands.Cog):
             else:
                 await interaction.response.send_message("You need the configured T17 admin role to use this command.", ephemeral=True)
             return
+        self.logger.exception("t17_overwrite_command_failed error=%s", error)
         raise error
 
 
