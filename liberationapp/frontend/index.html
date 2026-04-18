@@ -133,9 +133,9 @@
       margin-top: 1.15rem;
       padding: 1rem 1.05rem;
       border-radius: 18px;
-      background: linear-gradient(180deg, rgba(241, 220, 179, 0.95), rgba(225, 199, 150, 0.9));
-      border: 1px solid rgba(255, 243, 219, 0.28);
-      color: #20170e;
+      background: linear-gradient(180deg, rgba(198, 151, 76, 0.24), rgba(255, 248, 235, 0.06));
+      border: 1px solid rgba(255, 243, 219, 0.12);
+      color: #f6ead8;
       box-shadow: 0 14px 30px rgba(26, 21, 17, 0.18);
       display: grid;
       gap: 0.7rem;
@@ -143,7 +143,7 @@
 
     .board-objective {
       margin-top: 0.9rem;
-      background: linear-gradient(180deg, rgba(241, 220, 179, 0.95), rgba(225, 199, 150, 0.9));
+      background: linear-gradient(180deg, rgba(198, 151, 76, 0.24), rgba(255, 248, 235, 0.06));
     }
 
     .hero-objective-top,
@@ -170,8 +170,8 @@
       position: relative;
       overflow: hidden;
       border-radius: 999px;
-      background: rgba(32, 23, 14, 0.1);
-      border: 1px solid rgba(32, 23, 14, 0.12);
+      background: rgba(255, 248, 235, 0.12);
+      border: 1px solid rgba(215, 176, 109, 0.16);
     }
 
     .control-track,
@@ -204,12 +204,12 @@
       border: 1px solid rgba(32, 24, 16, 0.14);
       border-radius: 999px;
       padding: 0.7rem 1rem;
-      background: linear-gradient(180deg, rgba(244, 226, 190, 0.98), rgba(226, 197, 142, 0.94));
-      color: #20170e;
+      background: rgba(25, 21, 15, 0.92);
+      color: #f7ead5;
       font: inherit;
       cursor: pointer;
       transition: transform 140ms ease, box-shadow 140ms ease;
-      box-shadow: 0 12px 24px rgba(26, 21, 17, 0.2);
+      box-shadow: 0 12px 24px rgba(26, 21, 17, 0.16);
     }
 
     .hero-button:hover {
@@ -1120,6 +1120,35 @@
       opacity: 0.72;
     }
 
+    .intel-panel.compact-panel {
+      font-size: 0.92rem;
+    }
+
+    .intel-panel.compact-panel .status-pill,
+    .intel-panel.compact-panel .panel-label,
+    .intel-panel.compact-panel .detail-label,
+    .intel-panel.compact-panel .server-line,
+    .intel-panel.compact-panel .footer-note {
+      font-size: 0.76rem;
+    }
+
+    .intel-panel.compact-panel .detail-title {
+      font-size: 1.45rem;
+    }
+
+    .intel-panel.compact-panel .detail-subtext {
+      font-size: 0.88rem;
+      line-height: 1.45;
+    }
+
+    .intel-panel.compact-panel .detail-card {
+      padding: 0.8rem 0.85rem;
+    }
+
+    .intel-panel.compact-panel .detail-value {
+      font-size: 1.05rem;
+    }
+
     .intel-panel-backdrop {
       display: none;
     }
@@ -1177,10 +1206,16 @@
         transition: transform 180ms ease;
         overflow-y: auto;
         box-shadow: -18px 0 42px rgba(0, 0, 0, 0.34);
+        touch-action: pan-y;
+        will-change: transform;
       }
 
       .intel-panel.mobile-open {
         transform: translateX(0);
+      }
+
+      .intel-panel.swiping {
+        transition: none;
       }
 
       .intel-panel-close {
@@ -1302,7 +1337,7 @@
 
     <div id="intel-panel-backdrop" class="intel-panel-backdrop" hidden></div>
 
-    <aside class="intel-panel">
+    <aside class="intel-panel compact-panel">
       <button id="intel-panel-close" class="intel-panel-close" type="button" aria-label="Close intel panel">×</button>
       <div id="status-pill" class="status-pill">Awaiting data</div>
       <div>
@@ -1475,6 +1510,9 @@
     let initialControlTarget = null;
     let modelLoaded = false;
     let modelBounds = null;
+    let intelPanelTouchStartX = 0;
+    let intelPanelTouchCurrentX = 0;
+    let intelPanelSwipeActive = false;
     const overlayMarkers = new Map();
     const projectionVector = new THREE.Vector3();
 
@@ -1540,14 +1578,76 @@
     function setIntelPanelOpen(isOpen) {
       if (!isMobileViewport()) {
         intelPanel.classList.remove('mobile-open');
+        intelPanel.classList.remove('swiping');
+        intelPanel.style.transform = '';
+        intelPanelBackdrop.style.opacity = '';
         intelPanelBackdrop.hidden = true;
         intelPanelBackdrop.classList.remove('visible');
         return;
       }
 
+      intelPanel.classList.remove('swiping');
+      intelPanel.style.transform = '';
+      intelPanelBackdrop.style.opacity = '';
       intelPanel.classList.toggle('mobile-open', isOpen);
       intelPanelBackdrop.hidden = !isOpen;
       intelPanelBackdrop.classList.toggle('visible', isOpen);
+    }
+
+    function handleIntelPanelTouchStart(event) {
+      if (!isMobileViewport() || !intelPanel.classList.contains('mobile-open')) {
+        return;
+      }
+
+      const touch = event.touches[0];
+      intelPanelTouchStartX = touch.clientX;
+      intelPanelTouchCurrentX = touch.clientX;
+      intelPanelSwipeActive = false;
+    }
+
+    function handleIntelPanelTouchMove(event) {
+      if (!isMobileViewport() || !intelPanel.classList.contains('mobile-open') || !event.touches.length) {
+        return;
+      }
+
+      const touch = event.touches[0];
+      const deltaX = touch.clientX - intelPanelTouchStartX;
+      if (deltaX <= 0) {
+        return;
+      }
+
+      intelPanelTouchCurrentX = touch.clientX;
+      intelPanelSwipeActive = true;
+      intelPanel.classList.add('swiping');
+      intelPanel.style.transform = `translateX(${deltaX}px)`;
+
+      const openness = Math.max(0, Math.min(1, 1 - (deltaX / intelPanel.offsetWidth)));
+      intelPanelBackdrop.hidden = false;
+      intelPanelBackdrop.classList.add('visible');
+      intelPanelBackdrop.style.opacity = String(openness);
+      event.preventDefault();
+    }
+
+    function handleIntelPanelTouchEnd() {
+      if (!isMobileViewport() || !intelPanel.classList.contains('mobile-open')) {
+        intelPanelBackdrop.style.opacity = '';
+        return;
+      }
+
+      const deltaX = Math.max(0, intelPanelTouchCurrentX - intelPanelTouchStartX);
+      intelPanel.classList.remove('swiping');
+      intelPanel.style.transform = '';
+      intelPanelBackdrop.style.opacity = '';
+
+      if (intelPanelSwipeActive && deltaX > Math.min(intelPanel.offsetWidth * 0.28, 120)) {
+        setIntelPanelOpen(false);
+      } else {
+        setIntelPanelOpen(true);
+      }
+
+      intelPanelSwipeActive = false;
+      intelPanelTouchStartX = 0;
+      intelPanelTouchCurrentX = 0;
     }
 
     function formatFaction(value) {
@@ -2099,12 +2199,18 @@
       returnDashboardButton.addEventListener('click', () => setBattleMapOpen(false));
       intelPanelCloseButton.addEventListener('click', () => setIntelPanelOpen(false));
       intelPanelBackdrop.addEventListener('click', () => setIntelPanelOpen(false));
+      intelPanel.addEventListener('touchstart', handleIntelPanelTouchStart, { passive: true });
+      intelPanel.addEventListener('touchmove', handleIntelPanelTouchMove, { passive: false });
+      intelPanel.addEventListener('touchend', handleIntelPanelTouchEnd);
+      intelPanel.addEventListener('touchcancel', handleIntelPanelTouchEnd);
 
       window.addEventListener('resize', () => {
         resizeRenderer();
         requestRender();
         if (!isMobileViewport()) {
           setIntelPanelOpen(false);
+        } else {
+          intelPanelBackdrop.style.opacity = '';
         }
       });
     }
