@@ -11,9 +11,10 @@ from discord import app_commands
 from discord.ext import commands
 
 from clan_t17_lookup import ClanT17Lookup, DEFAULT_RANK_ORDER
+from config import MAIN_GUILD_ID
 from data_paths import data_path
 
-GUILD_ID = 1097913605082579024
+GUILD_ID = MAIN_GUILD_ID
 OUTPUT_CHANNEL_ID = 1459904650831724806
 STATE_FILE = data_path("rosterizer_state.json")
 UPDATE_DEBOUNCE_SECONDS = 2.0

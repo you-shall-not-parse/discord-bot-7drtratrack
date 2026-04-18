@@ -11,6 +11,7 @@ import aiohttp
 from typing import List, Optional
 from urllib.parse import parse_qs, unquote, urlparse
 
+from config import MAIN_GUILD_ID
 from data_paths import data_path
 
 # Set up logging (always minimal)
@@ -26,7 +27,7 @@ logging.getLogger('discord.client').setLevel(logging.ERROR)
 logging.getLogger('discord.http').setLevel(logging.ERROR)
 
 # ---------------- CONFIG ----------------
-GUILD_ID = 1097913605082579024   # Replace with your guild/server ID
+GUILD_ID = MAIN_GUILD_ID
 THREAD_ID = 1412934277133369494  # replace with your thread ID
 # If set, Hell Let Loose posts are routed here; other games go to THREAD_ID.
 # Can be a text channel or thread ID.

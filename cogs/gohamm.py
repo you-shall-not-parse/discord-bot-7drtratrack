@@ -8,8 +8,10 @@ import subprocess
 import os
 import uuid
 
+from config import MAIN_GUILD_ID
+
 # ================== CONFIG ==================
-GUILD_ID = 1097913605082579024
+GUILD_ID = MAIN_GUILD_ID
 
 OUTPUT_EXT = "mp4"              # mp4 | mov | webm
 FADE_DURATION = 3.0             # seconds

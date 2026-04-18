@@ -16,6 +16,7 @@ from apscheduler.triggers.cron import CronTrigger
 from discord.ext import commands
 from openpyxl import Workbook, load_workbook
 
+from config import MAIN_GUILD_ID
 from data_paths import data_path
 
 logger = logging.getLogger(__name__)
@@ -26,7 +27,7 @@ logger = logging.getLogger(__name__)
 # =============================
 
 # Target guild
-GUILD_ID = 1097913605082579024
+GUILD_ID = MAIN_GUILD_ID
 
 # When to send the rollcall each week.
 # NOTE: Columns are based on the date the rollcall is sent.

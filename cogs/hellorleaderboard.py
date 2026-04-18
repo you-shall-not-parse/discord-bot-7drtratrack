@@ -19,15 +19,16 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from clan_t17_lookup import ClanT17Lookup, DEFAULT_RANK_ORDER
+from config import MAIN_GUILD_ID, data_log_path
 from data_paths import data_path
 
-GUILD_ID = 1097913605082579024
+GUILD_ID = MAIN_GUILD_ID
 POST_CHANNEL_ID = 1099806153170489485
 ROLE_NAME = "131st Infantry Brigade"
 HELLOR_ADMIN_ROLE_ID = 1213495462632361994
 
 STATE_FILE = data_path("hellor_leaderboard_state.json")
-LOG_FILE = data_path("hellor_leaderboard.log")
+LOG_FILE = data_log_path("hellor_leaderboard.log")
 
 UPDATE_INTERVAL_SECONDS = 7 * 24 * 3600
 REQUEST_PACE_SECONDS = 4

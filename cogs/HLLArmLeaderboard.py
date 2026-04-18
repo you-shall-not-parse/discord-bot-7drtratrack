@@ -8,10 +8,11 @@ import datetime
 import math
 from typing import Optional
 
+from config import MAIN_GUILD_ID
 from data_paths import data_path
 
 # ---------------- Config ----------------
-GUILD_ID = 1097913605082579024  # replace with your guild ID
+GUILD_ID = MAIN_GUILD_ID
 
 # Channel IDs for the armour leaderboard and submissions
 ARM_LEADERBOARD_CHANNEL_ID = 1214971219246325851

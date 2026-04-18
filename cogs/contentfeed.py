@@ -9,6 +9,8 @@ import random
 from datetime import datetime, time, timezone
 from xml.etree import ElementTree
 
+from config import MAIN_GUILD_ID
+
 # ================== CONFIG ==================
 
 POST_TIME_UTC = time(hour=12, minute=0, tzinfo=timezone.utc)
@@ -48,7 +50,7 @@ LAST_SEEN_FILE = os.path.join(DATA_DIR, "yt_last_seen.json")
 LAST_POSTED_FILE = os.path.join(DATA_DIR, "yt_last_posted.json")
 
 # Guild and role configuration for slash command access
-GUILD_ID = 1097913605082579024  # Replace with your guild ID
+GUILD_ID = MAIN_GUILD_ID
 CONTENT_ADMIN_ROLE_ID = 1213495462632361994  # Replace with role ID permitted to use /forcecontent
 
 logger = logging.getLogger("YouTubeFeed")

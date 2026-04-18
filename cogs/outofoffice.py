@@ -8,9 +8,10 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
+from config import MAIN_GUILD_ID
 from data_paths import data_path
 
-GUILD_ID = 1097913605082579024
+GUILD_ID = MAIN_GUILD_ID
 
 LOA_ROLE_ID = 1099610910097686569
 OUT_OF_OFFICE_SETUP_ROLE_IDS = {

@@ -7,8 +7,10 @@ import os
 import sys
 import subprocess  
 
+from config import MAIN_GUILD_ID
+
 # --- Admin access (edit these) ---
-GUILD_ID = 1097913605082579024
+GUILD_ID = MAIN_GUILD_ID
 
 # Owner-only: only this Discord user ID can use these commands
 OWNER_ID = 1109147750932676649  # Replace with your Discord user ID

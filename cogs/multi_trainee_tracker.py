@@ -11,6 +11,7 @@ from typing import Optional
 import discord
 from discord.ext import commands
 
+from config import MAIN_GUILD_ID
 from data_paths import data_path
 
 logger = logging.getLogger(__name__)
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 # =============================
 # CONFIG (EDIT THIS)
 # =============================
-GUILD_ID = 1097913605082579024
+GUILD_ID = MAIN_GUILD_ID
 
 # All HTML table uploads go to this single channel or thread (shared across tracks).
 # Embeds still post in each track's configured channel.

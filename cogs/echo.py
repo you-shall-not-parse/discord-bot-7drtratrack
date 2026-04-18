@@ -3,10 +3,12 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from config import MAIN_GUILD_ID
+
 
 # Guild-scoped commands require a guild sync (see on_ready below).
 # Default matches other cogs in this repo; override via env var if needed.
-ECHO_GUILD_ID = int(os.getenv("ECHO_GUILD_ID", "1097913605082579024"))
+ECHO_GUILD_ID = int(os.getenv("ECHO_GUILD_ID", str(MAIN_GUILD_ID)))
 
 # Role required to use /7drecho (can be overridden via env var ECHO_ROLE_ID)
 ECHO_ROLE_ID = int(os.getenv("ECHO_ROLE_ID", "1213495462632361994"))

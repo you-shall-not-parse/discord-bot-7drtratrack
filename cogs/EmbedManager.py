@@ -3,10 +3,11 @@ from discord.ext import commands
 import json
 import os
 
+from config import MAIN_GUILD_ID
 from data_paths import data_path
 
 # ---------------- CONFIG ----------------
-GUILD_ID = 1097913605082579024  # your guild ID
+GUILD_ID = MAIN_GUILD_ID
 DATA_FILE = data_path("stored_embeds.json")
 
 # ---------------- HELPER FUNCTIONS ----------------

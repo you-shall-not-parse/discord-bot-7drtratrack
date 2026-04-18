@@ -7,10 +7,11 @@ import random
 import datetime
 import math
 
+from config import MAIN_GUILD_ID
 from data_paths import data_path
 
 # ---------------- Config ----------------
-GUILD_ID = 1097913605082579024  # replace with your guild ID
+GUILD_ID = MAIN_GUILD_ID
 LEADERBOARD_CHANNEL_ID = 1419010804832800859  # replace with your leaderboard channel
 SUBMISSIONS_CHANNEL_ID = 1419010992578363564  # replace with your submissions channel
 

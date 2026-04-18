@@ -6,11 +6,12 @@ from discord.ext import commands
 from discord import app_commands, Embed
 from discord.utils import get
 
+from config import MAIN_GUILD_ID
 from data_paths import data_path
 
 PRESET_FILE = data_path("role_presets.json")
 REQUIRED_ROLE_NAME = ("Infantry School Trainer")
-GUILD_ID = 1097913605082579024  # Set your guild/server ID here
+GUILD_ID = MAIN_GUILD_ID
 
 logging.basicConfig(level=logging.INFO)
 

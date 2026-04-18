@@ -6,12 +6,13 @@ from datetime import datetime, time
 import pytz
 import random
 
+from config import MAIN_GUILD_ID
 from data_paths import data_path
 
 # ---------------- Config ----------------
 BIRTHDAY_CHANNEL_ID = 1098333222540152944
 SUMMARY_CHANNEL_ID = 1098333222540152944
-GUILD_ID = 1097913605082579024
+GUILD_ID = MAIN_GUILD_ID
 TIMEZONE = "Europe/London"
 DB_FILE = data_path("birthdays.db")
 # Static GIFs for birthday greetings

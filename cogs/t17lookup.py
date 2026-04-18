@@ -3,8 +3,9 @@ from discord import app_commands
 from discord.ext import commands
 
 from clan_t17_lookup import ClanT17Lookup, get_t17_logger
+from config import MAIN_GUILD_ID
 
-GUILD_ID = 1097913605082579024
+GUILD_ID = MAIN_GUILD_ID
 T17_ADMIN_ROLE_ID = 1213495462632361994
 
 

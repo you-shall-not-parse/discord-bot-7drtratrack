@@ -9,6 +9,7 @@ import requests
 from dotenv import load_dotenv
 from datetime import datetime, timezone, timedelta
 
+from config import CRCON_PANEL_URL, MAIN_GUILD_ID
 from data_paths import data_path
 
 load_dotenv()
@@ -17,7 +18,7 @@ load_dotenv()
 # CONFIG YOU EDIT
 # --------------------------------------------------
 
-GUILD_ID = 1097913605082579024
+GUILD_ID = MAIN_GUILD_ID
 MAPVOTE_CHANNEL_ID = 1441751747935735878
 # Log destination can be a channel OR a thread
 MAPVOTE_LOG_CHANNEL_ID = 1489697143227945121
@@ -165,7 +166,6 @@ DISABLED_CDN_IMAGE = "https://cdn.discordapp.com/attachments/1098976074852999261
 # CRCON API (Bearer token)
 # -----------------------------------------------
 
-CRCON_PANEL_URL = "https://7dr.hlladmin.com/api/"
 CRCON_API_KEY = os.getenv("CRCON_API_KEY")
 
 

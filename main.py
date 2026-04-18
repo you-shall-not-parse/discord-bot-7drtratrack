@@ -6,6 +6,8 @@ from discord.ext import commands
 from dotenv import load_dotenv
 import asyncio
 
+from config import BOT_LOG_PATH, MAIN_GUILD_ID
+
 load_dotenv()
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
@@ -19,7 +21,7 @@ console_handler = logging.StreamHandler()
 console_handler.setFormatter(formatter)
 
 # Rotating file logging (.txt) - 5 MB per file, keep 3 backups
-log_file_path = os.path.join(os.path.dirname(__file__), 'bot.log.txt')
+log_file_path = BOT_LOG_PATH
 file_handler = RotatingFileHandler(log_file_path, maxBytes=5 * 1024 * 1024, backupCount=3, encoding='utf-8')
 file_handler.setFormatter(formatter)
 
@@ -47,7 +49,7 @@ async def on_ready():
 
         # Also sync guild-scoped commands (they won't show up from global sync alone).
         try:
-            main_guild = discord.Object(id=1097913605082579024)
+            main_guild = discord.Object(id=MAIN_GUILD_ID)
             guild_synced = await bot.tree.sync(guild=main_guild)
             logging.info(f"Synced {len(guild_synced)} guild command(s) to {main_guild.id}")
         except Exception as e:
@@ -107,7 +109,9 @@ async def main():
         await bot.load_extension("cogs.outofoffice")
         await bot.load_extension("cogs.wardiary")
         await bot.load_extension("cogs.t17lookup")
+        await bot.load_extension("cogs.applyroletomessage")
         await bot.load_extension("cogs.hellorleaderboard")
+        await bot.load_extension("cogs.docsync")
         await bot.start(TOKEN)
 
 if __name__ == "__main__":
