@@ -347,9 +347,8 @@
     }
 
     .mobile-activity-feed {
-      display: none;
-      margin-top: 0.9rem;
-      padding: 0.9rem 0.95rem;
+      display: grid;
+      padding: 1rem 1.05rem;
       border-radius: 12px;
       border: 1px solid rgba(255,255,255,0.1);
       background: rgba(0, 0, 0, 0.6);
@@ -370,30 +369,39 @@
 
     .mobile-activity-list {
       display: grid;
-      gap: 0.55rem;
+      gap: 0.45rem;
     }
 
     .mobile-activity-item {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 0.35rem 0.75rem;
-      padding: 0.6rem 0.7rem;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 0.15rem 0.7rem;
+      padding: 0.48rem 0.65rem;
       border-radius: 10px;
       border: 1px solid rgba(255,255,255,0.08);
       background: linear-gradient(180deg, rgba(224, 214, 184, 0.04), rgba(0, 0, 0, 0.52));
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .mobile-activity-item:hover {
+      border-color: rgba(251, 191, 36, 0.24);
+      box-shadow: 0 10px 18px rgba(0, 0, 0, 0.24);
     }
 
     .mobile-activity-time {
       font-family: "Rajdhani", sans-serif;
-      font-size: 0.72rem;
+      font-size: 0.66rem;
       letter-spacing: 0.12em;
       text-transform: uppercase;
       color: var(--muted);
+      white-space: nowrap;
     }
 
     .mobile-activity-name {
       font-family: "Rajdhani", sans-serif;
-      font-size: 0.98rem;
+      font-size: 0.9rem;
       font-weight: 700;
       letter-spacing: 0.08em;
       text-transform: uppercase;
@@ -402,8 +410,8 @@
     }
 
     .mobile-activity-copy {
-      font-size: 0.82rem;
-      line-height: 1.35;
+      font-size: 0.76rem;
+      line-height: 1.2;
       color: var(--muted);
     }
 
@@ -411,12 +419,13 @@
       align-self: center;
       justify-self: end;
       font-family: "Rajdhani", sans-serif;
-      font-size: 1.02rem;
+      font-size: 0.96rem;
       font-weight: 700;
       letter-spacing: 0.08em;
       text-transform: uppercase;
       color: var(--ink);
       text-shadow: 0 0 6px rgba(200, 180, 120, 0.2);
+      white-space: nowrap;
     }
 
     .mobile-activity-impact.live,
@@ -1667,12 +1676,12 @@
         order: 1;
       }
 
-      .theatre {
+      .mobile-activity-feed {
         order: 2;
       }
 
-      .mobile-activity-feed:not([hidden]) {
-        display: grid;
+      .theatre {
+        order: 3;
       }
 
       .intel-panel {
@@ -1842,15 +1851,6 @@
           </div>
           <button id="mobile-nav-toggle-home" class="menu-toggle" type="button" aria-label="Open navigation menu">☰</button>
         </div>
-        <section id="mobile-activity-feed" class="mobile-activity-feed" hidden>
-          <div class="mobile-activity-head">
-            <div>
-              <span class="hero-label">Recent Activity</span>
-              <div class="hero-meta">Latest front updates</div>
-            </div>
-          </div>
-          <div id="mobile-activity-list" class="mobile-activity-list"></div>
-        </section>
         <div class="hero-grid">
           <div class="hero-stat">
             <span class="hero-label">Servers Tracked</span>
@@ -1863,6 +1863,17 @@
           </div>
         </div>
       </header>
+
+      <section id="mobile-activity-feed" class="mobile-activity-feed" hidden>
+        <div class="mobile-activity-head">
+          <div>
+            <span class="section-label">Recent Activity</span>
+            <h2>Front Advances</h2>
+          </div>
+          <p>Latest control shifts and live pushes across tracked fronts.</p>
+        </div>
+        <div id="mobile-activity-list" class="mobile-activity-list"></div>
+      </section>
 
       <section class="theatre">
         <div class="section-header">
@@ -2205,6 +2216,9 @@
     const zoomResetButton = document.getElementById('zoom-reset');
     const focusActiveButton = document.getElementById('focus-active');
 
+    const MAP_SNAPSHOT_STORAGE_KEY = 'hll-frontlines-map-snapshots';
+    const MAP_REFRESH_INTERVAL_MS = 30000;
+
     let currentMaps = [];
     let selectedMapName = null;
     let currentTargetKills = 500;
@@ -2216,6 +2230,7 @@
     let intelPanelTouchStartX = 0;
     let intelPanelTouchCurrentX = 0;
     let intelPanelSwipeActive = false;
+    let lastKnownMapSnapshots = loadStoredMapSnapshots();
     const overlayMarkers = new Map();
     const projectionVector = new THREE.Vector3();
 
@@ -2392,6 +2407,54 @@
       return new Intl.NumberFormat('en-GB').format(value || 0);
     }
 
+    function loadStoredMapSnapshots() {
+      try {
+        const raw = sessionStorage.getItem(MAP_SNAPSHOT_STORAGE_KEY);
+        if (!raw) {
+          return {};
+        }
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+      } catch {
+        return {};
+      }
+    }
+
+    function storeMapSnapshots(maps) {
+      const snapshots = {};
+      (maps || []).forEach((map) => {
+        snapshots[map.map_name] = {
+          updated_at: map.updated_at || null,
+          total_kills: Number(map.total_kills || 0),
+          control_value: Number(map?.liberation?.control_value || 0),
+        };
+      });
+      lastKnownMapSnapshots = snapshots;
+      try {
+        sessionStorage.setItem(MAP_SNAPSHOT_STORAGE_KEY, JSON.stringify(snapshots));
+      } catch {
+      }
+    }
+
+    function withRecentActivityDeltas(maps) {
+      return (maps || []).map((map) => {
+        const snapshot = lastKnownMapSnapshots[map.map_name];
+        const currentControl = Number(map?.liberation?.control_value || 0);
+        const currentKills = Number(map.total_kills || 0);
+        const deltaControl = snapshot ? currentControl - Number(snapshot.control_value || 0) : 0;
+        const deltaKills = snapshot ? currentKills - Number(snapshot.total_kills || 0) : 0;
+        const hasDelta = snapshot ? Math.abs(deltaControl) >= 0.05 || deltaKills !== 0 : false;
+        return {
+          ...map,
+          recent_activity: {
+            delta_control: Number(deltaControl.toFixed(2)),
+            delta_kills: deltaKills,
+            has_delta: hasDelta,
+          },
+        };
+      });
+    }
+
     function formatRelativeTime(value) {
       if (!value) {
         return 'No recent update';
@@ -2434,47 +2497,36 @@
     function describeRecentActivity(map) {
       const lib = map.liberation || {};
       const stateLabel = formatStateLabel(lib.state || 'idle');
-      const controlMetric = formatControlMetric(lib.control_value);
-      const controllingFaction = lib.controlling_faction || lib.occupied_faction || 'neutral';
+      const deltaControl = Number(map?.recent_activity?.delta_control || 0);
+      const deltaKills = Number(map?.recent_activity?.delta_kills || 0);
+      const hasDelta = Boolean(map?.recent_activity?.has_delta);
+
+      if (hasDelta && deltaControl > 0) {
+        return {
+          copy: `Allies advanced${deltaKills > 0 ? ` · +${formatCount(deltaKills)} kills` : ''}`,
+          metric: `+${Math.abs(deltaControl).toFixed(2)}%`,
+          tone: 'allies',
+        };
+      }
+
+      if (hasDelta && deltaControl < 0) {
+        return {
+          copy: `Axis advanced${deltaKills > 0 ? ` · +${formatCount(deltaKills)} kills` : ''}`,
+          metric: `-${Math.abs(deltaControl).toFixed(2)}%`,
+          tone: 'axis',
+        };
+      }
 
       if (map.is_active_battle) {
-        if (controllingFaction === 'allies') {
-          return {
-            copy: `Live battle. Allies pressure the front with ${controlMetric} control.`,
-            metric: controlMetric,
-            tone: 'allies',
-          };
-        }
-        if (controllingFaction === 'axis') {
-          return {
-            copy: `Live battle. Axis pressure the front with ${controlMetric} control.`,
-            metric: controlMetric,
-            tone: 'axis',
-          };
-        }
         return {
-          copy: `Live battle. ${stateLabel} on this front.`,
+          copy: `Live pressure${deltaKills > 0 ? ` · +${formatCount(deltaKills)} kills` : ''}`,
           metric: 'Live',
           tone: 'live',
         };
       }
 
-      if (controllingFaction === 'allies') {
-        return {
-          copy: `Cooling front. Allies hold ${controlMetric} control.`,
-          metric: controlMetric,
-          tone: 'allies',
-        };
-      }
-      if (controllingFaction === 'axis') {
-        return {
-          copy: `Cooling front. Axis hold ${controlMetric} control.`,
-          metric: controlMetric,
-          tone: 'axis',
-        };
-      }
       return {
-        copy: `Quiet front. ${stateLabel}.`,
+        copy: `Holding line · ${stateLabel}`,
         metric: stateLabel,
         tone: '',
       };
@@ -2487,8 +2539,15 @@
 
       const items = [...(maps || [])]
         .sort((left, right) => {
-          if (Boolean(left.is_active_battle) !== Boolean(right.is_active_battle)) {
-            return left.is_active_battle ? -1 : 1;
+          const leftDelta = Math.abs(Number(left?.recent_activity?.delta_control || 0));
+          const rightDelta = Math.abs(Number(right?.recent_activity?.delta_control || 0));
+          if (leftDelta !== rightDelta) {
+            return rightDelta - leftDelta;
+          }
+          const leftKills = Math.abs(Number(left?.recent_activity?.delta_kills || 0));
+          const rightKills = Math.abs(Number(right?.recent_activity?.delta_kills || 0));
+          if (leftKills !== rightKills) {
+            return rightKills - leftKills;
           }
           return new Date(right.updated_at || 0).getTime() - new Date(left.updated_at || 0).getTime();
         })
@@ -2502,8 +2561,8 @@
         item.type = 'button';
         item.className = 'mobile-activity-item';
         item.innerHTML = `
+          <div class="mobile-activity-time">${formatRelativeTime(map.updated_at)}</div>
           <div>
-            <div class="mobile-activity-time">${formatRelativeTime(map.updated_at)}</div>
             <div class="mobile-activity-name">${map.map_name}</div>
             <div class="mobile-activity-copy">${activity.copy}</div>
           </div>
@@ -2969,10 +3028,11 @@
     async function loadMaps() {
       const response = await fetch('/api/maps');
       const payload = await response.json();
-      const maps = payload.maps || [];
+      const maps = withRecentActivityDeltas(payload.maps || []);
       const target = payload.target_kills || 500;
       currentMaps = maps;
       currentTargetKills = target;
+      storeMapSnapshots(maps);
 
       renderAllTimeObjective(payload.all_time_objective);
       renderChallengeTracks(payload.challenge_tracks);
@@ -3099,6 +3159,11 @@
     loadMaps().catch((error) => {
       footerNote.textContent = `Failed to load campaign data: ${error.message}`;
     });
+    window.setInterval(() => {
+      loadMaps().catch((error) => {
+        footerNote.textContent = `Failed to refresh campaign data: ${error.message}`;
+      });
+    }, MAP_REFRESH_INTERVAL_MS);
   </script>
 </body>
 </html>
