@@ -336,11 +336,102 @@
     }
 
     .hero-value {
-      font-family: "Orbitron", sans-serif;
+      font-family: "Rajdhani", sans-serif;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
       font-size: 1.7rem;
       line-height: 1.05;
       color: var(--ink);
       text-shadow: 0 0 6px rgba(200, 180, 120, 0.2);
+    }
+
+    .mobile-activity-feed {
+      display: none;
+      margin-top: 0.9rem;
+      padding: 0.9rem 0.95rem;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(8px);
+      gap: 0.75rem;
+    }
+
+    .mobile-activity-feed[hidden] {
+      display: none;
+    }
+
+    .mobile-activity-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.75rem;
+      align-items: baseline;
+    }
+
+    .mobile-activity-list {
+      display: grid;
+      gap: 0.55rem;
+    }
+
+    .mobile-activity-item {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 0.35rem 0.75rem;
+      padding: 0.6rem 0.7rem;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: linear-gradient(180deg, rgba(224, 214, 184, 0.04), rgba(0, 0, 0, 0.52));
+    }
+
+    .mobile-activity-time {
+      font-family: "Rajdhani", sans-serif;
+      font-size: 0.72rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .mobile-activity-name {
+      font-family: "Rajdhani", sans-serif;
+      font-size: 0.98rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--ink);
+      text-shadow: 0 0 6px rgba(200, 180, 120, 0.2);
+    }
+
+    .mobile-activity-copy {
+      font-size: 0.82rem;
+      line-height: 1.35;
+      color: var(--muted);
+    }
+
+    .mobile-activity-impact {
+      align-self: center;
+      justify-self: end;
+      font-family: "Rajdhani", sans-serif;
+      font-size: 1.02rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--ink);
+      text-shadow: 0 0 6px rgba(200, 180, 120, 0.2);
+    }
+
+    .mobile-activity-impact.live,
+    .team-metric.live {
+      color: var(--gold-soft);
+    }
+
+    .mobile-activity-impact.allies,
+    .team-metric.allies {
+      color: var(--allies-soft);
+    }
+
+    .mobile-activity-impact.axis,
+    .team-metric.axis {
+      color: var(--axis-soft);
     }
 
     .hero-meta {
@@ -1009,6 +1100,13 @@
       align-content: start;
     }
 
+    .intel-panel-topbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.75rem;
+      align-items: center;
+    }
+
     .battle-map-page {
       position: fixed;
       inset: 0;
@@ -1291,8 +1389,21 @@
     }
 
     .detail-value {
-      font-family: "Orbitron", sans-serif;
+      font-family: "Rajdhani", sans-serif;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
       font-size: 1.45rem;
+      color: var(--ink);
+      text-shadow: 0 0 6px rgba(200, 180, 120, 0.2);
+    }
+
+    .team-metric {
+      font-family: "Rajdhani", sans-serif;
+      font-size: 1.08rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
       color: var(--ink);
       text-shadow: 0 0 6px rgba(200, 180, 120, 0.2);
     }
@@ -1395,6 +1506,14 @@
       backdrop-filter: blur(8px);
     }
 
+    .server-metric {
+      font-family: "Rajdhani", sans-serif;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--ink);
+    }
+
     .footer-note {
       font-size: 0.85rem;
       color: var(--muted);
@@ -1427,6 +1546,10 @@
 
     .intel-panel.compact-panel .detail-value {
       font-size: 1.05rem;
+    }
+
+    .intel-panel.compact-panel .team-metric {
+      font-size: 0.98rem;
     }
 
     .intel-panel-backdrop {
@@ -1519,7 +1642,7 @@
       }
 
       .hero {
-        padding: 1.2rem;
+        padding: 1rem;
       }
 
       .page-topbar {
@@ -1548,13 +1671,17 @@
         order: 2;
       }
 
+      .mobile-activity-feed:not([hidden]) {
+        display: grid;
+      }
+
       .intel-panel {
         order: 3;
         position: fixed;
         top: 0;
         right: 0;
         bottom: 0;
-        width: min(88vw, 420px);
+        width: min(86vw, 388px);
         max-width: 100%;
         z-index: 35;
         border-radius: 0;
@@ -1564,6 +1691,8 @@
         box-shadow: -18px 0 42px rgba(0, 0, 0, 0.34);
         touch-action: pan-y;
         will-change: transform;
+        padding: 0.9rem 0.9rem 1rem;
+        gap: 0.75rem;
       }
 
       .intel-panel.mobile-open {
@@ -1599,6 +1728,55 @@
 
       .challenge-board {
         order: 4;
+      }
+
+      .page-title-group {
+        gap: 0.08rem;
+      }
+
+      .hero-grid {
+        margin-top: 0.8rem;
+        gap: 0.65rem;
+      }
+
+      .hero-stat {
+        padding: 0.8rem 0.85rem;
+      }
+
+      .detail-grid {
+        gap: 0.6rem;
+      }
+
+      .intel-panel.compact-panel .detail-title {
+        font-size: 1.18rem;
+        line-height: 1;
+      }
+
+      .intel-panel.compact-panel .detail-subtext {
+        font-size: 0.8rem;
+        line-height: 1.35;
+      }
+
+      .intel-panel.compact-panel .detail-card {
+        padding: 0.68rem 0.72rem;
+      }
+
+      .intel-panel.compact-panel .detail-value {
+        font-size: 0.95rem;
+      }
+
+      .intel-panel.compact-panel .team-header {
+        font-size: 0.82rem;
+        margin-bottom: 0.22rem;
+      }
+
+      .intel-panel.compact-panel .control-board,
+      .intel-panel.compact-panel .versus-board {
+        padding: 0.8rem;
+      }
+
+      .intel-panel.compact-panel .server-item {
+        padding: 0.68rem 0.72rem;
       }
 
       .hero-grid,
@@ -1664,6 +1842,15 @@
           </div>
           <button id="mobile-nav-toggle-home" class="menu-toggle" type="button" aria-label="Open navigation menu">☰</button>
         </div>
+        <section id="mobile-activity-feed" class="mobile-activity-feed" hidden>
+          <div class="mobile-activity-head">
+            <div>
+              <span class="hero-label">Recent Activity</span>
+              <div class="hero-meta">Latest front updates</div>
+            </div>
+          </div>
+          <div id="mobile-activity-list" class="mobile-activity-list"></div>
+        </section>
         <div class="hero-grid">
           <div class="hero-stat">
             <span class="hero-label">Servers Tracked</span>
@@ -1813,8 +2000,10 @@
     </aside>
 
     <aside class="intel-panel compact-panel">
-      <button id="intel-panel-close" class="intel-panel-close" type="button" aria-label="Close intel panel">×</button>
-      <div id="status-pill" class="status-pill">Awaiting data</div>
+      <div class="intel-panel-topbar">
+        <div id="status-pill" class="status-pill">Awaiting data</div>
+        <button id="intel-panel-close" class="intel-panel-close" type="button" aria-label="Close intel panel">×</button>
+      </div>
       <div>
         <span class="panel-label">Intel Panel</span>
         <h3 id="detail-title" class="detail-title">Select a front</h3>
@@ -1843,7 +2032,7 @@
       <section class="control-board">
         <div class="team-header">
           <strong>Liberation Status</strong>
-          <span id="control-value-label">0%</span>
+          <span id="control-value-label" class="team-metric">0%</span>
         </div>
         <div class="control-track"><span id="control-bar-fill" class="control-fill allies" style="left: 50%; width: 0%"></span></div>
         <div class="control-scale"><span>Axis</span><span>Neutral</span><span>Allies</span></div>
@@ -1853,14 +2042,14 @@
         <div>
           <div class="team-header">
             <strong>Allies Total Kills</strong>
-            <span id="allies-kills">0</span>
+            <span id="allies-kills" class="team-metric allies">0</span>
           </div>
           <div class="team-progress"><span id="allies-bar" class="allies-fill" style="width: 0%"></span></div>
         </div>
         <div>
           <div class="team-header">
             <strong>Axis Total Kills</strong>
-            <span id="axis-kills">0</span>
+            <span id="axis-kills" class="team-metric axis">0</span>
           </div>
           <div class="team-progress"><span id="axis-bar" class="axis-fill" style="width: 0%"></span></div>
         </div>
@@ -2002,6 +2191,8 @@
     const heroServerCount = document.getElementById('hero-server-count');
     const heroServerNames = document.getElementById('hero-server-names');
     const heroLiveCount = document.getElementById('hero-live-count');
+    const mobileActivityFeed = document.getElementById('mobile-activity-feed');
+    const mobileActivityList = document.getElementById('mobile-activity-list');
     const boardAllTimeObjectiveTotal = document.getElementById('board-all-time-objective-total');
     const boardAllTimeObjectiveCopy = document.getElementById('board-all-time-objective-copy');
     const boardAllTimeObjectiveBar = document.getElementById('board-all-time-objective-bar');
@@ -2201,10 +2392,126 @@
       return new Intl.NumberFormat('en-GB').format(value || 0);
     }
 
+    function formatRelativeTime(value) {
+      if (!value) {
+        return 'No recent update';
+      }
+
+      const timestamp = new Date(value).getTime();
+      if (Number.isNaN(timestamp)) {
+        return 'Recent';
+      }
+
+      const deltaSeconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+      if (deltaSeconds < 60) {
+        return `${deltaSeconds}s ago`;
+      }
+
+      const deltaMinutes = Math.round(deltaSeconds / 60);
+      if (deltaMinutes < 60) {
+        return `${deltaMinutes}m ago`;
+      }
+
+      const deltaHours = Math.round(deltaMinutes / 60);
+      if (deltaHours < 24) {
+        return `${deltaHours}h ago`;
+      }
+
+      const deltaDays = Math.round(deltaHours / 24);
+      return `${deltaDays}d ago`;
+    }
+
+    function formatControlMetric(controlValue) {
+      return `${Math.abs(Number(controlValue || 0)).toFixed(1)}%`;
+    }
+
     function formatStateLabel(value) {
       return String(value || 'idle')
         .replace(/_/g, ' ')
         .replace(/\b\w/g, (char) => char.toUpperCase());
+    }
+
+    function describeRecentActivity(map) {
+      const lib = map.liberation || {};
+      const stateLabel = formatStateLabel(lib.state || 'idle');
+      const controlMetric = formatControlMetric(lib.control_value);
+      const controllingFaction = lib.controlling_faction || lib.occupied_faction || 'neutral';
+
+      if (map.is_active_battle) {
+        if (controllingFaction === 'allies') {
+          return {
+            copy: `Live battle. Allies pressure the front with ${controlMetric} control.`,
+            metric: controlMetric,
+            tone: 'allies',
+          };
+        }
+        if (controllingFaction === 'axis') {
+          return {
+            copy: `Live battle. Axis pressure the front with ${controlMetric} control.`,
+            metric: controlMetric,
+            tone: 'axis',
+          };
+        }
+        return {
+          copy: `Live battle. ${stateLabel} on this front.`,
+          metric: 'Live',
+          tone: 'live',
+        };
+      }
+
+      if (controllingFaction === 'allies') {
+        return {
+          copy: `Cooling front. Allies hold ${controlMetric} control.`,
+          metric: controlMetric,
+          tone: 'allies',
+        };
+      }
+      if (controllingFaction === 'axis') {
+        return {
+          copy: `Cooling front. Axis hold ${controlMetric} control.`,
+          metric: controlMetric,
+          tone: 'axis',
+        };
+      }
+      return {
+        copy: `Quiet front. ${stateLabel}.`,
+        metric: stateLabel,
+        tone: '',
+      };
+    }
+
+    function renderMobileActivityFeed(maps) {
+      if (!mobileActivityFeed || !mobileActivityList) {
+        return;
+      }
+
+      const items = [...(maps || [])]
+        .sort((left, right) => {
+          if (Boolean(left.is_active_battle) !== Boolean(right.is_active_battle)) {
+            return left.is_active_battle ? -1 : 1;
+          }
+          return new Date(right.updated_at || 0).getTime() - new Date(left.updated_at || 0).getTime();
+        })
+        .slice(0, 4);
+
+      mobileActivityList.innerHTML = '';
+      mobileActivityFeed.hidden = items.length === 0;
+      items.forEach((map) => {
+        const activity = describeRecentActivity(map);
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'mobile-activity-item';
+        item.innerHTML = `
+          <div>
+            <div class="mobile-activity-time">${formatRelativeTime(map.updated_at)}</div>
+            <div class="mobile-activity-name">${map.map_name}</div>
+            <div class="mobile-activity-copy">${activity.copy}</div>
+          </div>
+          <div class="mobile-activity-impact ${activity.tone}">${activity.metric}</div>
+        `;
+        item.addEventListener('click', () => fetchMapDetail(map.map_name));
+        mobileActivityList.appendChild(item);
+      });
     }
 
     function controlBarConfig(controlValue) {
@@ -2460,8 +2767,8 @@
         const row = document.createElement('div');
         row.className = 'server-item';
         row.innerHTML = `
-          <div class="server-line"><strong>${server.server_id}</strong><span>${server.allied_kills + server.axis_kills} total</span></div>
-          <div class="server-line"><span>Allies ${server.allied_kills}</span><span>Axis ${server.axis_kills}</span></div>
+          <div class="server-line"><strong>${server.server_id}</strong><span class="server-metric">${formatCount(server.allied_kills + server.axis_kills)} total</span></div>
+          <div class="server-line"><span>Allies ${formatCount(server.allied_kills)}</span><span>Axis ${formatCount(server.axis_kills)}</span></div>
         `;
         servers.appendChild(row);
       });
@@ -2511,6 +2818,7 @@
       heroServerCount.textContent = trackedServerNames.length || 1;
       heroServerNames.textContent = trackedServerNames.join(' · ') || '7DR';
       heroLiveCount.textContent = maps.filter((map) => map.is_active_battle).length;
+      renderMobileActivityFeed(maps);
       emptyState.hidden = maps.length > 0;
 
       maps.forEach((map, index) => {
