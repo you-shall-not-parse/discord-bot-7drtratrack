@@ -87,6 +87,19 @@
       color: #f6ead8;
     }
 
+    .page-topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+      gap: 1rem;
+    }
+
+    .page-title-group {
+      display: grid;
+      gap: 0.2rem;
+      min-width: 0;
+    }
+
     .hero-label,
     .section-label,
     .detail-label,
@@ -123,10 +136,11 @@
     }
 
     .hero-actions {
-      margin-top: 1rem;
       display: flex;
       gap: 0.75rem;
       flex-wrap: wrap;
+      justify-content: flex-end;
+      align-items: center;
     }
 
     .hero-objective {
@@ -215,6 +229,30 @@
     .hero-button:hover {
       transform: translateY(-1px);
       box-shadow: 0 16px 28px rgba(26, 21, 17, 0.2);
+    }
+
+    .hero-button.active {
+      background: linear-gradient(180deg, rgba(214, 172, 95, 0.92), rgba(171, 123, 50, 0.92));
+      color: #1b140c;
+      border-color: rgba(214, 172, 95, 0.3);
+    }
+
+    .menu-toggle {
+      display: none;
+      width: 2.85rem;
+      height: 2.85rem;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 243, 219, 0.16);
+      background: rgba(25, 21, 15, 0.92);
+      color: #f7ead5;
+      font: inherit;
+      font-size: 1.15rem;
+      cursor: pointer;
+      box-shadow: 0 12px 24px rgba(26, 21, 17, 0.16);
+    }
+
+    .menu-toggle:hover {
+      transform: translateY(-1px);
     }
 
     .intel-panel-close {
@@ -905,6 +943,35 @@
       display: block;
     }
 
+    .map-header {
+      position: absolute;
+      top: 1rem;
+      right: 1rem;
+      z-index: 4;
+      width: min(100% - 7rem, 560px);
+      padding: 1rem 1.1rem;
+      border-radius: 24px;
+      border: 1px solid rgba(255, 243, 219, 0.14);
+      background:
+        radial-gradient(circle at top right, rgba(198, 151, 76, 0.18), transparent 28%),
+        linear-gradient(180deg, rgba(24, 19, 15, 0.88), rgba(12, 10, 9, 0.92));
+      color: #f6ead8;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.28);
+      backdrop-filter: blur(10px);
+    }
+
+    .map-header .page-title-group h2 {
+      font-size: clamp(1.2rem, 2.2vw, 1.85rem);
+      line-height: 1.05;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .map-header .page-title-group p {
+      opacity: 0.72;
+      font-size: 0.86rem;
+    }
+
     .map-stage {
       position: relative;
       min-width: 0;
@@ -956,6 +1023,129 @@
     .map-back-button {
       padding: 0.55rem 0.8rem;
       font-size: 0.88rem;
+    }
+
+    .mobile-nav-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 49;
+      background: rgba(0, 0, 0, 0.46);
+      backdrop-filter: blur(2px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 180ms ease;
+    }
+
+    .mobile-nav-backdrop.visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .mobile-nav-drawer {
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: min(82vw, 320px);
+      z-index: 50;
+      padding: 1.25rem;
+      display: grid;
+      align-content: start;
+      gap: 1rem;
+      background:
+        radial-gradient(circle at top right, rgba(198, 151, 76, 0.18), transparent 28%),
+        linear-gradient(180deg, rgba(24, 19, 15, 0.97), rgba(17, 14, 11, 0.98));
+      color: #f6ead8;
+      border-left: 1px solid rgba(255, 243, 219, 0.14);
+      box-shadow: -18px 0 42px rgba(0, 0, 0, 0.34);
+      transform: translateX(100%);
+      transition: transform 180ms ease;
+    }
+
+    .mobile-nav-drawer.open {
+      transform: translateX(0);
+    }
+
+    .mobile-nav-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.75rem;
+      align-items: center;
+    }
+
+    .mobile-nav-title {
+      display: grid;
+      gap: 0.18rem;
+    }
+
+    .mobile-nav-title strong {
+      font-size: 1.02rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .mobile-nav-title span {
+      font-size: 0.76rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      opacity: 0.7;
+    }
+
+    .mobile-nav-close {
+      width: 2.5rem;
+      height: 2.5rem;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 243, 219, 0.16);
+      background: rgba(255, 248, 233, 0.06);
+      color: #f6ead8;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .mobile-nav-links {
+      display: grid;
+      gap: 0.7rem;
+    }
+
+    .mobile-nav-link {
+      border: 1px solid rgba(255, 243, 219, 0.12);
+      border-radius: 18px;
+      padding: 0.9rem 1rem;
+      background: rgba(255, 248, 235, 0.06);
+      color: inherit;
+      text-align: left;
+      font: inherit;
+      cursor: pointer;
+      transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+    }
+
+    .mobile-nav-link.active {
+      background: linear-gradient(180deg, rgba(198, 151, 76, 0.28), rgba(255, 248, 235, 0.08));
+      border-color: rgba(214, 172, 95, 0.34);
+      color: #fff4e2;
+    }
+
+    .mobile-nav-link:hover {
+      transform: translateY(-1px);
+      border-color: rgba(214, 172, 95, 0.28);
+    }
+
+    .mobile-nav-link strong,
+    .mobile-nav-link span {
+      display: block;
+    }
+
+    .mobile-nav-link strong {
+      font-size: 0.96rem;
+      margin-bottom: 0.18rem;
+    }
+
+    .mobile-nav-link span {
+      font-size: 0.76rem;
+      opacity: 0.72;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
     }
 
     .map-attribution {
@@ -1180,6 +1370,24 @@
         padding: 1rem;
       }
 
+      .hero {
+        padding: 1.2rem;
+      }
+
+      .page-topbar {
+        align-items: center;
+      }
+
+      .hero-actions {
+        display: none;
+      }
+
+      .menu-toggle {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+
       .dashboard-view {
         display: contents;
       }
@@ -1201,7 +1409,7 @@
         width: min(88vw, 420px);
         max-width: 100%;
         z-index: 35;
-        border-radius: 24px 0 0 24px;
+        border-radius: 0;
         transform: translateX(100%);
         transition: transform 180ms ease;
         overflow-y: auto;
@@ -1265,6 +1473,26 @@
         min-height: 56vh;
       }
 
+      .map-header {
+        top: 0.85rem;
+        right: 0.85rem;
+        left: 4.65rem;
+        width: auto;
+        padding: 0.85rem 0.95rem;
+      }
+
+      .map-header .hero-actions {
+        display: none;
+      }
+
+      .mobile-nav-backdrop {
+        display: block;
+      }
+
+      .mobile-nav-drawer {
+        border-radius: 0;
+      }
+
       .map-control-rail {
         top: 0.85rem;
         left: 0.85rem;
@@ -1276,9 +1504,15 @@
   <main class="page">
     <section id="dashboard-view" class="main-column dashboard-only">
       <header class="hero">
-        <h1>HLL Frontlines</h1>
-        <div class="hero-actions">
-          <button id="open-battle-map" class="hero-button" type="button">Open Battle Map</button>
+        <div class="page-topbar">
+          <div class="page-title-group">
+            <h1>HLL Frontlines</h1>
+          </div>
+          <div class="hero-actions">
+            <button id="desktop-home-button" class="hero-button active" type="button">Home</button>
+            <button id="open-battle-map" class="hero-button" type="button">Open Battle Map</button>
+          </div>
+          <button id="mobile-nav-toggle-home" class="menu-toggle" type="button" aria-label="Open navigation menu">☰</button>
         </div>
         <div class="hero-grid">
           <div class="hero-stat">
@@ -1336,6 +1570,27 @@
     </section>
 
     <div id="intel-panel-backdrop" class="intel-panel-backdrop" hidden></div>
+    <div id="mobile-nav-backdrop" class="mobile-nav-backdrop" hidden></div>
+
+    <aside id="mobile-nav-drawer" class="mobile-nav-drawer" aria-hidden="true">
+      <div class="mobile-nav-header">
+        <div class="mobile-nav-title">
+          <strong>HLL Frontlines</strong>
+          <span>Navigation</span>
+        </div>
+        <button id="mobile-nav-close" class="mobile-nav-close" type="button" aria-label="Close navigation menu">×</button>
+      </div>
+      <div class="mobile-nav-links">
+        <button id="mobile-nav-home" class="mobile-nav-link active" type="button">
+          <strong>Home</strong>
+          <span>Campaign dashboard</span>
+        </button>
+        <button id="mobile-nav-battle-map" class="mobile-nav-link" type="button">
+          <strong>Open Battle Map</strong>
+          <span>3D theatre view</span>
+        </button>
+      </div>
+    </aside>
 
     <aside class="intel-panel compact-panel">
       <button id="intel-panel-close" class="intel-panel-close" type="button" aria-label="Close intel panel">×</button>
@@ -1402,6 +1657,20 @@
 
   <section id="battle-map-page" class="battle-map-page hidden">
     <div class="map-stage">
+      <header class="map-header">
+        <div class="page-topbar">
+          <div class="page-title-group">
+            <span class="panel-label">Theatre View</span>
+            <h2>Battle Map</h2>
+            <p>Live 3D front overlays and active battle positions.</p>
+          </div>
+          <div class="hero-actions">
+            <button id="desktop-map-home-button" class="hero-button" type="button">Home</button>
+            <button id="desktop-map-open-button" class="hero-button active" type="button">Open Battle Map</button>
+          </div>
+          <button id="mobile-nav-toggle-map" class="menu-toggle" type="button" aria-label="Open navigation menu">☰</button>
+        </div>
+      </header>
       <div class="map-control-rail">
         <button id="return-dashboard" class="map-back-button" type="button" aria-label="Return to dashboard">←</button>
         <button id="zoom-in" class="icon-button" type="button" aria-label="Zoom in">+</button>
@@ -1467,7 +1736,19 @@
     const dashboardView = document.getElementById('dashboard-view');
     const battleMapPage = document.getElementById('battle-map-page');
     const openBattleMapButton = document.getElementById('open-battle-map');
+    const desktopHomeButton = document.getElementById('desktop-home-button');
+    const desktopMapHomeButton = document.getElementById('desktop-map-home-button');
+    const desktopMapOpenButton = document.getElementById('desktop-map-open-button');
     const returnDashboardButton = document.getElementById('return-dashboard');
+    const mobileNavToggleButtons = [
+      document.getElementById('mobile-nav-toggle-home'),
+      document.getElementById('mobile-nav-toggle-map')
+    ];
+    const mobileNavBackdrop = document.getElementById('mobile-nav-backdrop');
+    const mobileNavDrawer = document.getElementById('mobile-nav-drawer');
+    const mobileNavCloseButton = document.getElementById('mobile-nav-close');
+    const mobileNavHomeButton = document.getElementById('mobile-nav-home');
+    const mobileNavBattleMapButton = document.getElementById('mobile-nav-battle-map');
     const frontStrip = document.getElementById('front-strip');
     const emptyState = document.getElementById('empty-state');
     const challengeGrid = document.getElementById('challenge-grid');
@@ -1592,6 +1873,23 @@
       intelPanel.classList.toggle('mobile-open', isOpen);
       intelPanelBackdrop.hidden = !isOpen;
       intelPanelBackdrop.classList.toggle('visible', isOpen);
+    }
+
+    function setMobileNavOpen(isOpen) {
+      mobileNavDrawer.classList.toggle('open', isOpen);
+      mobileNavDrawer.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
+      mobileNavBackdrop.hidden = !isOpen;
+      mobileNavBackdrop.classList.toggle('visible', isOpen);
+    }
+
+    function syncNavigationState() {
+      const isBattleMapOpen = !battleMapPage.classList.contains('hidden');
+      desktopHomeButton.classList.toggle('active', !isBattleMapOpen);
+      openBattleMapButton.classList.toggle('active', isBattleMapOpen);
+      desktopMapHomeButton.classList.toggle('active', !isBattleMapOpen);
+      desktopMapOpenButton.classList.toggle('active', isBattleMapOpen);
+      mobileNavHomeButton.classList.toggle('active', !isBattleMapOpen);
+      mobileNavBattleMapButton.classList.toggle('active', isBattleMapOpen);
     }
 
     function handleIntelPanelTouchStart(event) {
@@ -2151,6 +2449,8 @@
     function setBattleMapOpen(isOpen) {
       dashboardView.classList.toggle('hidden', isOpen);
       battleMapPage.classList.toggle('hidden', !isOpen);
+      syncNavigationState();
+      setMobileNavOpen(false);
       if (isOpen) {
         resizeRenderer();
         requestRender();
@@ -2195,8 +2495,16 @@
       zoomOutButton.addEventListener('click', () => zoomCamera(1.18));
       zoomResetButton.addEventListener('click', resetCamera);
       focusActiveButton.addEventListener('click', focusActiveFront);
+      desktopHomeButton.addEventListener('click', () => setBattleMapOpen(false));
       openBattleMapButton.addEventListener('click', () => setBattleMapOpen(true));
+      desktopMapHomeButton.addEventListener('click', () => setBattleMapOpen(false));
+      desktopMapOpenButton.addEventListener('click', () => setBattleMapOpen(true));
       returnDashboardButton.addEventListener('click', () => setBattleMapOpen(false));
+      mobileNavToggleButtons.forEach((button) => button.addEventListener('click', () => setMobileNavOpen(true)));
+      mobileNavCloseButton.addEventListener('click', () => setMobileNavOpen(false));
+      mobileNavBackdrop.addEventListener('click', () => setMobileNavOpen(false));
+      mobileNavHomeButton.addEventListener('click', () => setBattleMapOpen(false));
+      mobileNavBattleMapButton.addEventListener('click', () => setBattleMapOpen(true));
       intelPanelCloseButton.addEventListener('click', () => setIntelPanelOpen(false));
       intelPanelBackdrop.addEventListener('click', () => setIntelPanelOpen(false));
       intelPanel.addEventListener('touchstart', handleIntelPanelTouchStart, { passive: true });
@@ -2209,6 +2517,7 @@
         requestRender();
         if (!isMobileViewport()) {
           setIntelPanelOpen(false);
+          setMobileNavOpen(false);
         } else {
           intelPanelBackdrop.style.opacity = '';
         }
