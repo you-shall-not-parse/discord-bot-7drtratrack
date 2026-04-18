@@ -11,14 +11,14 @@
     :root {
       --bg: #0b0f0c;
       --bg-soft: #101812;
-      --ink: #e7eddc;
-      --muted: #92a08d;
+      --ink: #cbbfa3;
+      --muted: #a89f85;
       --shadow: rgba(0, 0, 0, 0.38);
-      --stroke: rgba(120, 150, 123, 0.14);
-      --stroke-strong: rgba(120, 150, 123, 0.22);
-      --panel: rgba(16, 24, 18, 0.96);
-      --panel-soft: rgba(37, 55, 40, 0.72);
-      --panel-elevated: rgba(26, 42, 31, 0.94);
+      --stroke: rgba(255, 255, 255, 0.1);
+      --stroke-strong: rgba(255, 255, 255, 0.14);
+      --panel: rgba(0, 0, 0, 0.6);
+      --panel-soft: rgba(0, 0, 0, 0.52);
+      --panel-elevated: rgba(0, 0, 0, 0.68);
       --gold: #fbbf24;
       --gold-soft: #f7d774;
       --allies: #4f9f8d;
@@ -49,10 +49,11 @@
       color: var(--ink);
       font-family: "Inter", system-ui, sans-serif;
       background:
-        radial-gradient(circle at top right, rgba(74, 222, 128, 0.07), transparent 24%),
-        radial-gradient(circle at 78% 18%, rgba(251, 191, 36, 0.08), transparent 18%),
+        radial-gradient(circle at top right, rgba(255, 200, 100, 0.08), transparent 24%),
+        radial-gradient(circle at 78% 18%, rgba(200, 180, 120, 0.08), transparent 18%),
         linear-gradient(180deg, rgba(10, 14, 11, 0.98), rgba(8, 12, 9, 1)),
         url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220' viewBox='0 0 220 220'%3E%3Cg fill='none' stroke='rgba(130,156,128,0.06)' stroke-width='1'%3E%3Cpath d='M0 55h220M0 110h220M0 165h220M55 0v220M110 0v220M165 0v220'/%3E%3C/g%3E%3C/svg%3E");
+      text-shadow: 0 0 8px rgba(255, 200, 100, 0.12);
     }
 
     h1, h2, h3, h4, p {
@@ -96,6 +97,7 @@
       box-shadow: 0 18px 38px var(--shadow);
       overflow: hidden;
       position: relative;
+      backdrop-filter: blur(8px);
     }
 
     .hero::before,
@@ -112,8 +114,8 @@
     .hero {
       padding: 1.7rem;
       background:
-        linear-gradient(90deg, rgba(74, 222, 128, 0.08), transparent 28%),
-        linear-gradient(180deg, rgba(15, 24, 18, 0.98), rgba(12, 18, 14, 0.98));
+        linear-gradient(90deg, rgba(224, 214, 184, 0.07), transparent 28%),
+        linear-gradient(180deg, rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0.62));
       color: var(--ink);
     }
 
@@ -161,7 +163,7 @@
       font-size: clamp(2rem, 4vw, 3.35rem);
       line-height: 0.9;
       max-width: 14ch;
-      text-shadow: 0 0 16px rgba(74, 222, 128, 0.06);
+      text-shadow: 0 0 6px rgba(200, 180, 120, 0.2);
     }
 
     .hero-copy {
@@ -190,17 +192,18 @@
       margin-top: 1.15rem;
       padding: 1rem 1.05rem;
       border-radius: 12px;
-      background: linear-gradient(180deg, rgba(18, 28, 21, 0.92), rgba(22, 38, 28, 0.92));
-      border: 1px solid rgba(251, 191, 36, 0.16);
+      background: linear-gradient(180deg, rgba(224, 214, 184, 0.06), rgba(0, 0, 0, 0.62));
+      border: 1px solid rgba(255,255,255,0.1);
       color: var(--ink);
       box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
       display: grid;
       gap: 0.7rem;
+      backdrop-filter: blur(8px);
     }
 
     .board-objective {
       margin-top: 0.9rem;
-      background: linear-gradient(180deg, rgba(20, 35, 25, 0.96), rgba(16, 27, 20, 0.96));
+      background: linear-gradient(180deg, rgba(224, 214, 184, 0.08), rgba(0, 0, 0, 0.64));
     }
 
     .hero-objective-top,
@@ -212,10 +215,14 @@
     }
 
     .hero-objective-value {
-      font-family: "Orbitron", sans-serif;
+      font-family: "Rajdhani", sans-serif;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
       font-size: clamp(1.4rem, 3vw, 2.1rem);
       line-height: 1;
       color: var(--ink);
+      text-shadow: 0 0 6px rgba(200, 180, 120, 0.2);
     }
 
     .hero-objective-subcopy {
@@ -258,13 +265,14 @@
     .hero-objective-bottom {
       font-size: 0.88rem;
       color: var(--muted);
+      text-shadow: 0 0 6px rgba(200, 180, 120, 0.12);
     }
 
     .hero-button {
       border: 1px solid var(--stroke-strong);
       border-radius: 10px;
       padding: 0.7rem 1rem;
-      background: rgba(13, 19, 15, 0.96);
+      background: rgba(0, 0, 0, 0.6);
       color: var(--muted);
       font: 700 0.95rem/1 "Rajdhani", sans-serif;
       letter-spacing: 0.1em;
@@ -282,7 +290,7 @@
     }
 
     .hero-button.active {
-      background: linear-gradient(180deg, rgba(22, 35, 26, 0.98), rgba(16, 26, 19, 0.98));
+      background: linear-gradient(180deg, rgba(224, 214, 184, 0.08), rgba(0, 0, 0, 0.7));
       color: var(--gold);
       border-color: rgba(251, 191, 36, 0.34);
       box-shadow: inset 0 -2px 0 rgba(251, 191, 36, 0.95), 0 14px 24px rgba(0, 0, 0, 0.3);
@@ -322,8 +330,9 @@
     .hero-stat {
       padding: 0.95rem 1rem;
       border-radius: 12px;
-      background: linear-gradient(180deg, rgba(23, 34, 26, 0.92), rgba(18, 27, 21, 0.92));
-      border: 1px solid var(--stroke);
+      background: rgba(0, 0, 0, 0.6);
+      border: 1px solid rgba(255,255,255,0.1);
+      backdrop-filter: blur(8px);
     }
 
     .hero-value {
@@ -331,6 +340,7 @@
       font-size: 1.7rem;
       line-height: 1.05;
       color: var(--ink);
+      text-shadow: 0 0 6px rgba(200, 180, 120, 0.2);
     }
 
     .hero-meta {
@@ -349,8 +359,7 @@
     .theatre {
       padding: 1.15rem;
       background:
-        linear-gradient(90deg, rgba(74, 222, 128, 0.04), transparent 30%),
-        linear-gradient(180deg, rgba(15, 22, 17, 0.98), rgba(12, 18, 14, 0.98));
+        linear-gradient(180deg, rgba(224, 214, 184, 0.04), rgba(0, 0, 0, 0.64));
       color: var(--ink);
       display: grid;
       gap: 1rem;
@@ -361,8 +370,9 @@
       gap: 1rem;
       padding: 1rem;
       border-radius: 12px;
-      background: rgba(19, 29, 22, 0.94);
-      border: 1px solid var(--stroke);
+      background: rgba(0, 0, 0, 0.6);
+      border: 1px solid rgba(255,255,255,0.1);
+      backdrop-filter: blur(8px);
     }
 
     .section-header {
@@ -448,7 +458,7 @@
       min-height: 72vh;
       border-radius: 14px;
       overflow: hidden;
-      border: 1px solid var(--stroke);
+      border: 1px solid rgba(255,255,255,0.1);
       background: linear-gradient(180deg, rgba(10, 14, 11, 0.98), rgba(5, 8, 6, 0.98));
       box-shadow: inset 0 0 0 1px rgba(116, 145, 113, 0.14);
     }
@@ -490,12 +500,12 @@
       padding: 0.55rem 0.65rem;
       border-radius: 10px;
       border: 1px solid var(--stroke-strong);
-      background: rgba(16, 24, 18, 0.94);
+      background: rgba(0, 0, 0, 0.6);
       box-shadow: 0 12px 24px rgba(0, 0, 0, 0.32);
       color: var(--ink);
       cursor: pointer;
       text-align: left;
-      backdrop-filter: blur(5px);
+      backdrop-filter: blur(8px);
       transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
     }
 
@@ -608,15 +618,16 @@
     }
 
     .front-chip {
-      border: 1px solid var(--stroke);
+      border: 1px solid rgba(255,255,255,0.1);
       border-radius: 12px;
       padding: 0.8rem 0.85rem;
-      background: linear-gradient(180deg, rgba(20, 30, 23, 0.96), rgba(15, 23, 18, 0.96));
+      background: rgba(0, 0, 0, 0.6);
       text-align: left;
       cursor: pointer;
       box-shadow: 0 10px 20px rgba(0, 0, 0, 0.24);
       transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
       color: var(--ink);
+      backdrop-filter: blur(8px);
     }
 
     .front-chip:hover,
@@ -656,6 +667,7 @@
       max-width: 12ch;
       letter-spacing: 0.08em;
       text-transform: uppercase;
+      text-shadow: 0 0 6px rgba(200, 180, 120, 0.2);
     }
 
     .front-chip-region {
@@ -936,7 +948,7 @@
 
     .challenge-board {
       padding: 1.2rem;
-      background: linear-gradient(180deg, rgba(15, 22, 17, 0.98), rgba(12, 18, 14, 0.98));
+      background: linear-gradient(180deg, rgba(224, 214, 184, 0.04), rgba(0, 0, 0, 0.64));
       color: var(--ink);
     }
 
@@ -951,12 +963,13 @@
       min-height: 138px;
       padding: 1rem;
       border-radius: 12px;
-      border: 1px solid var(--stroke);
-      background: linear-gradient(180deg, rgba(20, 31, 23, 0.96), rgba(15, 22, 17, 0.96));
+      border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(8px);
     }
 
     .challenge-card.active {
-      background: linear-gradient(180deg, rgba(30, 43, 26, 0.98), rgba(18, 27, 20, 0.98));
+      background: linear-gradient(180deg, rgba(224, 214, 184, 0.06), rgba(0, 0, 0, 0.64));
       border-color: rgba(251, 191, 36, 0.22);
     }
 
@@ -989,8 +1002,7 @@
       top: 1.35rem;
       padding: 1.35rem;
       background:
-        linear-gradient(90deg, rgba(251, 191, 36, 0.04), transparent 30%),
-        linear-gradient(180deg, rgba(18, 27, 21, 0.98), rgba(12, 18, 14, 0.98));
+        linear-gradient(180deg, rgba(224, 214, 184, 0.04), rgba(0, 0, 0, 0.64));
       color: var(--ink);
       display: grid;
       gap: 1rem;
@@ -1015,8 +1027,7 @@
       border-radius: 14px;
       border: 1px solid var(--stroke);
       background:
-        linear-gradient(90deg, rgba(251, 191, 36, 0.05), transparent 34%),
-        linear-gradient(180deg, rgba(15, 22, 17, 0.92), rgba(10, 14, 11, 0.94));
+        linear-gradient(180deg, rgba(224, 214, 184, 0.05), rgba(0, 0, 0, 0.66));
       color: var(--ink);
       box-shadow: 0 20px 40px rgba(0, 0, 0, 0.28);
       backdrop-filter: blur(10px);
@@ -1118,8 +1129,7 @@
       align-content: start;
       gap: 1rem;
       background:
-        linear-gradient(90deg, rgba(251, 191, 36, 0.04), transparent 28%),
-        linear-gradient(180deg, rgba(15, 22, 17, 0.97), rgba(12, 18, 14, 0.98));
+        linear-gradient(180deg, rgba(224, 214, 184, 0.04), rgba(0, 0, 0, 0.68));
       color: var(--ink);
       border-left: 1px solid var(--stroke);
       box-shadow: -18px 0 42px rgba(0, 0, 0, 0.34);
@@ -1175,10 +1185,10 @@
     }
 
     .mobile-nav-link {
-      border: 1px solid var(--stroke);
+      border: 1px solid rgba(255,255,255,0.1);
       border-radius: 12px;
       padding: 0.9rem 1rem;
-      background: rgba(17, 23, 19, 0.98);
+      background: rgba(0, 0, 0, 0.6);
       color: inherit;
       text-align: left;
       font: inherit;
@@ -1187,7 +1197,7 @@
     }
 
     .mobile-nav-link.active {
-      background: linear-gradient(180deg, rgba(22, 35, 26, 0.98), rgba(16, 26, 19, 0.98));
+      background: linear-gradient(180deg, rgba(224, 214, 184, 0.06), rgba(0, 0, 0, 0.7));
       border-color: rgba(251, 191, 36, 0.28);
       color: var(--gold);
     }
@@ -1275,14 +1285,16 @@
     .detail-card {
       padding: 0.9rem;
       border-radius: 12px;
-      background: rgba(20, 30, 23, 0.96);
-      border: 1px solid var(--stroke);
+      background: rgba(0, 0, 0, 0.6);
+      border: 1px solid rgba(255,255,255,0.1);
+      backdrop-filter: blur(8px);
     }
 
     .detail-value {
       font-family: "Orbitron", sans-serif;
       font-size: 1.45rem;
       color: var(--ink);
+      text-shadow: 0 0 6px rgba(200, 180, 120, 0.2);
     }
 
     .control-board {
@@ -1290,8 +1302,9 @@
       gap: 0.75rem;
       padding: 1rem;
       border-radius: 12px;
-      background: rgba(20, 30, 23, 0.96);
-      border: 1px solid var(--stroke);
+      background: rgba(0, 0, 0, 0.6);
+      border: 1px solid rgba(255,255,255,0.1);
+      backdrop-filter: blur(8px);
     }
 
     .control-track {
@@ -1349,8 +1362,9 @@
       gap: 0.85rem;
       padding: 1rem;
       border-radius: 12px;
-      background: rgba(20, 30, 23, 0.96);
-      border: 1px solid var(--stroke);
+      background: rgba(0, 0, 0, 0.6);
+      border: 1px solid rgba(255,255,255,0.1);
+      backdrop-filter: blur(8px);
     }
 
     .team-header {
@@ -1376,8 +1390,9 @@
     .server-item {
       padding: 0.8rem 0.9rem;
       border-radius: 10px;
-      background: rgba(20, 30, 23, 0.94);
-      border: 1px solid var(--stroke);
+      background: rgba(0, 0, 0, 0.6);
+      border: 1px solid rgba(255,255,255,0.1);
+      backdrop-filter: blur(8px);
     }
 
     .footer-note {
@@ -1440,11 +1455,12 @@
     .about-card {
       padding: 1.1rem;
       border-radius: 12px;
-      border: 1px solid var(--stroke);
-      background: rgba(20, 30, 23, 0.96);
+      border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(0, 0, 0, 0.6);
       display: grid;
       gap: 0.75rem;
       color: var(--ink);
+      backdrop-filter: blur(8px);
     }
 
     .about-card.wide {
@@ -1466,7 +1482,7 @@
       padding: 0.9rem 1rem;
       border-radius: 10px;
       border: 1px solid rgba(251, 191, 36, 0.14);
-      background: rgba(8, 11, 9, 0.92);
+      background: rgba(0, 0, 0, 0.64);
       font-family: "Cascadia Code", "Consolas", monospace;
       font-size: 0.88rem;
       line-height: 1.7;
@@ -2012,8 +2028,8 @@
     const overlayMarkers = new Map();
     const projectionVector = new THREE.Vector3();
 
-    const FIXED_POLAR_ANGLE = 0.8;
-    const FIXED_AZIMUTH_ANGLE = -0.4;
+    const FIXED_POLAR_ANGLE = 0.38;
+    const FIXED_AZIMUTH_ANGLE = -0.18;
 
     const renderer = new THREE.WebGLRenderer({ canvas: mapCanvas, antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -2304,7 +2320,7 @@
             <div class="map-marker-region">${layout.region}</div>
             <div class="map-marker-name">${map.map_name}</div>
           </div>
-          <span class="map-marker-badge ${map.is_active_battle ? 'live' : ''}">${map.is_active_battle ? `ACTIVE - ${activeServers || 'tracked server'}` : layout.region}</span>
+          <span class="map-marker-badge ${map.is_active_battle ? 'live' : ''}">${map.is_active_battle ? `ACTIVE - ${activeServers || 'tracked server'}` : formatStateLabel(lib.state)}</span>
         </div>
         <div class="map-marker-lanes">
           ${controlLane}
@@ -2500,7 +2516,6 @@
       maps.forEach((map, index) => {
         const lib = map.liberation || {};
         const layout = getFrontLayout(map.map_name, index);
-        const region = layout.region;
         const activeServers = formatActiveServers(map.active_servers);
         const controlLane = buildMiniControlTrack(lib.control_value || 0);
         const chip = document.createElement('button');
@@ -2510,10 +2525,9 @@
         chip.innerHTML = `
           <div class="front-chip-top">
             <div>
-              <div class="front-chip-region">${region}</div>
               <div class="front-chip-name">${map.map_name}</div>
             </div>
-            <span class="front-chip-badge ${map.is_active_battle ? 'live' : ''}">${map.is_active_battle ? `ACTIVE - ${activeServers || 'tracked server'}` : region}</span>
+            <span class="front-chip-badge ${map.is_active_battle ? 'live' : ''}">${map.is_active_battle ? `ACTIVE - ${activeServers || 'tracked server'}` : formatStateLabel(lib.state)}</span>
           </div>
           <div class="front-chip-lanes">
             ${controlLane}
@@ -2580,12 +2594,14 @@
       controls.target.set(center.x, center.y, center.z);
       camera.near = Math.max(maxDim / 200, 0.05);
       camera.far = maxDim * 12;
-      camera.position.set(center.x + maxDim * 0.42, center.y + maxDim * 0.78, center.z - maxDim * 0.34);
+      camera.fov = 26;
+      camera.position.set(center.x + maxDim * 0.12, center.y + maxDim * 1.24, center.z - maxDim * 0.08);
       camera.lookAt(controls.target);
       controls.minDistance = maxDim * 0.18;
       controls.maxDistance = maxDim * 2.2;
       controls.panSpeed = Math.max(maxDim / 20, 0.85);
-      scene.fog = new THREE.Fog(0x000000, maxDim * 1.35, maxDim * 3.8);
+      scene.fog = null;
+      camera.updateProjectionMatrix();
       controls.update();
       initialCameraPosition = camera.position.clone();
       initialControlTarget = controls.target.clone();
