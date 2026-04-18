@@ -40,7 +40,8 @@ LIBERATION_CONTROL_DOMINANCE_THRESHOLD = max(1.0, float(os.getenv("LIBERATION_CO
 LIBERATION_CONTROL_WEIGHT = max(0.1, float(os.getenv("LIBERATION_CONTROL_WEIGHT", "28")))
 LIBERATION_CONTROL_ACTIVITY_SCALE = max(1.0, float(os.getenv("LIBERATION_CONTROL_ACTIVITY_SCALE", "120")))
 LIBERATION_CONTROL_ACTIVITY_EXPONENT = max(1.0, float(os.getenv("LIBERATION_CONTROL_ACTIVITY_EXPONENT", "2.0")))
-LIBERATION_CONTROL_DECAY_PER_HOUR = max(0.0, float(os.getenv("LIBERATION_CONTROL_DECAY_PER_HOUR", "0.05")))
+LIBERATION_CONTROL_DECAY_PER_HOUR = max(0.0, float(os.getenv("LIBERATION_CONTROL_DECAY_PER_HOUR", "0.10")))
+LIBERATION_CONTROL_EDGE_DECAY_MULTIPLIER = max(0.0, float(os.getenv("LIBERATION_CONTROL_EDGE_DECAY_MULTIPLIER", "3.0")))
 
 MAP_ID_TO_PRETTY: dict[str, str] = {
 	"elsenbornridge_warfare_morning": "Elsenborn Ridge Warfare (Dawn)",
@@ -94,6 +95,8 @@ CREATE TABLE IF NOT EXISTS server_state (
   current_map TEXT,
   current_map_id TEXT,
   active_session_id BIGINT,
+	axis_players INTEGER NOT NULL DEFAULT 0,
+	allied_players INTEGER NOT NULL DEFAULT 0,
   last_poll_at TIMESTAMPTZ,
   last_error TEXT
 );
@@ -188,6 +191,36 @@ def normalize_team(value: str | None) -> str | None:
 	return None
 
 
+def parse_int(value: Any, default: int = 0) -> int:
+	try:
+		return int(value)
+	except (TypeError, ValueError):
+		return default
+
+
+def extract_player_counts(payload: dict[str, Any]) -> tuple[int, int]:
+	if not isinstance(payload, dict):
+		return 0, 0
+
+	for axis_key, allied_key in (
+		("num_axis_players", "num_allied_players"),
+		("axis_players", "allied_players"),
+	):
+		if axis_key in payload or allied_key in payload:
+			return max(0, parse_int(payload.get(axis_key))), max(0, parse_int(payload.get(allied_key)))
+
+	teams = payload.get("teams")
+	if isinstance(teams, dict):
+		axis_team = teams.get("axis") if isinstance(teams.get("axis"), dict) else {}
+		allies_team = teams.get("allies") if isinstance(teams.get("allies"), dict) else {}
+		return (
+			max(0, parse_int(axis_team.get("players") or axis_team.get("count"))),
+			max(0, parse_int(allies_team.get("players") or allies_team.get("count"))),
+		)
+
+	return 0, 0
+
+
 def extract_log_items(payload: Any) -> list[dict[str, Any]]:
 	if isinstance(payload, list):
 		return [item for item in payload if isinstance(item, dict)]
@@ -267,6 +300,12 @@ def decay_control(value: float, elapsed_seconds: float) -> float:
 		return value
 
 	decay_amount = LIBERATION_CONTROL_DECAY_PER_HOUR * (elapsed_seconds / 3600.0)
+	threshold_ratio = min(LIBERATION_CONTROL_DOMINANCE_THRESHOLD / LIBERATION_CONTROL_MAX, 0.999999)
+	control_ratio = min(abs(value) / LIBERATION_CONTROL_MAX, 1.0)
+	if control_ratio > threshold_ratio and LIBERATION_CONTROL_EDGE_DECAY_MULTIPLIER > 0:
+		edge_window = max(1.0 - threshold_ratio, 1e-6)
+		edge_progress = (control_ratio - threshold_ratio) / edge_window
+		decay_amount *= 1.0 + (LIBERATION_CONTROL_EDGE_DECAY_MULTIPLIER * (edge_progress ** 2))
 	if value > 0:
 		return max(0.0, value - decay_amount)
 	return min(0.0, value + decay_amount)
@@ -523,6 +562,8 @@ class LiberationStore:
 		self._pool = await asyncpg.create_pool(self.database_url, min_size=1, max_size=10)
 		async with self.pool.acquire() as conn:
 			await conn.execute(SCHEMA_SQL)
+			await conn.execute("ALTER TABLE server_state ADD COLUMN IF NOT EXISTS axis_players INTEGER NOT NULL DEFAULT 0")
+			await conn.execute("ALTER TABLE server_state ADD COLUMN IF NOT EXISTS allied_players INTEGER NOT NULL DEFAULT 0")
 
 	async def close(self) -> None:
 		if self._pool is not None:
@@ -578,7 +619,7 @@ class LiberationStore:
 		async with self.pool.acquire() as conn:
 			row = await conn.fetchrow(
 				"""
-				SELECT current_map, current_map_id, active_session_id, last_poll_at, last_error
+				SELECT current_map, current_map_id, active_session_id, axis_players, allied_players, last_poll_at, last_error
 				FROM server_state
 				WHERE server_id = $1
 				""",
@@ -586,16 +627,34 @@ class LiberationStore:
 			)
 		return dict(row) if row else None
 
-	async def touch_server_poll(self, server_id: str) -> None:
+	async def touch_server_poll(self, server_id: str, *, axis_players: int | None = None, allied_players: int | None = None) -> None:
 		async with self.pool.acquire() as conn:
+			now = utc_now()
+			if axis_players is None or allied_players is None:
+				await conn.execute(
+					"""
+					UPDATE server_state
+					SET last_poll_at = $2, last_error = NULL
+					WHERE server_id = $1
+					""",
+					server_id,
+					now,
+				)
+				return
+
 			await conn.execute(
 				"""
 				UPDATE server_state
-				SET last_poll_at = $2, last_error = NULL
+				SET axis_players = $2,
+					allied_players = $3,
+					last_poll_at = $4,
+					last_error = NULL
 				WHERE server_id = $1
 				""",
 				server_id,
-				utc_now(),
+				max(0, axis_players),
+				max(0, allied_players),
+				now,
 			)
 
 	async def ensure_map_session(self, server_id: str, map_name: str, map_id: str | None) -> tuple[int, bool]:
@@ -850,6 +909,8 @@ class LiberationStore:
 					   st.current_map,
 					   st.current_map_id,
 					   st.active_session_id,
+					   st.axis_players,
+					   st.allied_players,
 					   st.last_poll_at,
 					   st.last_error
 				FROM servers s
@@ -935,6 +996,8 @@ class CRCONPoller:
 		current_map_id = None
 		current_map_name = None
 		session_changed = False
+		axis_players = None
+		allied_players = None
 
 		try:
 			gamestate_payload = await self._request_json(server, "get_gamestate")
@@ -957,6 +1020,7 @@ class CRCONPoller:
 		else:
 			gamestate_result = gamestate_payload.get("result", gamestate_payload) if isinstance(gamestate_payload, dict) else {}
 			current_map_info = gamestate_result.get("current_map", {}) if isinstance(gamestate_result, dict) else {}
+			axis_players, allied_players = extract_player_counts(gamestate_result)
 
 			if isinstance(current_map_info, dict):
 				current_map_id = str(current_map_info.get("id") or "").strip() or None
@@ -1002,7 +1066,11 @@ class CRCONPoller:
 					current_map,
 				)
 
-		await self.store.touch_server_poll(server.server_id)
+		await self.store.touch_server_poll(
+			server.server_id,
+			axis_players=axis_players,
+			allied_players=allied_players,
+		)
 		await self.store.prune_processed_events(server.server_id)
 		await self.cache.delete_patterns(["maps:*", "map:*"])
 
@@ -1056,6 +1124,25 @@ def build_all_time_objective(total_kills: int) -> dict[str, Any]:
 	}
 
 
+def build_active_server_entry(server: dict[str, Any]) -> dict[str, Any]:
+	axis_players = max(0, parse_int(server.get("axis_players")))
+	allied_players = max(0, parse_int(server.get("allied_players")))
+	return {
+		"server_id": server["server_id"],
+		"server_name": server["server_name"],
+		"current_map": server.get("current_map"),
+		"current_map_id": server.get("current_map_id"),
+		"axis_players": axis_players,
+		"allied_players": allied_players,
+		"player_count": axis_players + allied_players,
+		"last_poll_at": server.get("last_poll_at"),
+	}
+
+
+def has_active_players(server: dict[str, Any]) -> bool:
+	return (parse_int(server.get("axis_players")) + parse_int(server.get("allied_players"))) > 0
+
+
 async def build_maps_payload(store: LiberationStore, server_id: str | None, target_kills: int) -> dict[str, Any]:
 	rows = await store.list_map_rows(server_id=server_id)
 	objective_rows = {row["map_name"]: row for row in await store.list_map_objectives()}
@@ -1066,17 +1153,9 @@ async def build_maps_payload(store: LiberationStore, server_id: str | None, targ
 		if server_id and server.get("server_id") != server_id:
 			continue
 		current_map = server.get("current_map")
-		if not current_map:
+		if not current_map or not has_active_players(server):
 			continue
-		active_map_servers.setdefault(current_map, []).append(
-			{
-				"server_id": server["server_id"],
-				"server_name": server["server_name"],
-				"current_map": current_map,
-				"current_map_id": server.get("current_map_id"),
-				"last_poll_at": server.get("last_poll_at"),
-			}
-		)
+		active_map_servers.setdefault(current_map, []).append(build_active_server_entry(server))
 
 	grouped: dict[str, dict[str, Any]] = {}
 	for row in rows:
@@ -1241,15 +1320,11 @@ async def map_detail_handler(request: web.Request) -> web.Response:
 		occupied_faction = resolve_occupied_faction(control_value, objective.get("occupied_faction"))
 	server_rows = await store.list_servers()
 	active_servers = [
-		{
-			"server_id": server["server_id"],
-			"server_name": server["server_name"],
-			"current_map": server.get("current_map"),
-			"current_map_id": server.get("current_map_id"),
-			"last_poll_at": server.get("last_poll_at"),
-		}
+		build_active_server_entry(server)
 		for server in server_rows
-		if (not server_id or server.get("server_id") == server_id) and server.get("current_map") == resolved_name
+		if (not server_id or server.get("server_id") == server_id)
+		and server.get("current_map") == resolved_name
+		and has_active_players(server)
 	]
 
 	payload = normalize_payload(
