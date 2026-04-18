@@ -10,6 +10,7 @@ from typing import Any, Optional
 import discord
 from discord.ext import commands
 
+from config.common import CLAN_NAMES_PATH, SCOREBOARD_FONT_PATH
 from data_paths import data_path
 
 
@@ -37,19 +38,20 @@ HOME_CLAN_NAME: str = "7DR"
 SUBMISSION_EMBED_GIF_URL: str = "https://cdn.discordapp.com/attachments/1098976074852999261/1449844246348824757/file_00000000f2886246a918d715405f88e4-1.png?ex=69d0bc6d&is=69cf6aed&hm=0ed873d346e5eb80dc9f28907c70fe800842bb78d738efe3f0e09764712e9910"
 
 # Clan names are loaded from this file.
-CLAN_CONFIG_PATH: str = data_path("clannames.json")
+CLAN_CONFIG_PATH: str = CLAN_NAMES_PATH
 
 # Persistent state for the submission post.
 STATE_PATH: str = data_path("wardiary_state.json")
 MAP_IMAGES_DIR: str = data_path("map_images")
 
 # Optional font/background assets for the generated result image.
-FONT_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboard_font.ttf")
+FONT_PATH: str = SCOREBOARD_FONT_PATH
 RESULT_BACKGROUND_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboard_gif.gif")
 BACKGROUND_GIF_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboard_gif.gif")
 BACKGROUND_IMAGE_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboard_blank.jpg")
 GIF_WIN_INTERVAL: int = 5
 OTHER_MAP_OPTION: str = "Other"
+MATCH_TYPE_OPTIONS: list[str] = ["Competitive", "Friendly"]
 
 WAR_DIARY_MAP_IMAGE_FILES: dict[str, str] = {
 	"Elsenborn Ridge": "Elsenborn Ridge.png",
@@ -299,6 +301,40 @@ class MapSelect(discord.ui.Select):
 		await interaction.response.edit_message(view=view)
 
 
+class MatchTypeSelect(discord.ui.Select):
+	def __init__(self):
+		super().__init__(
+			placeholder="Select match type...",
+			min_values=1,
+			max_values=1,
+			options=[discord.SelectOption(label=match_type, value=match_type) for match_type in MATCH_TYPE_OPTIONS],
+		)
+
+	def set_selected_type(self, selected_match_type: Optional[str]) -> None:
+		selected_label: Optional[str] = None
+		refreshed: list[discord.SelectOption] = []
+		for option in self.options:
+			is_default = str(option.value) == selected_match_type
+			if is_default:
+				selected_label = option.label
+			refreshed.append(discord.SelectOption(label=option.label, value=str(option.value), default=is_default))
+		self.options = refreshed
+		self.placeholder = selected_label or "Select match type..."
+
+	async def callback(self, interaction: discord.Interaction):
+		view = self.view
+		if not isinstance(view, WarDiarySubmissionView):
+			return
+		if not view.is_owner(interaction.user.id):
+			await interaction.response.send_message("This submission form is not yours.", ephemeral=True)
+			return
+
+		view.selected_match_type = str(self.values[0])
+		self.set_selected_type(view.selected_match_type)
+		view.refresh_submit_state()
+		await interaction.response.edit_message(view=view)
+
+
 class StatsLinkModal(discord.ui.Modal, title="Match Details"):
 	match_date = discord.ui.TextInput(
 		label="Match date (DD/MM/YY)",
@@ -321,6 +357,7 @@ class StatsLinkModal(discord.ui.Modal, title="Match Details"):
 		self.opponent_clan_name = opponent_clan_name
 		self.selected_score = selected_score
 		self.selected_map_name: str = OTHER_MAP_OPTION
+		self.selected_match_type: str = "Competitive"
 
 	async def on_submit(self, interaction: discord.Interaction) -> None:
 		if not interaction.guild or not isinstance(interaction.user, discord.Member):
@@ -344,6 +381,7 @@ class StatsLinkModal(discord.ui.Modal, title="Match Details"):
 			opponent_clan_name=self.opponent_clan_name,
 			submitter_score=left,
 			opponent_score=right,
+			match_type=self.selected_match_type,
 			match_date=match_date,
 			map_name=self.selected_map_name,
 			stats_link=stats_link,
@@ -364,6 +402,7 @@ class WarDiarySubmissionView(discord.ui.View):
 		self.opponent_clan_name: Optional[str] = None
 		self.selected_score: Optional[str] = None
 		self.selected_map_name: Optional[str] = None
+		self.selected_match_type: Optional[str] = None
 
 		self.opponent_select = OpponentSelect(clans)
 		self.opponent_select.set_options(self.clan_name, self.opponent_clan_name)
@@ -371,6 +410,9 @@ class WarDiarySubmissionView(discord.ui.View):
 
 		self.map_select = MapSelect()
 		self.add_item(self.map_select)
+
+		self.match_type_select = MatchTypeSelect()
+		self.add_item(self.match_type_select)
 
 		self.score_select = ScoreSelect()
 		self.add_item(self.score_select)
@@ -393,7 +435,7 @@ class WarDiarySubmissionView(discord.ui.View):
 	def refresh_submit_state(self) -> None:
 		for child in self.children:
 			if isinstance(child, discord.ui.Button) and child.custom_id == "wardiary:submit":
-				child.disabled = not (self.opponent_clan_name and self.selected_score and self.selected_map_name)
+				child.disabled = not (self.opponent_clan_name and self.selected_score and self.selected_map_name and self.selected_match_type)
 
 	@discord.ui.button(label="Add Optional Stats Link & Submit", style=discord.ButtonStyle.success, disabled=True, custom_id="wardiary:submit")
 	async def submit(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -416,6 +458,7 @@ class WarDiarySubmissionView(discord.ui.View):
 				selected_score=self.selected_score,
 			)
 		modal.selected_map_name = self.selected_map_name or OTHER_MAP_OPTION
+		modal.selected_match_type = self.selected_match_type or "Competitive"
 		return modal
 
 
@@ -444,7 +487,7 @@ class WarDiaryMainView(discord.ui.View):
 		embed = discord.Embed(
 			title="Submit War Diary Result",
 			description=(
-				f"Home clan is fixed as **{HOME_CLAN_NAME}**. Pick the opposing clan, the played map, and the result, then optionally paste a stats link in the next step."
+				f"Home clan is fixed as **{HOME_CLAN_NAME}**. Pick the opposing clan, the played map, the match type, and the result, then optionally paste a stats link in the next step."
 			),
 			colour=discord.Colour.blurple(),
 		)
@@ -660,10 +703,11 @@ class WarDiaryCog(commands.Cog):
 				"1. Click the Submit Match Result button.\n"
 				"2. Select the opposing clan.\n"
 				"3. Select the played map, or choose Other to use the blank scoreboard background.\n"
-				"4. Select the result.\n"
-				"5. Before you go to the next step, check you have the stats link for the match, if you want to include that.\n"
-				"6. Click 'Add Optional Stats Link & Submit'.\n"
-				"7. Enter the date, paste the stats link and click Submit! Wait 20/30 seconds for the thread to appear, especially the GIF ones."
+				"4. Select whether the match was Competitive or Friendly.\n"
+				"5. Select the result.\n"
+				"6. Before you go to the next step, check you have the stats link for the match, if you want to include that.\n"
+				"7. Click 'Add Optional Stats Link & Submit'.\n"
+				"8. Enter the date, paste the stats link and click Submit! Wait 20/30 seconds for the thread to appear, especially the GIF ones."
 			),
 			inline=False,
 		)
@@ -796,11 +840,13 @@ class WarDiaryCog(commands.Cog):
 						return
 
 			try:
+				submission_tag = await self._get_or_create_forum_tag(forum, tag_name="Submission")
 				created = await forum.create_thread(
 					name=_truncate_thread_name(SUBMISSION_POST_NAME),
 					content="Open the submission flow below.",
 					embed=embed,
 					view=view,
+					applied_tags=[submission_tag] if submission_tag is not None else [],
 					auto_archive_duration=SUBMISSION_POST_AUTO_ARCHIVE_MINUTES,
 				)
 			except Exception:
@@ -824,6 +870,7 @@ class WarDiaryCog(commands.Cog):
 		opponent_clan_name: str,
 		submitter_score: int,
 		opponent_score: int,
+		match_type: str,
 		match_date: str,
 		map_name: str,
 		filename: str,
@@ -832,6 +879,7 @@ class WarDiaryCog(commands.Cog):
 	) -> discord.Embed:
 		description = (
 			f"**{submitter_clan_name}** {submitter_score}-{opponent_score} **{opponent_clan_name}**\n"
+			f"**Match type:** {match_type}\n"
 			f"**Date:** {match_date}"
 		)
 		if map_name != OTHER_MAP_OPTION:
@@ -906,6 +954,7 @@ class WarDiaryCog(commands.Cog):
 		opponent_clan_name: str,
 		submitter_score: int,
 		opponent_score: int,
+		match_type: str,
 		match_date: str,
 		map_name: str,
 		prefer_gif: bool,
@@ -972,6 +1021,7 @@ class WarDiaryCog(commands.Cog):
 			24,
 		)
 		date_font = fit_font(match_date, int(width * 0.28), 80, 24)
+		match_type_font = fit_font(match_type, int(width * 0.28), 80, 24)
 
 		center_y = height // 2
 		rendered_frames: list[Image.Image] = []
@@ -983,6 +1033,7 @@ class WarDiaryCog(commands.Cog):
 			draw.text((width * 0.24, center_y), submitter_clan_name, font=clan_font, fill=text_fill, anchor="lm")
 			draw.text((width // 2, center_y), f"{submitter_score} - {opponent_score}", font=score_font, fill=text_fill, anchor="mm")
 			draw.text((width * 0.76, center_y), opponent_clan_name, font=clan_font, fill=text_fill, anchor="rm")
+			draw.text((width // 2, center_y - 190), match_type, font=match_type_font, fill=text_fill, anchor="mm")
 			draw.text((width // 2, center_y + 190), match_date, font=date_font, fill=text_fill, anchor="mm")
 			rendered_frames.append(base)
 
@@ -1012,6 +1063,7 @@ class WarDiaryCog(commands.Cog):
 		opponent_clan_name: str,
 		submitter_score: int,
 		opponent_score: int,
+		match_type: str,
 		match_date: str,
 		map_name: str,
 		stats_link: Optional[str],
@@ -1041,6 +1093,7 @@ class WarDiaryCog(commands.Cog):
 				opponent_clan_name=opponent_clan_name,
 				submitter_score=submitter_score,
 				opponent_score=opponent_score,
+				match_type=match_type,
 				match_date=match_date,
 				map_name=map_name,
 				prefer_gif=prefer_gif,
@@ -1052,6 +1105,7 @@ class WarDiaryCog(commands.Cog):
 				opponent_clan_name=opponent_clan_name,
 				submitter_score=submitter_score,
 				opponent_score=opponent_score,
+				match_type=match_type,
 				match_date=match_date,
 				map_name=map_name,
 				filename=filename,
@@ -1060,6 +1114,7 @@ class WarDiaryCog(commands.Cog):
 			)
 
 			content_lines: list[str] = []
+			content_lines.append(f"Match type: {match_type}")
 			content_lines.append(f"Match date: {match_date}")
 			content = "\n".join(content_lines) if content_lines else None
 			applied_tags: list[discord.ForumTag] = []

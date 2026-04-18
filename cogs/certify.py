@@ -5,6 +5,8 @@ from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 import os
 
+from config.common import CERTIFICATE_BOLD_FONT_PATH, CERTIFICATE_REGULAR_FONT_PATH
+
 def draw_spaced_text(draw, position, text, font, fill, spacing):
     x, y = position
     for char in text:
@@ -67,9 +69,9 @@ class Certify(commands.Cog):
         draw = ImageDraw.Draw(img)
 
         # Font paths
-        cert_font_path = os.path.join(os.path.dirname(__file__), "AlegreyaSC-Bold.ttf")
-        person_font_path = os.path.join(os.path.dirname(__file__), "AlegreyaSC-Regular.ttf")
-        officer_font_path = os.path.join(os.path.dirname(__file__), "AlegreyaSC-Regular.ttf")
+        cert_font_path = CERTIFICATE_BOLD_FONT_PATH
+        person_font_path = CERTIFICATE_REGULAR_FONT_PATH
+        officer_font_path = CERTIFICATE_REGULAR_FONT_PATH
 
         # Font sizes
         cert_font_size = 76

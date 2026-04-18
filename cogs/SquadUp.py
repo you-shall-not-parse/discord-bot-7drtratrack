@@ -7,11 +7,12 @@ from typing import Optional, Dict, List, Union
 import asyncio
 import time
 
+from config.common import SQUADUP_CONFIG_PATH
 from data_paths import data_path
 
 DATA_FOLDER = data_path()
 POSTS_FILE = data_path("squadup_posts.json")
-CONFIG_FILE = data_path("squadup_config.json")
+CONFIG_FILE = SQUADUP_CONFIG_PATH
 
 # Cache to reduce file I/O
 POST_CACHE = {}

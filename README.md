@@ -39,6 +39,11 @@ discord-bot-7drtratrack/
 ├── README.md
 ├── COG_HOWTO.md
 ├── data_paths.py
+├── config/
+│   ├── common.py
+│   ├── clannames.json
+│   ├── presets.json
+│   └── squadup_config.json
 ├── cogs/
 │   ├── botadmin.py
 │   ├── rosterizer.py
@@ -47,9 +52,9 @@ discord-bot-7drtratrack/
 │   ├── applyroletomessage.py
 │   └── ...other cogs
 ├── data/
-│   ├── presets.json
-│   ├── clannames.json
-│   ├── squadup_config.json
+│   ├── scoreboard_font.ttf
+│   ├── AlegreyaSC-Bold.ttf
+│   ├── AlegreyaSC-Regular.ttf
 │   └── ...runtime state files
 └── liberationapp/
 	└── separate campaign web app code
@@ -59,8 +64,9 @@ What each part is for:
 
 - `main.py`: the entrypoint you run; loads the bot and its cogs
 - `.env`: local secrets such as the bot token; not for public sharing
+- `config/`: shared static config and common constants
 - `cogs/`: modular Discord features
-- `data/`: state files, config JSON, logs, mappings, and generated bot data
+- `data/`: state files, logs, mappings, fonts, and generated bot data
 - `README.md`: public-safe summary and structure overview
 - `COG_HOWTO.md`: longer user/staff guide for each cog
 - `liberationapp/`: a separate app in the same repo, not part of the Discord cog guide
@@ -135,4 +141,5 @@ python main.py
 
 - `liberationapp/`: separate web app stack for Liberation/campaign work
 - `cogs/`: Discord bot features loaded by `main.py`
-- `data/`: bot state, logs, and generated files
+- `config/`: shared config files and shared constant definitions
+- `data/`: bot state, logs, fonts, and generated files

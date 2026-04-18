@@ -12,7 +12,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from config import DOCS_FORUM_CHANNEL_ID, MAIN_GUILD_ID
+from config import DOCS_FORUM_CHANNEL_ID, DOCS_FORUM_TAG_NAME, MAIN_GUILD_ID
 from data_paths import data_path
 
 
@@ -174,6 +174,47 @@ class DocSync(commands.Cog):
             return None
         return fetched if isinstance(fetched, discord.Thread) else None
 
+    def _normalize_tag_name(self, value: str) -> str:
+        return " ".join((value or "").split()).casefold()
+
+    def _find_forum_tag(self, forum: discord.ForumChannel, *, tag_name: str) -> Optional[discord.ForumTag]:
+        target = self._normalize_tag_name(tag_name)
+        if not target:
+            return None
+
+        for tag in forum.available_tags:
+            if self._normalize_tag_name(tag.name) == target:
+                return tag
+        return None
+
+    def _can_create_forum_tags(self, forum: discord.ForumChannel) -> bool:
+        bot_user = self.bot.user
+        if bot_user is None:
+            return False
+        member = forum.guild.get_member(bot_user.id)
+        if member is None:
+            return False
+        return forum.permissions_for(member).manage_channels
+
+    async def _resolve_docs_tag(self, forum: discord.ForumChannel) -> list[discord.ForumTag]:
+        existing = self._find_forum_tag(forum, tag_name=DOCS_FORUM_TAG_NAME)
+        if existing is not None:
+            return [existing]
+
+        if self._can_create_forum_tags(forum):
+            try:
+                created = await forum.create_tag(name=DOCS_FORUM_TAG_NAME)
+                return [created]
+            except Exception:
+                self.logger.warning("Failed to create docs forum tag '%s'", DOCS_FORUM_TAG_NAME, exc_info=True)
+                existing = self._find_forum_tag(forum, tag_name=DOCS_FORUM_TAG_NAME)
+                if existing is not None:
+                    return [existing]
+
+        if forum.available_tags:
+            return [forum.available_tags[0]]
+        return []
+
     def _extract_created_post(self, created) -> tuple[Optional[discord.Thread], Optional[discord.Message]]:
         thread = getattr(created, "thread", None)
         message = getattr(created, "message", None)
@@ -215,9 +256,11 @@ class DocSync(commands.Cog):
                 return thread, starter_message
 
         try:
+            applied_tags = await self._resolve_docs_tag(forum)
             created = await forum.create_thread(
                 name=THREAD_NAME,
                 content=starter_content,
+                applied_tags=applied_tags,
                 auto_archive_duration=10080,
             )
         except Exception:
