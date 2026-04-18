@@ -30,7 +30,10 @@ MAPVOTE_ADMIN_ROLE_ID = 1279832920479109160  # set this to your role ID
 VOTE_END_OFFSET_SECONDS = 120
 
 # Embed update speed
-EMBED_UPDATE_INTERVAL = 4
+EMBED_UPDATE_INTERVAL = 10
+
+# Match event audit-log checks can run much slower than the embed redraw loop.
+MATCH_LOG_CHECK_INTERVAL = 30
 
 # How many map options to show
 OPTIONS_PER_VOTE = 20
@@ -427,8 +430,8 @@ class MapVoteSelect(discord.ui.Select):
             ephemeral=True
         )
 
-        # Refresh the live embed
-        await self.cog.refresh_active_embed()
+        # Refresh the live embed without forcing a new CRCON read.
+        await self.cog.refresh_active_embed(force=False)
 
 
 class MapVoteView(discord.ui.View):
@@ -466,11 +469,24 @@ class MapVote(commands.Cog):
         self._embed_lock = asyncio.Lock()
         # Cooldown to avoid immediate re-posts if Discord returns stale fetch
         self._last_create_ts: float | None = None
+        self._last_gamestate: dict | None = None
+        self._last_gamestate_ts: float = 0.0
+        self._last_match_log_check_ts: float = 0.0
 
         # Delayed BROADCAST_START (send once per match)
         self._broadcast_start_task: asyncio.Task | None = None
         self._broadcast_start_scheduled_for_match_id: int | None = None
         self._broadcast_start_sent_for_match_id: int | None = None
+
+    async def get_cached_gamestate(self, *, force: bool = False) -> dict | None:
+        now_ts = asyncio.get_running_loop().time()
+        if not force and (now_ts - self._last_gamestate_ts) < EMBED_UPDATE_INTERVAL:
+            return self._last_gamestate
+
+        gs = await fetch_gamestate()
+        self._last_gamestate = gs
+        self._last_gamestate_ts = now_ts
+        return gs
 
     def _fast_forward_match_log_cursor(self):
         """Advance last_processed_log_id to the newest match log entry.
@@ -681,7 +697,7 @@ class MapVote(commands.Cog):
 
         # Force-start vote if match is active and no vote running after a restart
         try:
-            gs = await fetch_gamestate()
+            gs = await self.get_cached_gamestate(force=True)
             if gs and self.mapvote_enabled:
                 status = classify_status(gs, self.mapvote_enabled)
                 if status == "ACTIVE" and not self.state.active and gs.get("time_remaining", 0) > 0:
@@ -1068,12 +1084,12 @@ class MapVote(commands.Cog):
         await self.refresh_status_embed()
 
     async def refresh_status_embed(self):
-        gs = await fetch_gamestate()
+        gs = await self.get_cached_gamestate(force=False)
         status = classify_status(gs, self.mapvote_enabled)
         await self.ensure_embed(status, gs)
 
-    async def refresh_active_embed(self):
-        gs = await fetch_gamestate()
+    async def refresh_active_embed(self, *, force: bool = False):
+        gs = await self.get_cached_gamestate(force=force)
         if not gs:
             await self.ensure_embed("OFFLINE", None)
             return
@@ -1169,7 +1185,7 @@ class MapVote(commands.Cog):
     # --------------------------------------------------
     @tasks.loop(seconds=EMBED_UPDATE_INTERVAL)
     async def tick_task(self):
-        gs = await fetch_gamestate()
+        gs = await self.get_cached_gamestate(force=True)
         status = classify_status(gs, self.mapvote_enabled)
 
         # Status-based behaviour
@@ -1188,8 +1204,11 @@ class MapVote(commands.Cog):
             self.state.active = False
             return
 
-        # ACTIVE - check audit logs for match events and handle voting
-        await self.check_match_events(gs)
+        # ACTIVE - check audit logs on a slower cadence than embed redraws.
+        now_ts = asyncio.get_running_loop().time()
+        if (now_ts - self._last_match_log_check_ts) >= MATCH_LOG_CHECK_INTERVAL:
+            self._last_match_log_check_ts = now_ts
+            await self.check_match_events(gs)
 
         # Update embed
         await self.ensure_embed("ACTIVE", gs)
