@@ -37,8 +37,9 @@ LIBERATION_IMPORT_RECENT_ON_START = os.getenv("LIBERATION_IMPORT_RECENT_ON_START
 LIBERATION_SERVERS_FILE = os.getenv("LIBERATION_SERVERS_FILE")
 LIBERATION_CONTROL_MAX = max(1.0, float(os.getenv("LIBERATION_CONTROL_MAX", "100")))
 LIBERATION_CONTROL_DOMINANCE_THRESHOLD = max(1.0, float(os.getenv("LIBERATION_CONTROL_DOMINANCE_THRESHOLD", "90")))
-LIBERATION_CONTROL_WEIGHT = max(0.1, float(os.getenv("LIBERATION_CONTROL_WEIGHT", "45")))
-LIBERATION_CONTROL_ACTIVITY_SCALE = max(1.0, float(os.getenv("LIBERATION_CONTROL_ACTIVITY_SCALE", "20")))
+LIBERATION_CONTROL_WEIGHT = max(0.1, float(os.getenv("LIBERATION_CONTROL_WEIGHT", "28")))
+LIBERATION_CONTROL_ACTIVITY_SCALE = max(1.0, float(os.getenv("LIBERATION_CONTROL_ACTIVITY_SCALE", "120")))
+LIBERATION_CONTROL_ACTIVITY_EXPONENT = max(1.0, float(os.getenv("LIBERATION_CONTROL_ACTIVITY_EXPONENT", "2.0")))
 LIBERATION_CONTROL_DECAY_PER_HOUR = max(0.0, float(os.getenv("LIBERATION_CONTROL_DECAY_PER_HOUR", "0.05")))
 
 MAP_ID_TO_PRETTY: dict[str, str] = {
@@ -277,7 +278,8 @@ def compute_control_delta(allied_kills: int, axis_kills: int) -> float:
 		return 0.0
 
 	delta_ratio = (allied_kills - axis_kills) / total_kills
-	activity_factor = min(total_kills / LIBERATION_CONTROL_ACTIVITY_SCALE, 1.0)
+	activity_progress = min(total_kills / LIBERATION_CONTROL_ACTIVITY_SCALE, 1.0)
+	activity_factor = activity_progress ** LIBERATION_CONTROL_ACTIVITY_EXPONENT
 	return delta_ratio * LIBERATION_CONTROL_WEIGHT * activity_factor
 
 
