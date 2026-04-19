@@ -78,6 +78,10 @@
       max-width: 1180px;
     }
 
+    .operations-stack {
+      align-content: start;
+    }
+
     .hero,
     .theatre,
     .challenge-board,
@@ -404,6 +408,10 @@
       line-height: 1.2;
       color: var(--muted);
       white-space: nowrap;
+    }
+
+    .mobile-activity-copy:empty {
+      display: none;
     }
 
     .mobile-activity-impact {

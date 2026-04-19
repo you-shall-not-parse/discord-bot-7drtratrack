@@ -36,27 +36,37 @@ import * as THREE from 'three';
     const pageRoot = document.querySelector('.page');
     const dashboardView = document.getElementById('dashboard-view');
     const aboutView = document.getElementById('about-view');
+    const operationsView = document.getElementById('operations-view');
     const battleMapPage = document.getElementById('battle-map-page');
     const openBattleMapButton = document.getElementById('open-battle-map');
     const desktopHomeButton = document.getElementById('desktop-home-button');
     const desktopAboutButton = document.getElementById('desktop-about-button');
+    const desktopOperationsButton = document.getElementById('desktop-operations-button');
     const desktopAboutHomeButton = document.getElementById('desktop-about-home-button');
     const desktopAboutPageButton = document.getElementById('desktop-about-page-button');
+    const desktopAboutOperationsButton = document.getElementById('desktop-about-operations-button');
     const desktopAboutMapButton = document.getElementById('desktop-about-map-button');
+    const desktopOperationsHomeButton = document.getElementById('desktop-operations-home-button');
+    const desktopOperationsAboutButton = document.getElementById('desktop-operations-about-button');
+    const desktopOperationsPageButton = document.getElementById('desktop-operations-page-button');
+    const desktopOperationsMapButton = document.getElementById('desktop-operations-map-button');
     const desktopMapHomeButton = document.getElementById('desktop-map-home-button');
     const desktopMapAboutButton = document.getElementById('desktop-map-about-button');
+    const desktopMapOperationsButton = document.getElementById('desktop-map-operations-button');
     const desktopMapOpenButton = document.getElementById('desktop-map-open-button');
     const returnDashboardButton = document.getElementById('return-dashboard');
     const mobileNavToggleButtons = [
       document.getElementById('mobile-nav-toggle-home'),
       document.getElementById('mobile-nav-toggle-map'),
-      document.getElementById('mobile-nav-toggle-about')
+      document.getElementById('mobile-nav-toggle-about'),
+      document.getElementById('mobile-nav-toggle-operations')
     ];
     const mobileNavBackdrop = document.getElementById('mobile-nav-backdrop');
     const mobileNavDrawer = document.getElementById('mobile-nav-drawer');
     const mobileNavCloseButton = document.getElementById('mobile-nav-close');
     const mobileNavHomeButton = document.getElementById('mobile-nav-home');
     const mobileNavAboutButton = document.getElementById('mobile-nav-about');
+    const mobileNavOperationsButton = document.getElementById('mobile-nav-operations');
     const mobileNavBattleMapButton = document.getElementById('mobile-nav-battle-map');
     const frontStrip = document.getElementById('front-strip');
     const emptyState = document.getElementById('empty-state');
@@ -203,19 +213,28 @@ import * as THREE from 'three';
     function syncNavigationState() {
       const isHomeView = currentView === 'home';
       const isAboutView = currentView === 'about';
+      const isOperationsView = currentView === 'operations';
       const isBattleMapOpen = currentView === 'map';
 
       desktopHomeButton.classList.toggle('active', isHomeView);
       desktopAboutButton.classList.toggle('active', isAboutView);
+      desktopOperationsButton.classList.toggle('active', isOperationsView);
       openBattleMapButton.classList.toggle('active', isBattleMapOpen);
       desktopAboutHomeButton.classList.toggle('active', isHomeView);
       desktopAboutPageButton.classList.toggle('active', isAboutView);
+      desktopAboutOperationsButton.classList.toggle('active', isOperationsView);
       desktopAboutMapButton.classList.toggle('active', isBattleMapOpen);
+      desktopOperationsHomeButton.classList.toggle('active', isHomeView);
+      desktopOperationsAboutButton.classList.toggle('active', isAboutView);
+      desktopOperationsPageButton.classList.toggle('active', isOperationsView);
+      desktopOperationsMapButton.classList.toggle('active', isBattleMapOpen);
       desktopMapHomeButton.classList.toggle('active', isHomeView);
       desktopMapAboutButton.classList.toggle('active', isAboutView);
+      desktopMapOperationsButton.classList.toggle('active', isOperationsView);
       desktopMapOpenButton.classList.toggle('active', isBattleMapOpen);
       mobileNavHomeButton.classList.toggle('active', isHomeView);
       mobileNavAboutButton.classList.toggle('active', isAboutView);
+      mobileNavOperationsButton.classList.toggle('active', isOperationsView);
       mobileNavBattleMapButton.classList.toggle('active', isBattleMapOpen);
     }
 
@@ -417,7 +436,7 @@ import * as THREE from 'three';
       }
 
       return {
-        copy: 'No recent push recorded',
+        copy: '',
         metric: '0.00%',
         tone: '',
       };
@@ -455,7 +474,7 @@ import * as THREE from 'three';
           <div class="mobile-activity-time">${formatRelativeTime(map.updated_at)}</div>
           <div>
             <div class="mobile-activity-name">${map.map_name}</div>
-            <div class="mobile-activity-copy">${activity.copy}</div>
+            ${activity.copy ? `<div class="mobile-activity-copy">${activity.copy}</div>` : ''}
           </div>
           <div class="mobile-activity-impact ${activity.tone}">${activity.metric}</div>
         `;
@@ -698,7 +717,7 @@ import * as THREE from 'three';
       detailTitle.textContent = payload.map_name || 'Unknown front';
       detailCopy.textContent = activeBattle
         ? `${activeServerNames || 'Tracked server'} is active on this front.`
-        : 'Persistent frontline control across all tracked battles.';
+        : '';
       targetKills.textContent = `${lib.control_target || 100}%`;
       raceMargin.textContent = `${lib.control_value || 0}%`;
       control.textContent = formatFaction(lib.occupied_faction || lib.controlling_faction);
@@ -949,13 +968,15 @@ import * as THREE from 'three';
       currentView = view;
       const isHomeView = view === 'home';
       const isAboutView = view === 'about';
+      const isOperationsView = view === 'operations';
       const isBattleMapOpen = view === 'map';
 
       dashboardView.classList.toggle('hidden', !isHomeView);
       aboutView.classList.toggle('hidden', !isAboutView);
+      operationsView.classList.toggle('hidden', !isOperationsView);
       battleMapPage.classList.toggle('hidden', !isBattleMapOpen);
-      pageRoot.classList.toggle('about-mode', isAboutView);
-      intelPanel.classList.toggle('hidden', isAboutView);
+      pageRoot.classList.toggle('about-mode', isAboutView || isOperationsView);
+      intelPanel.classList.toggle('hidden', isAboutView || isOperationsView);
       syncNavigationState();
       setMobileNavOpen(false);
       if (!isHomeView) {
@@ -1011,12 +1032,19 @@ import * as THREE from 'three';
       focusActiveButton.addEventListener('click', focusActiveFront);
       desktopHomeButton.addEventListener('click', () => setView('home'));
       desktopAboutButton.addEventListener('click', () => setView('about'));
+      desktopOperationsButton.addEventListener('click', () => setView('operations'));
       openBattleMapButton.addEventListener('click', () => setView('map'));
       desktopAboutHomeButton.addEventListener('click', () => setView('home'));
       desktopAboutPageButton.addEventListener('click', () => setView('about'));
+      desktopAboutOperationsButton.addEventListener('click', () => setView('operations'));
       desktopAboutMapButton.addEventListener('click', () => setView('map'));
+      desktopOperationsHomeButton.addEventListener('click', () => setView('home'));
+      desktopOperationsAboutButton.addEventListener('click', () => setView('about'));
+      desktopOperationsPageButton.addEventListener('click', () => setView('operations'));
+      desktopOperationsMapButton.addEventListener('click', () => setView('map'));
       desktopMapHomeButton.addEventListener('click', () => setView('home'));
       desktopMapAboutButton.addEventListener('click', () => setView('about'));
+      desktopMapOperationsButton.addEventListener('click', () => setView('operations'));
       desktopMapOpenButton.addEventListener('click', () => setView('map'));
       returnDashboardButton.addEventListener('click', () => setView('home'));
       mobileNavToggleButtons.forEach((button) => button.addEventListener('click', () => setMobileNavOpen(true)));
@@ -1024,6 +1052,7 @@ import * as THREE from 'three';
       mobileNavBackdrop.addEventListener('click', () => setMobileNavOpen(false));
       mobileNavHomeButton.addEventListener('click', () => setView('home'));
       mobileNavAboutButton.addEventListener('click', () => setView('about'));
+      mobileNavOperationsButton.addEventListener('click', () => setView('operations'));
       mobileNavBattleMapButton.addEventListener('click', () => setView('map'));
       intelPanelCloseButton.addEventListener('click', () => setIntelPanelOpen(false));
       intelPanelBackdrop.addEventListener('click', () => setIntelPanelOpen(false));

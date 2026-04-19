@@ -20,6 +20,7 @@
           <div class="hero-actions">
             <button id="desktop-home-button" class="hero-button active" type="button">Home</button>
             <button id="desktop-about-button" class="hero-button" type="button">About</button>
+            <button id="desktop-operations-button" class="hero-button" type="button">Weekly Operations</button>
             <button id="open-battle-map" class="hero-button" type="button">Open Battle Map</button>
           </div>
             <button id="mobile-nav-toggle-home" class="menu-toggle" type="button" aria-label="Open navigation menu">&#9776;</button>
@@ -76,17 +77,6 @@
 
         <div id="empty-state" class="empty-state" hidden>No campaign fronts tracked yet.</div>
       </section>
-
-      <section class="challenge-board">
-        <div class="section-header">
-          <div>
-            <span class="section-label">Operations Board</span>
-            <h2>Weekly Operations</h2>
-          </div>
-          <p id="challenge-summary">Current campaign is active. Weekly and monthly slots are staged next.</p>
-        </div>
-        <div id="challenge-grid" class="challenge-grid"></div>
-      </section>
     </section>
 
     <section id="about-view" class="main-column dashboard-only hidden">
@@ -100,6 +90,7 @@
           <div class="hero-actions">
             <button id="desktop-about-home-button" class="hero-button" type="button">Home</button>
             <button id="desktop-about-page-button" class="hero-button active" type="button">About</button>
+            <button id="desktop-about-operations-button" class="hero-button" type="button">Weekly Operations</button>
             <button id="desktop-about-map-button" class="hero-button" type="button">Open Battle Map</button>
           </div>
           <button id="mobile-nav-toggle-about" class="menu-toggle" type="button" aria-label="Open navigation menu">&#9776;</button>
@@ -129,11 +120,21 @@
 
           <article class="about-card wide">
             <h3>Liberation Equation</h3>
-            <p>Each processed kill batch shifts the front based on kill margin and match activity. The current deployment uses these defaults:</p>
-            <div class="formula-block">delta = ((AlliesKills - AxisKills) / TotalKills)
+            <p>Each poll now blends kill pressure, player-count scaling, and objective hold pressure into the same control bar.</p>
+            <div class="formula-block">player_factor = min((AxisPlayers + AlliedPlayers) / 100, 1)^1.0
+
+kill_delta = ((AlliesKills - AxisKills) / TotalKills)
   * 28
-  * min(TotalKills / 120, 1)^2.0</div>
-            <p>That means small skirmishes move the line gently, while sustained fighting earns the full control swing. The bar runs from Axis control at -100 to Allied control at +100, with occupation becoming sticky after 90% dominance.</p>
+  * min(TotalKills / 120, 1)^2.0
+  * player_factor
+
+objective_delta = ((AlliedObjectives - AxisObjectives) / TotalObjectives)
+  * 8.0
+  * (elapsed_seconds / 3600)
+  * player_factor
+
+next_control = clamp(decayed_control + kill_delta + objective_delta, -100, 100)</div>
+            <p>Kills still matter, but holding more sectors now creates a steady pull as long as players are actually present. The player factor dampens low-pop states so quiet or empty servers do not drag fronts unrealistically.</p>
           </article>
 
           <article class="about-card">
@@ -145,13 +146,44 @@
           <article class="about-card">
             <h3>Factors That Matter</h3>
             <div class="about-points">
-              <p>Kill balance: whichever side wins the kill share pushes the line in its direction.</p>
-              <p>Activity scaling: low-volume fights are damped until the battle reaches useful intensity.</p>
+              <p>Kill balance: whichever side wins the kill share still pushes the line in its direction.</p>
+              <p>Objective hold: controlling more sectors creates a passive buff even without a fresh capture event feed.</p>
+              <p>Player count scaling: fronts with more live players apply stronger pressure than quiet ones.</p>
               <p>Persistence: totals and control survive across matches, servers, and restarts through PostgreSQL storage.</p>
               <p>Live state: the active marker depends on real current-map state and non-zero player counts, not just a stale rotation entry.</p>
             </div>
           </article>
         </div>
+      </section>
+    </section>
+
+    <section id="operations-view" class="main-column dashboard-only hidden">
+      <header class="hero">
+        <div class="page-topbar">
+          <div class="page-title-group">
+            <span class="panel-label">Operations Board</span>
+            <h2>Weekly Operations</h2>
+            <p>Campaign, weekly, and monthly operation tracks separated from the frontline board.</p>
+          </div>
+          <div class="hero-actions">
+            <button id="desktop-operations-home-button" class="hero-button" type="button">Home</button>
+            <button id="desktop-operations-about-button" class="hero-button" type="button">About</button>
+            <button id="desktop-operations-page-button" class="hero-button active" type="button">Weekly Operations</button>
+            <button id="desktop-operations-map-button" class="hero-button" type="button">Open Battle Map</button>
+          </div>
+          <button id="mobile-nav-toggle-operations" class="menu-toggle" type="button" aria-label="Open navigation menu">&#9776;</button>
+        </div>
+      </header>
+
+      <section class="challenge-board operations-stack">
+        <div class="section-header">
+          <div>
+            <span class="section-label">Operations Board</span>
+            <h2>Weekly Operations</h2>
+          </div>
+          <p id="challenge-summary">Current campaign is active. Weekly and monthly slots are staged next.</p>
+        </div>
+        <div id="challenge-grid" class="challenge-grid"></div>
       </section>
     </section>
 
@@ -169,6 +201,7 @@
       <div class="mobile-nav-links">
         <button id="mobile-nav-home" class="mobile-nav-link active" type="button">Home</button>
         <button id="mobile-nav-about" class="mobile-nav-link" type="button">About</button>
+        <button id="mobile-nav-operations" class="mobile-nav-link" type="button">Weekly Operations</button>
         <button id="mobile-nav-battle-map" class="mobile-nav-link" type="button">Battle Map</button>
       </div>
     </aside>
@@ -250,6 +283,7 @@
           <div class="hero-actions">
             <button id="desktop-map-home-button" class="hero-button" type="button">Home</button>
             <button id="desktop-map-about-button" class="hero-button" type="button">About</button>
+            <button id="desktop-map-operations-button" class="hero-button" type="button">Weekly Operations</button>
             <button id="desktop-map-open-button" class="hero-button active" type="button">Open Battle Map</button>
           </div>
           <button id="mobile-nav-toggle-map" class="menu-toggle" type="button" aria-label="Open navigation menu">&#9776;</button>
