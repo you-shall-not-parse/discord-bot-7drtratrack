@@ -25,6 +25,7 @@ LIBERATION_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://liberation:liberation@localhost:5432/liberation")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+FRONTLINES_ADMIN_TOKEN = os.getenv("FRONTLINES_ADMIN_TOKEN", "").strip()
 LIBERATION_PORT = int(os.getenv("LIBERATION_PORT", os.getenv("PORT", "8080")))
 LIBERATION_HOST = os.getenv("LIBERATION_HOST", "0.0.0.0")
 LIBERATION_POLL_SECONDS = max(3, int(os.getenv("LIBERATION_POLL_SECONDS", "10")))
@@ -42,6 +43,9 @@ LIBERATION_CONTROL_ACTIVITY_SCALE = max(1.0, float(os.getenv("LIBERATION_CONTROL
 LIBERATION_CONTROL_ACTIVITY_EXPONENT = max(1.0, float(os.getenv("LIBERATION_CONTROL_ACTIVITY_EXPONENT", "2.0")))
 LIBERATION_CONTROL_DECAY_PER_HOUR = max(0.0, float(os.getenv("LIBERATION_CONTROL_DECAY_PER_HOUR", "0.10")))
 LIBERATION_CONTROL_EDGE_DECAY_MULTIPLIER = max(0.0, float(os.getenv("LIBERATION_CONTROL_EDGE_DECAY_MULTIPLIER", "3.0")))
+LIBERATION_CONTROL_PLAYER_REFERENCE = max(1.0, float(os.getenv("LIBERATION_CONTROL_PLAYER_REFERENCE", "100")))
+LIBERATION_CONTROL_PLAYER_EXPONENT = max(0.1, float(os.getenv("LIBERATION_CONTROL_PLAYER_EXPONENT", "1.0")))
+LIBERATION_CONTROL_OBJECTIVE_WEIGHT_PER_HOUR = max(0.0, float(os.getenv("LIBERATION_CONTROL_OBJECTIVE_WEIGHT_PER_HOUR", "8.0")))
 
 MAP_ID_TO_PRETTY: dict[str, str] = {
 	"elsenbornridge_warfare_morning": "Elsenborn Ridge Warfare (Dawn)",
@@ -221,6 +225,25 @@ def extract_player_counts(payload: dict[str, Any]) -> tuple[int, int]:
 	return 0, 0
 
 
+def extract_team_objective_scores(payload: Any) -> tuple[int, int]:
+	result = payload.get("result", payload) if isinstance(payload, dict) else payload
+
+	if isinstance(result, (list, tuple)) and len(result) >= 2:
+		return max(0, parse_int(result[0])), max(0, parse_int(result[1]))
+
+	if isinstance(result, dict):
+		for allied_key, axis_key in (
+			("allies", "axis"),
+			("allied", "axis"),
+			("allies_objectives", "axis_objectives"),
+			("allied_objectives", "axis_objectives"),
+		):
+			if allied_key in result or axis_key in result:
+				return max(0, parse_int(result.get(allied_key))), max(0, parse_int(result.get(axis_key)))
+
+	return 0, 0
+
+
 def extract_log_items(payload: Any) -> list[dict[str, Any]]:
 	if isinstance(payload, list):
 		return [item for item in payload if isinstance(item, dict)]
@@ -311,15 +334,56 @@ def decay_control(value: float, elapsed_seconds: float) -> float:
 	return min(0.0, value + decay_amount)
 
 
-def compute_control_delta(allied_kills: int, axis_kills: int) -> float:
-	total_kills = allied_kills + axis_kills
-	if total_kills <= 0:
+def compute_player_activity_factor(axis_players: int, allied_players: int) -> float:
+	total_players = max(0, axis_players) + max(0, allied_players)
+	activity_progress = min(total_players / LIBERATION_CONTROL_PLAYER_REFERENCE, 1.0)
+	return activity_progress ** LIBERATION_CONTROL_PLAYER_EXPONENT
+
+
+def compute_objective_pressure_delta(
+	allied_objectives: int,
+	axis_objectives: int,
+	elapsed_seconds: float,
+	*,
+	player_activity_factor: float,
+) -> float:
+	if elapsed_seconds <= 0 or LIBERATION_CONTROL_OBJECTIVE_WEIGHT_PER_HOUR <= 0 or player_activity_factor <= 0:
 		return 0.0
 
-	delta_ratio = (allied_kills - axis_kills) / total_kills
-	activity_progress = min(total_kills / LIBERATION_CONTROL_ACTIVITY_SCALE, 1.0)
-	activity_factor = activity_progress ** LIBERATION_CONTROL_ACTIVITY_EXPONENT
-	return delta_ratio * LIBERATION_CONTROL_WEIGHT * activity_factor
+	total_objectives = max(0, allied_objectives) + max(0, axis_objectives)
+	if total_objectives <= 0:
+		return 0.0
+
+	hold_advantage = (max(0, allied_objectives) - max(0, axis_objectives)) / total_objectives
+	return hold_advantage * LIBERATION_CONTROL_OBJECTIVE_WEIGHT_PER_HOUR * (elapsed_seconds / 3600.0) * player_activity_factor
+
+
+def compute_control_delta(
+	allied_kills: int,
+	axis_kills: int,
+	*,
+	allied_players: int = 0,
+	axis_players: int = 0,
+	allied_objectives: int = 0,
+	axis_objectives: int = 0,
+	elapsed_seconds: float = 0.0,
+) -> float:
+	player_activity_factor = compute_player_activity_factor(axis_players, allied_players)
+	total_kills = allied_kills + axis_kills
+	kill_delta = 0.0
+	if total_kills > 0:
+		delta_ratio = (allied_kills - axis_kills) / total_kills
+		activity_progress = min(total_kills / LIBERATION_CONTROL_ACTIVITY_SCALE, 1.0)
+		activity_factor = activity_progress ** LIBERATION_CONTROL_ACTIVITY_EXPONENT
+		kill_delta = delta_ratio * LIBERATION_CONTROL_WEIGHT * activity_factor * player_activity_factor
+
+	objective_delta = compute_objective_pressure_delta(
+		allied_objectives,
+		axis_objectives,
+		elapsed_seconds,
+		player_activity_factor=player_activity_factor,
+	)
+	return kill_delta + objective_delta
 
 
 def resolve_occupied_faction(control_value: float, occupied_faction: str | None) -> str | None:
@@ -444,6 +508,14 @@ def resolve_map_query(query: str, candidates: list[str]) -> str | None:
 			return candidate
 
 	return None
+
+
+def authorization_token(request: web.Request) -> str:
+	authorization = request.headers.get("Authorization", "")
+	prefix = "Bearer "
+	if authorization.startswith(prefix):
+		return authorization[len(prefix):].strip()
+	return ""
 
 
 def load_server_configs() -> list[ServerConfig]:
@@ -762,70 +834,64 @@ class LiberationStore:
 		map_name: str,
 		map_id: str | None,
 		events: list[KillEvent],
+		axis_players: int = 0,
+		allied_players: int = 0,
+		axis_objectives: int = 0,
+		allied_objectives: int = 0,
 	) -> int:
-		if not events:
-			return 0
-
 		event_keys = [event.event_key for event in events]
 		async with self.pool.acquire() as conn:
 			async with conn.transaction():
-				rows = await conn.fetch(
-					"""
-					SELECT event_key
-					FROM processed_events
-					WHERE server_id = $1 AND event_key = ANY($2::text[])
-					""",
-					server_id,
-					event_keys,
-				)
-				existing = {row["event_key"] for row in rows}
-				new_events = [event for event in events if event.event_key not in existing]
-				if not new_events:
-					await conn.execute(
-						"""
-						UPDATE map_sessions
-						SET last_seen_at = $2, updated_at = $2
-						WHERE session_id = $1
-						""",
-						session_id,
-						utc_now(),
-					)
-					return 0
-
 				now = utc_now()
-				payload = [
-					(server_id, event.event_key, session_id, event.timestamp_ms, event.team, now)
-					for event in new_events
-				]
-				await conn.executemany(
-					"""
-					INSERT INTO processed_events (server_id, event_key, session_id, timestamp_ms, team, created_at)
-					VALUES ($1, $2, $3, $4, $5, $6)
-					ON CONFLICT (server_id, event_key) DO NOTHING
-					""",
-					payload,
-				)
+				new_events = events
+				if event_keys:
+					rows = await conn.fetch(
+						"""
+						SELECT event_key
+						FROM processed_events
+						WHERE server_id = $1 AND event_key = ANY($2::text[])
+						""",
+						server_id,
+						event_keys,
+					)
+					existing = {row["event_key"] for row in rows}
+					new_events = [event for event in events if event.event_key not in existing]
+
+				if new_events:
+					payload = [
+						(server_id, event.event_key, session_id, event.timestamp_ms, event.team, now)
+						for event in new_events
+					]
+					await conn.executemany(
+						"""
+						INSERT INTO processed_events (server_id, event_key, session_id, timestamp_ms, team, created_at)
+						VALUES ($1, $2, $3, $4, $5, $6)
+						ON CONFLICT (server_id, event_key) DO NOTHING
+						""",
+						payload,
+					)
 
 				allied_increment = sum(1 for event in new_events if event.team == "allies")
 				axis_increment = sum(1 for event in new_events if event.team == "axis")
 
-				await conn.execute(
-					"""
-					INSERT INTO map_totals (server_id, map_name, map_id, allied_kills, axis_kills, updated_at)
-					VALUES ($1, $2, $3, $4, $5, $6)
-					ON CONFLICT (server_id, map_name) DO UPDATE SET
-					  map_id = EXCLUDED.map_id,
-					  allied_kills = map_totals.allied_kills + EXCLUDED.allied_kills,
-					  axis_kills = map_totals.axis_kills + EXCLUDED.axis_kills,
-					  updated_at = EXCLUDED.updated_at
-					""",
-					server_id,
-					map_name,
-					map_id,
-					allied_increment,
-					axis_increment,
-					now,
-				)
+				if new_events:
+					await conn.execute(
+						"""
+						INSERT INTO map_totals (server_id, map_name, map_id, allied_kills, axis_kills, updated_at)
+						VALUES ($1, $2, $3, $4, $5, $6)
+						ON CONFLICT (server_id, map_name) DO UPDATE SET
+						  map_id = EXCLUDED.map_id,
+						  allied_kills = map_totals.allied_kills + EXCLUDED.allied_kills,
+						  axis_kills = map_totals.axis_kills + EXCLUDED.axis_kills,
+						  updated_at = EXCLUDED.updated_at
+						""",
+						server_id,
+						map_name,
+						map_id,
+						allied_increment,
+						axis_increment,
+						now,
+					)
 				await conn.execute(
 					"""
 					UPDATE map_sessions
@@ -856,8 +922,21 @@ class LiberationStore:
 					elapsed_seconds = max((now - objective_row["updated_at"]).total_seconds(), 0.0)
 					base_control = decay_control(float(objective_row["control_value"]), elapsed_seconds)
 					occupied_faction = objective_row["occupied_faction"]
+				else:
+					elapsed_seconds = float(LIBERATION_POLL_SECONDS)
 
-				next_control = clamp_control(base_control + compute_control_delta(allied_increment, axis_increment))
+				next_control = clamp_control(
+					base_control
+					+ compute_control_delta(
+						allied_increment,
+						axis_increment,
+						allied_players=allied_players,
+						axis_players=axis_players,
+						allied_objectives=allied_objectives,
+						axis_objectives=axis_objectives,
+						elapsed_seconds=elapsed_seconds,
+					)
+				)
 				next_occupied_faction = resolve_occupied_faction(next_control, occupied_faction)
 				await conn.execute(
 					"""
@@ -953,6 +1032,79 @@ class LiberationStore:
 			)
 		return [dict(row) for row in rows]
 
+	async def resolve_map_candidates(self) -> list[str]:
+		async with self.pool.acquire() as conn:
+			rows = await conn.fetch(
+				"""
+				SELECT DISTINCT map_name
+				FROM (
+					SELECT map_name FROM map_totals
+					UNION
+					SELECT map_name FROM map_objectives
+				) map_names
+				WHERE map_name IS NOT NULL AND map_name <> ''
+				ORDER BY map_name ASC
+				"""
+			)
+		candidates = {str(row["map_name"]) for row in rows}
+		candidates.update(MAP_ID_TO_PRETTY.values())
+		return sorted(candidates)
+
+	async def set_map_objective_control(self, map_name: str, control_value: float) -> dict[str, Any]:
+		now = utc_now()
+		clamped_control = clamp_control(control_value)
+		occupied_faction = resolve_occupied_faction(clamped_control, None)
+		derived_map_id = PRETTY_TO_MAP_ID.get(map_name.casefold())
+
+		async with self.pool.acquire() as conn:
+			async with conn.transaction():
+				map_id = await conn.fetchval(
+					"""
+					SELECT map_id
+					FROM map_objectives
+					WHERE map_name = $1 AND map_id IS NOT NULL
+					""",
+					map_name,
+				)
+				if not map_id:
+					map_id = await conn.fetchval(
+						"""
+						SELECT map_id
+						FROM map_totals
+						WHERE map_name = $1 AND map_id IS NOT NULL
+						ORDER BY updated_at DESC
+						LIMIT 1
+						""",
+						map_name,
+					)
+				map_id = map_id or derived_map_id
+
+				await conn.execute(
+					"""
+					INSERT INTO map_objectives (map_name, map_id, control_value, occupied_faction, last_activity_at, updated_at)
+					VALUES ($1, $2, $3, $4, $5, $5)
+					ON CONFLICT (map_name) DO UPDATE SET
+					  map_id = EXCLUDED.map_id,
+					  control_value = EXCLUDED.control_value,
+					  occupied_faction = EXCLUDED.occupied_faction,
+					  last_activity_at = EXCLUDED.last_activity_at,
+					  updated_at = EXCLUDED.updated_at
+					""",
+					map_name,
+					map_id,
+					clamped_control,
+					occupied_faction,
+					now,
+				)
+
+		return {
+			"map_name": map_name,
+			"map_id": map_id,
+			"control_value": round(clamped_control, 2),
+			"occupied_faction": occupied_faction,
+			"updated_at": now,
+		}
+
 
 class CRCONPoller:
 	def __init__(self, store: LiberationStore, cache: RedisCache, servers: list[ServerConfig]):
@@ -998,6 +1150,8 @@ class CRCONPoller:
 		session_changed = False
 		axis_players = None
 		allied_players = None
+		allied_objectives = 0
+		axis_objectives = 0
 
 		try:
 			gamestate_payload = await self._request_json(server, "get_gamestate")
@@ -1011,6 +1165,8 @@ class CRCONPoller:
 					f"get_gamestate failed and no cached active session is available: {exc}"
 				) from exc
 			session_id = int(active_session_id)
+			axis_players = parse_int(cached_state.get("axis_players")) if cached_state else 0
+			allied_players = parse_int(cached_state.get("allied_players")) if cached_state else 0
 			LOG.warning(
 				"get_gamestate failed for %s, using cached map session %s on %s",
 				server.server_id,
@@ -1031,6 +1187,13 @@ class CRCONPoller:
 			current_map = canonical_map_name(current_map_name, current_map_id)
 			session_id, session_changed = await self.store.ensure_map_session(server.server_id, current_map, current_map_id)
 
+		try:
+			objective_scores_payload = await self._request_json(server, "get_team_objective_scores")
+		except RuntimeError as exc:
+			LOG.warning("get_team_objective_scores failed for %s: %s", server.server_id, exc)
+		else:
+			allied_objectives, axis_objectives = extract_team_objective_scores(objective_scores_payload)
+
 		logs_payload = await self._request_json(
 			server,
 			"get_recent_logs",
@@ -1050,6 +1213,17 @@ class CRCONPoller:
 		if session_changed and not LIBERATION_IMPORT_RECENT_ON_START:
 			await self.store.seed_processed_events(server.server_id, session_id, events)
 			LOG.info("Started new session %s for %s on %s", session_id, server.server_id, current_map)
+			processed = await self.store.apply_kill_events(
+				server.server_id,
+				session_id=session_id,
+				map_name=current_map,
+				map_id=current_map_id,
+				events=[],
+				axis_players=parse_int(axis_players),
+				allied_players=parse_int(allied_players),
+				axis_objectives=axis_objectives,
+				allied_objectives=allied_objectives,
+			)
 		else:
 			processed = await self.store.apply_kill_events(
 				server.server_id,
@@ -1057,6 +1231,10 @@ class CRCONPoller:
 				map_name=current_map,
 				map_id=current_map_id,
 				events=events,
+				axis_players=parse_int(axis_players),
+				allied_players=parse_int(allied_players),
+				axis_objectives=axis_objectives,
+				allied_objectives=allied_objectives,
 			)
 			if processed:
 				LOG.info(
@@ -1362,6 +1540,86 @@ async def map_detail_handler(request: web.Request) -> web.Response:
 	return web.json_response(payload)
 
 
+async def frontlines_reset_handler(request: web.Request) -> web.Response:
+	store: LiberationStore = request.app["store"]
+	cache: RedisCache = request.app["cache"]
+
+	if not FRONTLINES_ADMIN_TOKEN:
+		return web.json_response(
+			{
+				"error": "frontlines_admin_disabled",
+				"message": "FRONTLINES_ADMIN_TOKEN is not configured.",
+			},
+			status=503,
+		)
+
+	if authorization_token(request) != FRONTLINES_ADMIN_TOKEN:
+		return web.json_response(
+			{
+				"error": "forbidden",
+				"message": "A valid frontlines admin token is required.",
+			},
+			status=403,
+		)
+
+	try:
+		payload = await request.json()
+	except json.JSONDecodeError:
+		return web.json_response(
+			{
+				"error": "invalid_json",
+				"message": "Request body must be valid JSON.",
+			},
+			status=400,
+		)
+
+	map_query = str((payload or {}).get("map_name") or "").strip()
+	if not map_query:
+		return web.json_response(
+			{
+				"error": "missing_map_name",
+				"message": "Provide map_name.",
+			},
+			status=400,
+		)
+
+	try:
+		control_value = float((payload or {}).get("control_value"))
+	except (TypeError, ValueError):
+		return web.json_response(
+			{
+				"error": "invalid_control_value",
+				"message": "control_value must be a number between -100 and 100.",
+			},
+			status=400,
+		)
+
+	if control_value < -LIBERATION_CONTROL_MAX or control_value > LIBERATION_CONTROL_MAX:
+		return web.json_response(
+			{
+				"error": "control_value_out_of_range",
+				"message": f"control_value must be between {-LIBERATION_CONTROL_MAX:.0f} and {LIBERATION_CONTROL_MAX:.0f}.",
+			},
+			status=400,
+		)
+
+	candidates = await store.resolve_map_candidates()
+	resolved_name = resolve_map_query(map_query, candidates)
+	if not resolved_name:
+		return web.json_response(
+			{
+				"error": "map_not_found",
+				"message": f"No tracked map matched '{map_query}'.",
+				"available_maps": candidates,
+			},
+			status=404,
+		)
+
+	reset_result = await store.set_map_objective_control(resolved_name, control_value)
+	await cache.delete_patterns(["maps:*", "map:*"])
+	return web.json_response(normalize_payload({"status": "ok", **reset_result}))
+
+
 async def startup(app: web.Application) -> None:
 	store = LiberationStore(DATABASE_URL)
 	await store.open()
@@ -1394,6 +1652,7 @@ def create_app() -> web.Application:
 	app.router.add_get("/api/servers", servers_handler)
 	app.router.add_get("/api/maps", maps_handler)
 	app.router.add_get("/api/maps/{map_query}", map_detail_handler)
+	app.router.add_post("/api/admin/frontlines/reset", frontlines_reset_handler)
 	app.router.add_route("OPTIONS", "/{tail:.*}", health_handler)
 	app.on_startup.append(startup)
 	app.on_cleanup.append(cleanup)
