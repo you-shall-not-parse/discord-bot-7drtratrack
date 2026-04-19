@@ -47,6 +47,20 @@ Once HTTPS works through Caddy, Cloudflare can be switched from `DNS only` to `P
 
 Use `Full (strict)` in Cloudflare SSL/TLS mode.
 
+## OCI Firewall Hardening
+
+For an Oracle Cloud deployment, keep inbound access narrow.
+
+Recommended public ingress rules:
+
+- `TCP 80` from `0.0.0.0/0`
+- `TCP 443` from `0.0.0.0/0`
+- `TCP 22` only from your own static IP or a tightly controlled admin range
+
+Do not expose `8080` or `8081` publicly in OCI once Caddy is in front. The compose file binds those services to `127.0.0.1`, so OCI only needs to allow public web traffic to Caddy.
+
+If you use both a Security List and a Network Security Group, verify that both layers permit `80` and `443`.
+
 ## Deploy Or Refresh
 
 From `liberationapp/`:

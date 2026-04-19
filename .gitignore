@@ -9,6 +9,7 @@ data/*.sql
 data/*_state.json
 data/yt_*.json
 data/squadup_posts.json
+DEPLOYMENT.md
 
 # C extensions
 *.so

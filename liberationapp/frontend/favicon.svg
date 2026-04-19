@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="HLL Frontline favicon">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#131b15"/>
+      <stop offset="100%" stop-color="#050705"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#f7d774"/>
+      <stop offset="100%" stop-color="#c08f22"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="24" fill="url(#bg)"/>
+  <path d="M24 92V34h16v22h24V34h16v58H64V70H40v22z" fill="#efe2be"/>
+  <path d="M88 28h10L66 100H56z" fill="url(#accent)" opacity="0.92"/>
+  <path d="M22 102h84" stroke="#f7d774" stroke-width="6" stroke-linecap="round" opacity="0.8"/>
+</svg>
