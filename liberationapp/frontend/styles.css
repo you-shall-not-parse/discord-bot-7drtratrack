@@ -345,9 +345,39 @@
       padding: 1rem 1.05rem;
       border-radius: 12px;
       border: 1px solid rgba(255,255,255,0.1);
-      background: rgba(0, 0, 0, 0.72);
+      position: relative;
+      overflow: hidden;
+      isolation: isolate;
+      background:
+        linear-gradient(180deg, rgba(12, 18, 14, 0.82), rgba(4, 7, 5, 0.92));
       backdrop-filter: blur(8px);
       gap: 0.75rem;
+    }
+
+    .mobile-activity-feed::before,
+    .mobile-activity-feed::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    .mobile-activity-feed::before {
+      background: url("/frontlines_bg1.png") center right / cover no-repeat;
+      opacity: 0.34;
+      transform: scale(1.03);
+      transform-origin: center;
+    }
+
+    .mobile-activity-feed::after {
+      background:
+        linear-gradient(180deg, rgba(8, 11, 9, 0.18) 0%, rgba(8, 11, 9, 0.34) 42%, rgba(8, 11, 9, 0.72) 100%),
+        radial-gradient(circle at bottom right, rgba(8, 11, 9, 0.04) 0%, rgba(8, 11, 9, 0.28) 24%, rgba(8, 11, 9, 0.78) 56%, rgba(8, 11, 9, 0.98) 82%);
+    }
+
+    .mobile-activity-feed > * {
+      position: relative;
+      z-index: 1;
     }
 
     .mobile-activity-feed[hidden] {
