@@ -123,8 +123,8 @@
         <div class="about-grid">
           <article class="about-card">
             <h3>Purpose</h3>
-            <p>HLL Frontline turns live CRCON server data into a persistent theatre map. Each tracked server feeds the same campaign layer, so fronts keep their control history instead of resetting every match.</p>
-            <p>The dashboard shows which maps are heating up, the battle map plots them in theatre space, and the intel panel breaks down the current totals behind each front.</p>
+            <p>HLL Frontline turns live CRCON server data into a battle theatre. Each tracked server feeds the same campaign layer, so fronts keep their control history instead of resetting every match.</p>
+            <p>The dashboard shows which maps are heating up and the intel panel breaks down the current totals behind each front.</p>
           </article>
 
           <article class="about-card">
@@ -155,7 +155,7 @@ next_control = clamp(decayed_control + kill_delta + objective_delta, -100, 100)<
           <article class="about-card">
             <h3>Cooldown And Recovery</h3>
             <p>Inactive fronts cool back toward neutral over time. The base decay is now 0.10 control per inactive hour, and fronts above the 90% dominance band decay faster the closer they are to full occupation.</p>
-            <p>That extra late-stage cooldown is what helps a front like Hill 400 fall away faster when the fighting stops instead of hovering near 100% for too long.</p>
+            <p>That extra late-stage cooldown is what helps an aggressive front fall away faster when the fighting stops instead of hovering near 100% for too long.</p>
           </article>
 
           <article class="about-card">
