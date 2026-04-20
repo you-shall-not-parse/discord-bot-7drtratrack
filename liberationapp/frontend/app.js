@@ -601,7 +601,7 @@ import * as THREE from 'three';
         <div class="map-marker-lanes">
           ${controlLane}
         </div>
-        <div class="map-marker-meta"><span class="map-marker-state">${formatStateLabel(lib.state)}</span><span>${lib.control_value || 0}% | ${formatCount(map.total_kills || 0)} kills</span></div>
+        <div class="map-marker-meta"><span>${lib.control_value || 0}% | ${formatCount(map.total_kills || 0)} kills</span></div>
       `;
       marker.addEventListener('click', () => fetchMapDetail(map.map_name));
       return marker;
@@ -809,7 +809,7 @@ import * as THREE from 'three';
           <div class="front-chip-lanes">
             ${controlLane}
           </div>
-          <div class="front-chip-meta"><span class="front-chip-state">${formatStateLabel(lib.state)}</span><span>${lib.control_value || 0}% | ${formatCount(map.total_kills || 0)} kills</span></div>
+          <div class="front-chip-meta"><span>${lib.control_value || 0}% | ${formatCount(map.total_kills || 0)} kills</span></div>
         `;
         chip.addEventListener('click', () => fetchMapDetail(map.map_name));
         frontStrip.appendChild(chip);
