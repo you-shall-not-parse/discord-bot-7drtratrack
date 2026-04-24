@@ -33,6 +33,11 @@ ROSTER_DEFINITIONS = [
         "title": "Hell EU S4",
         "role_id": 1364639604564688917,
     }
+    {
+        "key": "Summit_Season_6",
+        "title": "Summit Season 6",
+        "role_id": 1496218428762230814,
+    }
 ]
 
 RANK_ORDER: list[tuple[str, list[str]]] = DEFAULT_RANK_ORDER
