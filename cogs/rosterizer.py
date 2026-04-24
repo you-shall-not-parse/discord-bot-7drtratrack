@@ -32,7 +32,7 @@ ROSTER_DEFINITIONS = [
         "key": "hell_eu_s4",
         "title": "Hell EU S4",
         "role_id": 1364639604564688917,
-    }
+    },
     {
         "key": "Summit_Season_6",
         "title": "Summit Season 6",
