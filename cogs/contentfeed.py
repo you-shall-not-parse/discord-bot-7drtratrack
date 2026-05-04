@@ -37,6 +37,11 @@ CREATORS = [
         "name": "OculusImperia",
         "channel_id": "UC8AaO8zkIoxbUp1_p0rl13g",
         "post_to": 1399102943004721224
+    },
+    {
+        "name": "Mitsi Studios",
+        "channel_id": "UCuXCgyOCMXic7j0_wghXnRA",
+        "post_to": 1106900027659522108
     }
 ]
 
@@ -207,36 +212,37 @@ class YouTubeFeed(commands.Cog):
     # ---------------- Helpers ----------------
 
     def _select_eligible_video_from_pool(self, videos):
-        """Pick a random video from the provided pool (per-channel).
+        """Pick the next video from the provided pool (per-channel).
 
-        This intentionally ignores cooldown/eligibility and instead focuses on variety.
-        It will try to avoid immediately re-posting the most recently posted URL in this pool.
+        Prefer videos that have never been posted. Once the pool is exhausted,
+        recycle the least recently posted video instead of randomly repeating a
+        recent one.
         """
         if not videos:
             return None
 
-        # Try to avoid the most-recently-posted URL in this pool (helps when spamming /forcecontent).
-        most_recent_url = None
-        most_recent_dt = None
-        for v in videos:
-            url = v.get("url")
+        unposted_videos = [v for v in videos if not self.last_posted.get(v.get("url"))]
+        if unposted_videos:
+            return random.choice(unposted_videos)
+
+        oldest_video = None
+        oldest_dt = None
+        for video in videos:
+            url = video.get("url")
             ts = self.last_posted.get(url)
             if not ts:
-                continue
+                return video
+
             try:
-                dt = datetime.fromisoformat(ts)
+                posted_dt = datetime.fromisoformat(ts)
             except Exception:
-                continue
-            if most_recent_dt is None or dt > most_recent_dt:
-                most_recent_dt = dt
-                most_recent_url = url
+                return video
 
-        if most_recent_url and len(videos) > 1:
-            candidates = [v for v in videos if v.get("url") != most_recent_url]
-            if candidates:
-                return random.choice(candidates)
+            if oldest_dt is None or posted_dt < oldest_dt:
+                oldest_dt = posted_dt
+                oldest_video = video
 
-        return random.choice(videos)
+        return oldest_video or random.choice(videos)
 
     def _select_eligible_video(self):
         """Select an eligible video from all known videos (for backward compatibility)."""
