@@ -840,13 +840,12 @@ class WarDiaryCog(commands.Cog):
 						return
 
 			try:
-				submission_tag = await self._get_or_create_forum_tag(forum, tag_name="Submission")
 				created = await forum.create_thread(
 					name=_truncate_thread_name(SUBMISSION_POST_NAME),
 					content="Open the submission flow below.",
 					embed=embed,
 					view=view,
-					applied_tags=[submission_tag] if submission_tag is not None else [],
+					applied_tags=[],
 					auto_archive_duration=SUBMISSION_POST_AUTO_ARCHIVE_MINUTES,
 				)
 			except Exception:
@@ -1118,12 +1117,9 @@ class WarDiaryCog(commands.Cog):
 			content_lines.append(f"Match date: {match_date}")
 			content = "\n".join(content_lines) if content_lines else None
 			applied_tags: list[discord.ForumTag] = []
-			opponent_tag = await self._get_or_create_forum_tag(forum, tag_name=opponent_clan_name)
-			if opponent_tag is not None:
-				applied_tags.append(opponent_tag)
 			if map_name != OTHER_MAP_OPTION:
 				map_tag = await self._get_or_create_forum_tag(forum, tag_name=map_name)
-				if map_tag is not None and all(existing.id != map_tag.id for existing in applied_tags):
+				if map_tag is not None:
 					applied_tags.append(map_tag)
 
 			try:
