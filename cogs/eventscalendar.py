@@ -3,8 +3,9 @@ import re
 import json
 import os
 import asyncio
+from urllib.parse import urlencode
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import discord
 from discord.ext import commands, tasks
 
@@ -297,6 +298,33 @@ class EventDisplayCog(commands.Cog):
 
         return formatted
 
+    def _build_google_calendar_url(self, event: discord.ScheduledEvent) -> Optional[str]:
+        if not event.start_time:
+            return None
+
+        start_time = event.start_time.astimezone(timezone.utc)
+        end_time = event.end_time.astimezone(timezone.utc) if event.end_time else start_time + timedelta(hours=2)
+
+        details_parts = []
+        if event.description:
+            details_parts.append(event.description.strip())
+        if getattr(event, "url", None):
+            details_parts.append(f"Discord event: {event.url}")
+
+        params = {
+            "action": "TEMPLATE",
+            "text": event.name,
+            "dates": f"{start_time.strftime('%Y%m%dT%H%M%SZ')}/{end_time.strftime('%Y%m%dT%H%M%SZ')}",
+            "details": "\n\n".join(details_parts),
+        }
+
+        if event.location:
+            params["location"] = event.location
+        elif event.channel:
+            params["location"] = f"Discord channel: #{event.channel.name}"
+
+        return f"https://calendar.google.com/calendar/render?{urlencode(params)}"
+
     async def _update_once(self, *, reason: str) -> None:
         async with self._update_lock:
             try:
@@ -482,6 +510,7 @@ class EventDisplayCog(commands.Cog):
         else:
             for event in events:
                 thread_url: Optional[str] = None
+                google_calendar_url = self._build_google_calendar_url(event)
                 thread_info = self._thread_state.get("threads", {}).get(str(event.id))
                 if isinstance(thread_info, dict):
                     thread_id = thread_info.get("thread_id")
@@ -554,6 +583,9 @@ class EventDisplayCog(commands.Cog):
                 elif thread_url:
                     # No description, but still provide a link to the event thread.
                     field_value += f"\n**[Details]({thread_url})**"
+
+                if google_calendar_url:
+                    field_value += f"\n**[Add to Google Calendar]({google_calendar_url})**"
 
                 embed.add_field(
                     name="\u200b",
