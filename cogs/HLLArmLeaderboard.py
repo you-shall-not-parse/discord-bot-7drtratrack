@@ -652,6 +652,8 @@ class ArmSubmissionModal(Modal):
                 await interaction.response.send_message("Please enter a valid non-negative integer.", ephemeral=True)
             return
 
+        await interaction.response.defer(ephemeral=True)
+
         # Insert submission as verified; may be flipped to pending if proof required
         try:
             async with aiosqlite.connect(DB_FILE) as db:
@@ -665,7 +667,7 @@ class ArmSubmissionModal(Modal):
                 submission_id = cur.lastrowid
                 await db.commit()
         except Exception as e:
-            await interaction.response.send_message(f"Failed to record submission: {e}", ephemeral=True)
+            await interaction.followup.send(f"Failed to record submission: {e}", ephemeral=True)
             return
 
         await self.cog.update_leaderboard()
@@ -703,7 +705,7 @@ class ArmSubmissionModal(Modal):
             except Exception:
                 pass
 
-        await interaction.response.send_message("Armour crew submission recorded!", ephemeral=True)
+        await interaction.followup.send("Armour crew submission recorded!", ephemeral=True)
 
 # ---------------- Two-step crew selection view ----------------
 class CrewSelectView(View):

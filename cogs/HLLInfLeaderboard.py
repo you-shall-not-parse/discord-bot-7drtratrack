@@ -511,6 +511,8 @@ class SubmissionModal(Modal):
             await interaction.response.send_message("Please enter a valid integer.", ephemeral=True)
             return
 
+        await interaction.response.defer(ephemeral=True)
+
         # Insert into DB (async) and get submission ID (insert verified, then maybe flip to pending)
         try:
             async with aiosqlite.connect(DB_FILE) as db:
@@ -524,7 +526,7 @@ class SubmissionModal(Modal):
                 submission_id = cursor.lastrowid
                 await db.commit()
         except Exception as e:
-            await interaction.response.send_message(f"Failed to record submission: {e}", ephemeral=True)
+            await interaction.followup.send(f"Failed to record submission: {e}", ephemeral=True)
             return
 
         # Since leaderboard counts only verified, it already includes this; it may be removed if proof is requested and not provided
@@ -563,7 +565,7 @@ class SubmissionModal(Modal):
             except Exception:
                 pass  # Non-fatal for the user interaction
 
-        await interaction.response.send_message("Submission recorded!", ephemeral=True)
+        await interaction.followup.send("Submission recorded!", ephemeral=True)
 
 # ---------------- Views (persistent) ----------------
 class LeaderboardView(View):
