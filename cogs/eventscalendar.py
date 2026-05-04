@@ -25,6 +25,10 @@ UPDATE_INTERVAL_MINUTES = 30
 # Maximum number of events to display - 25 is the max allowed by Discord per embed
 MAX_EVENTS_TO_DISPLAY = 25
 
+# Discord embed limits relevant to this calendar display.
+EMBED_TOTAL_CHAR_LIMIT = 6000
+EMBED_FIELD_VALUE_LIMIT = 1024
+
 # Color for the embed
 EMBED_COLOR = 0x5865F2  # Discord blurple
 
@@ -325,6 +329,15 @@ class EventDisplayCog(commands.Cog):
 
         return f"https://calendar.google.com/calendar/render?{urlencode(params)}"
 
+    def _truncate_text(self, text: str, limit: int) -> str:
+        if limit <= 0:
+            return ""
+        if len(text) <= limit:
+            return text
+        if limit <= 3:
+            return text[:limit]
+        return text[:limit - 3].rstrip() + "..."
+
     async def _update_once(self, *, reason: str) -> None:
         async with self._update_lock:
             try:
@@ -504,6 +517,7 @@ class EventDisplayCog(commands.Cog):
             color=EMBED_COLOR,
             timestamp=datetime.utcnow()
         )
+        embed.set_footer(text="Last updated")
 
         if not events:
             embed.description = "No upcoming events scheduled."
@@ -587,13 +601,29 @@ class EventDisplayCog(commands.Cog):
                 if google_calendar_url:
                     field_value += f"\n**[Add to Google Calendar]({google_calendar_url})**"
 
+                field_name = "\u200b"
+                event_title = self._truncate_text(self._format_event_title(guild, event.name), 160)
+                field_header = f"📌 **[{event_title}]({event.url})**"
+
+                remaining_embed_chars = EMBED_TOTAL_CHAR_LIMIT - len(embed) - len(field_name)
+                minimum_detail_chars = len(field_header) + 1
+                if remaining_embed_chars <= minimum_detail_chars:
+                    break
+
+                detail_limit = min(
+                    EMBED_FIELD_VALUE_LIMIT - minimum_detail_chars,
+                    remaining_embed_chars - minimum_detail_chars,
+                )
+                if detail_limit <= 0:
+                    break
+
+                field_body = f"{field_header}\n{self._truncate_text(field_value, detail_limit)}"
+
                 embed.add_field(
-                    name="\u200b",
-                    value=f"📌 **[{self._format_event_title(guild, event.name)}]({event.url})**\n{field_value}",
+                    name=field_name,
+                    value=field_body,
                     inline=False
                 )
-
-        embed.set_footer(text="Last updated")
         
         #if guild.icon:
         #    embed.set_thumbnail(url=guild.icon.url)
