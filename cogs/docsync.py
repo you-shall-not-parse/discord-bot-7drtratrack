@@ -45,6 +45,25 @@ class DocSync(commands.Cog):
         self._state = self._load_state()
         self._initial_sync_done = False
 
+    async def _retry_discord_write(self, action, *, attempts: int = 3, delay_seconds: float = 2.0):
+        last_error = None
+        for attempt in range(1, attempts + 1):
+            try:
+                return await action()
+            except discord.DiscordServerError as exc:
+                last_error = exc
+                if attempt == attempts:
+                    break
+                self.logger.warning(
+                    "Transient Discord server error during docs sync write; retrying (%s/%s): %s",
+                    attempt,
+                    attempts,
+                    exc,
+                )
+                await asyncio.sleep(delay_seconds)
+        if last_error is not None:
+            raise last_error
+
     def cog_unload(self) -> None:
         if self.watch_docs.is_running():
             self.watch_docs.cancel()
@@ -308,7 +327,7 @@ class DocSync(commands.Cog):
 
             if starter_message is not None:
                 try:
-                    await starter_message.edit(content=starter_content)
+                    await self._retry_discord_write(lambda: starter_message.edit(content=starter_content))
                 except Exception:
                     self.logger.exception("Failed to edit starter message for Ratbot Guide")
 
@@ -328,7 +347,9 @@ class DocSync(commands.Cog):
 
             message_ids = {}
             for section in sections[1:]:
-                message = await thread.send(self._render_section_message(section))
+                message = await self._retry_discord_write(
+                    lambda content=self._render_section_message(section): thread.send(content)
+                )
                 message_ids[section.key] = message.id
 
             self._state["message_ids"] = message_ids
