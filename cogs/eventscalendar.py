@@ -309,21 +309,14 @@ class EventDisplayCog(commands.Cog):
         start_time = event.start_time.astimezone(timezone.utc)
         end_time = event.end_time.astimezone(timezone.utc) if event.end_time else start_time + timedelta(hours=2)
 
-        details_parts = []
-        if event.description:
-            details_parts.append(event.description.strip())
-        if getattr(event, "url", None):
-            details_parts.append(f"Discord event: {event.url}")
-
         params = {
             "action": "TEMPLATE",
             "text": event.name,
             "dates": f"{start_time.strftime('%Y%m%dT%H%M%SZ')}/{end_time.strftime('%Y%m%dT%H%M%SZ')}",
-            "details": "\n\n".join(details_parts),
         }
 
         if event.location:
-            params["location"] = event.location
+            params["location"] = self._truncate_text(event.location, 80)
         elif event.channel:
             params["location"] = f"Discord channel: #{event.channel.name}"
 
@@ -337,6 +330,31 @@ class EventDisplayCog(commands.Cog):
         if limit <= 3:
             return text[:limit]
         return text[:limit - 3].rstrip() + "..."
+
+    def _fit_event_field(self, header: str, fixed_lines: list[str], detail_text: str, limit: int) -> Optional[str]:
+        if limit <= len(header) + 1:
+            return None
+
+        remaining = limit - len(header) - 1
+        lines: list[str] = []
+
+        for line in fixed_lines:
+            line_len = len(line)
+            extra_len = line_len if not lines else line_len + 1
+            if extra_len > remaining:
+                break
+            lines.append(line)
+            remaining -= extra_len
+
+        if detail_text and remaining > 0:
+            detail_line = self._truncate_text(detail_text, remaining if not lines else remaining - 1)
+            if detail_line:
+                lines.append(detail_line)
+
+        if not lines:
+            return header
+
+        return f"{header}\n" + "\n".join(lines)
 
     async def _update_once(self, *, reason: str) -> None:
         async with self._update_lock:
@@ -551,12 +569,14 @@ class EventDisplayCog(commands.Cog):
                 elif event.channel:
                     location_str = f"\n**Channel:** {event.channel.mention}"
 
-                # Build the field value
-                field_value = (
-                    f"**Date/Time:** {start_time_str}"
-                    f"\n**Added By:** {organiser_str}"
-                    f"{location_str}"
-                )
+                fixed_lines = [
+                    f"**Date/Time:** {start_time_str}",
+                    f"**Added By:** {organiser_str}",
+                ]
+                if location_str:
+                    fixed_lines.append(location_str.lstrip("\n"))
+
+                detail_line = ""
 
                 if event.description:
                     # Check for channel mentions and URLs in description
@@ -571,35 +591,31 @@ class EventDisplayCog(commands.Cog):
                     if all_channel_ids:
                         # Use the first channel ID as sign-up channel
                         channel_id = int(all_channel_ids[0])
-                        field_value += f"\n📝 **Sign-Up Channel:** <#{channel_id}>"
+                        fixed_lines.append(f"📝 **Sign-Up Channel:** <#{channel_id}>")
                         
                         # Show rest of description (excluding channel mentions and URLs)
                         description = re.sub(r'<#\d+>', '', event.description)
                         description = re.sub(r'https?://(?:discord|discordapp)\.com/channels/\d+/\d+', '', description).strip()
                         if description:
-                            description = description[:100]
-                            if len(description) > 100:
-                                description += "..."
+                            description = self._truncate_text(description, 100)
                             if thread_url:
-                                field_value += f"\n**[Details]({thread_url})**: {description}"
+                                detail_line = f"**[Details]({thread_url})**: {description}"
                             else:
-                                field_value += f"\n**Details:** {description}"
+                                detail_line = f"**Details:** {description}"
                     else:
                         # No channel mention or URL, show description normally
-                        description = event.description[:100]
-                        if len(event.description) > 100:
-                            description += "..."
+                        description = self._truncate_text(event.description, 100)
                         if thread_url:
-                            field_value += f"\n**[Details]({thread_url})**: {description}"
+                            detail_line = f"**[Details]({thread_url})**: {description}"
                         else:
-                            field_value += f"\n**Details:** {description}"
+                            detail_line = f"**Details:** {description}"
 
                 elif thread_url:
                     # No description, but still provide a link to the event thread.
-                    field_value += f"\n**[Details]({thread_url})**"
+                    fixed_lines.append(f"**[Details]({thread_url})**")
 
                 if google_calendar_url:
-                    field_value += f"\n**[Add to Google Calendar]({google_calendar_url})**"
+                    fixed_lines.append(f"**[Add to Google Calendar]({google_calendar_url})**")
 
                 field_name = "\u200b"
                 event_title = self._truncate_text(self._format_event_title(guild, event.name), 160)
@@ -617,7 +633,9 @@ class EventDisplayCog(commands.Cog):
                 if detail_limit <= 0:
                     break
 
-                field_body = f"{field_header}\n{self._truncate_text(field_value, detail_limit)}"
+                field_body = self._fit_event_field(field_header, fixed_lines, detail_line, len(field_header) + 1 + detail_limit)
+                if field_body is None:
+                    break
 
                 embed.add_field(
                     name=field_name,
