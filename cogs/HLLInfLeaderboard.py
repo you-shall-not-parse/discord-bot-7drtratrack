@@ -12,7 +12,7 @@ from data_paths import data_path
 
 # ---------------- Config ----------------
 GUILD_ID = MAIN_GUILD_ID
-LEADERBOARD_CHANNEL_ID = 1419010804832800859  # replace with your leaderboard channel
+LEADERBOARD_CHANNEL_ID = 1500942718497722458  # channel or thread for the leaderboard message
 SUBMISSIONS_CHANNEL_ID = 1419010992578363564  # replace with your submissions channel
 
 # Support multiple admin roles
@@ -93,6 +93,16 @@ class HLLInfLeaderboard(commands.Cog):
                 channel = None
         return channel
 
+    async def _get_leaderboard_target(self):
+        channel = await self._get_channel(LEADERBOARD_CHANNEL_ID)
+        if isinstance(channel, discord.Thread):
+            try:
+                if channel.archived:
+                    await channel.edit(archived=False, locked=False)
+            except Exception:
+                pass
+        return channel
+
     async def get_leaderboard_message(self):
         async with aiosqlite.connect(DB_FILE) as db:
             cursor = await db.execute("SELECT value FROM metadata WHERE key = ?", ("leaderboard_message_id",))
@@ -101,7 +111,7 @@ class HLLInfLeaderboard(commands.Cog):
         if not row:
             return None
 
-        channel = await self._get_channel(LEADERBOARD_CHANNEL_ID)
+        channel = await self._get_leaderboard_target()
         if not channel:
             return None
 
@@ -207,7 +217,7 @@ class HLLInfLeaderboard(commands.Cog):
         return embed
 
     async def update_leaderboard(self):
-        channel = await self._get_channel(LEADERBOARD_CHANNEL_ID)
+        channel = await self._get_leaderboard_target()
         if not channel:
             print("HLLInfLeaderboard: LEADERBOARD_CHANNEL_ID not found. Skipping update.")
             return

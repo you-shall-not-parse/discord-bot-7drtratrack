@@ -15,7 +15,7 @@ from data_paths import data_path
 GUILD_ID = MAIN_GUILD_ID
 
 # Channel IDs for the armour leaderboard and submissions
-ARM_LEADERBOARD_CHANNEL_ID = 1214971219246325851
+ARM_LEADERBOARD_CHANNEL_ID = 1500944992703615197  # channel or thread for the leaderboard message
 ARM_SUBMISSIONS_CHANNEL_ID = 1419010992578363564
 
 # Support multiple admin roles (reuse your existing IDs)
@@ -179,6 +179,16 @@ class HLLArmLeaderboard(commands.Cog):
                 channel = None
         return channel
 
+    async def _get_leaderboard_target(self):
+        channel = await self._get_channel(ARM_LEADERBOARD_CHANNEL_ID)
+        if isinstance(channel, discord.Thread):
+            try:
+                if channel.archived:
+                    await channel.edit(archived=False, locked=False)
+            except Exception:
+                pass
+        return channel
+
     # ---------- Metadata for armour leaderboard message ----------
     async def get_leaderboard_message(self):
         async with aiosqlite.connect(DB_FILE) as db:
@@ -186,7 +196,7 @@ class HLLArmLeaderboard(commands.Cog):
             row = await cur.fetchone()
         if not row:
             return None
-        channel = await self._get_channel(ARM_LEADERBOARD_CHANNEL_ID)
+        channel = await self._get_leaderboard_target()
         if not channel:
             return None
         try:
@@ -292,7 +302,7 @@ class HLLArmLeaderboard(commands.Cog):
         if ARM_LEADERBOARD_CHANNEL_ID == 0:
             print("HLLArmLeaderboard: ARM_LEADERBOARD_CHANNEL_ID not set. Skipping update.")
             return
-        channel = await self._get_channel(ARM_LEADERBOARD_CHANNEL_ID)
+        channel = await self._get_leaderboard_target()
         if not channel:
             print("HLLArmLeaderboard: ARM_LEADERBOARD_CHANNEL_ID not found. Skipping update.")
             return

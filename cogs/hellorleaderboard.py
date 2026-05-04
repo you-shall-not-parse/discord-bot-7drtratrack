@@ -23,7 +23,7 @@ from config import MAIN_GUILD_ID, data_log_path
 from data_paths import data_path
 
 GUILD_ID = MAIN_GUILD_ID
-POST_CHANNEL_ID = 1099806153170489485
+POST_CHANNEL_ID = 1500946848779862218  # channel or thread for the leaderboard message
 ROLE_NAME = "131st Infantry Brigade"
 HELLOR_ADMIN_ROLE_ID = 1213495462632361994
 
@@ -332,7 +332,7 @@ class HellorLeaderboard(commands.Cog):
         response.raise_for_status()
         return response.text
 
-    async def _get_post_channel(self) -> Optional[discord.TextChannel]:
+    async def _get_post_channel(self) -> Optional[discord.abc.Messageable]:
         channel = self.bot.get_channel(POST_CHANNEL_ID)
         if channel is None:
             try:
@@ -340,7 +340,14 @@ class HellorLeaderboard(commands.Cog):
             except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                 return None
 
-        return channel if isinstance(channel, discord.TextChannel) else None
+        if isinstance(channel, discord.Thread):
+            try:
+                if channel.archived:
+                    await channel.edit(archived=False, locked=False)
+            except Exception:
+                pass
+
+        return channel if isinstance(channel, (discord.TextChannel, discord.Thread)) else None
 
     def _build_empty_embed(self, description: str) -> discord.Embed:
         embed = discord.Embed(title="hellor.pro Leaderboard", description=description, color=discord.Color.orange())
