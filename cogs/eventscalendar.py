@@ -415,54 +415,6 @@ class EventDisplayCog(commands.Cog):
             suffix = occurrence_start.astimezone(timezone.utc).strftime("%d/%m/%Y")
         return self._truncate_thread_name(f"{event_name} - {suffix}".strip())
 
-    def _build_event_post_content(
-        self,
-        scheduled_event: discord.ScheduledEvent,
-        title: str,
-        occurrence_start: Optional[datetime],
-        thread_id: Optional[int],
-    ) -> str:
-        lines = [f"📅 **{title}**"]
-
-        if occurrence_start is not None:
-            timestamp = int(occurrence_start.timestamp())
-            lines.append(f"**Starts:** <t:{timestamp}:F>")
-            lines.append(f"**Relative:** <t:{timestamp}:R>")
-        elif scheduled_event.start_time is not None:
-            timestamp = int(scheduled_event.start_time.timestamp())
-            lines.append(f"**Starts:** <t:{timestamp}:F>")
-
-        if scheduled_event.end_time is not None:
-            lines.append(f"**Ends:** <t:{int(scheduled_event.end_time.timestamp())}:F>")
-
-        organiser = "Unknown"
-        if getattr(scheduled_event, "creator", None):
-            organiser = scheduled_event.creator.mention
-        elif getattr(scheduled_event, "creator_id", None):
-            organiser = f"<@{scheduled_event.creator_id}>"
-        lines.append(f"**Added By:** {organiser}")
-
-        if scheduled_event.location:
-            lines.append(f"**Location:** {scheduled_event.location}")
-        elif scheduled_event.channel:
-            lines.append(f"**Channel:** {scheduled_event.channel.mention}")
-
-        if getattr(scheduled_event, "url", None):
-            lines.append(f"**Event:** {scheduled_event.url}")
-
-        google_calendar_url = self._build_google_calendar_url(scheduled_event)
-        if google_calendar_url:
-            lines.append(f"**Google Calendar:** {google_calendar_url}")
-
-        if thread_id:
-            lines.append(f"**Thread:** https://discord.com/channels/{scheduled_event.guild_id}/{thread_id}")
-
-        if scheduled_event.description:
-            lines.append("")
-            lines.append(self._truncate_text(scheduled_event.description, 1000))
-
-        return "\n".join(lines)
-
     def _build_event_post_embed(
         self,
         *,
@@ -488,8 +440,27 @@ class EventDisplayCog(commands.Cog):
             embed.add_field(name="Location", value=scheduled_event.location, inline=False)
         elif scheduled_event.channel:
             embed.add_field(name="Channel", value=scheduled_event.channel.mention, inline=False)
+        organiser = "Unknown"
+        if getattr(scheduled_event, "creator", None):
+            organiser = scheduled_event.creator.mention
+        elif getattr(scheduled_event, "creator_id", None):
+            organiser = f"<@{scheduled_event.creator_id}>"
+        embed.add_field(name="Added By", value=organiser, inline=False)
         if getattr(scheduled_event, "url", None):
             embed.add_field(name="Event Link", value=str(scheduled_event.url), inline=False)
+        google_calendar_url = self._build_google_calendar_url(scheduled_event)
+        if google_calendar_url:
+            embed.add_field(name="Google Calendar", value=google_calendar_url, inline=False)
+        if scheduled_event.guild_id:
+            thread_info = self._thread_state.get("threads", {}).get(str(scheduled_event.id))
+            if isinstance(thread_info, dict):
+                thread_id = thread_info.get("thread_id")
+                if isinstance(thread_id, int):
+                    embed.add_field(
+                        name="Discussion Thread",
+                        value=f"https://discord.com/channels/{scheduled_event.guild_id}/{thread_id}",
+                        inline=False,
+                    )
         embed.set_image(url=f"attachment://{EVENT_FORUM_FILENAME}")
         embed.set_footer(text="Event details update automatically")
         return embed
@@ -669,8 +640,6 @@ class EventDisplayCog(commands.Cog):
 
         state = self._get_event_state(scheduled_event.id)
         title = self._format_event_title(forum.guild, scheduled_event.name)
-        thread_id = state.get("thread_id") if isinstance(state.get("thread_id"), int) else None
-        content = self._build_event_post_content(scheduled_event, title, occurrence_start, thread_id)
         embed = self._build_event_post_embed(scheduled_event=scheduled_event, title=title, occurrence_start=occurrence_start)
         background_url = self._pick_event_background(scheduled_event.id, state)
         image_bytes = await self._render_event_cover_image(
@@ -690,7 +659,7 @@ class EventDisplayCog(commands.Cog):
             try:
                 starter_message = await existing_thread.fetch_message(forum_message_id)
                 await starter_message.edit(
-                    content=content,
+                    content=None,
                     embed=embed,
                     attachments=[discord.File(io.BytesIO(image_bytes), filename=EVENT_FORUM_FILENAME)],
                 )
@@ -702,7 +671,6 @@ class EventDisplayCog(commands.Cog):
         try:
             created = await forum.create_thread(
                 name=self._build_event_post_name(scheduled_event.name, occurrence_start or scheduled_event.start_time),
-                content=content,
                 embed=embed,
                 file=discord.File(io.BytesIO(image_bytes), filename=EVENT_FORUM_FILENAME),
                 auto_archive_duration=EVENT_THREAD_AUTO_ARCHIVE_MINUTES,
