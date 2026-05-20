@@ -5,6 +5,7 @@ import os
 import asyncio
 import io
 import random
+import calendar
 from urllib.parse import urlencode
 from typing import Optional
 from datetime import datetime, timedelta, timezone
@@ -304,6 +305,174 @@ class EventDisplayCog(commands.Cog):
     def _is_recurring_event_payload(self, payload: Optional[dict]) -> bool:
         return bool(payload and payload.get("recurrence_rule"))
 
+    def _add_months(self, value: datetime, months: int) -> datetime:
+        total_month = (value.month - 1) + months
+        year = value.year + (total_month // 12)
+        month = (total_month % 12) + 1
+        day = min(value.day, calendar.monthrange(year, month)[1])
+        return value.replace(year=year, month=month, day=day)
+
+    def _add_years(self, value: datetime, years: int) -> datetime:
+        year = value.year + years
+        day = value.day
+        if value.month == 2 and value.day == 29 and not calendar.isleap(year):
+            day = 28
+        return value.replace(year=year, day=day)
+
+    def _matches_weekday_rules(self, candidate: datetime, recurrence_rule: dict) -> bool:
+        by_weekday = recurrence_rule.get("by_weekday") or []
+        if by_weekday and candidate.weekday() not in {day for day in by_weekday if isinstance(day, int)}:
+            return False
+
+        by_n_weekday = recurrence_rule.get("by_n_weekday") or []
+        if by_n_weekday:
+            matched = False
+            for item in by_n_weekday:
+                if not isinstance(item, dict):
+                    continue
+                day = item.get("day")
+                ordinal = item.get("n")
+                if not isinstance(day, int) or not isinstance(ordinal, int):
+                    continue
+                if candidate.weekday() != day:
+                    continue
+                weekday_occurrence = ((candidate.day - 1) // 7) + 1
+                if weekday_occurrence == ordinal:
+                    matched = True
+                    break
+            if not matched:
+                return False
+
+        return True
+
+    def _matches_month_rules(self, candidate: datetime, recurrence_rule: dict) -> bool:
+        by_month = recurrence_rule.get("by_month") or []
+        if by_month and candidate.month not in {month for month in by_month if isinstance(month, int)}:
+            return False
+
+        by_month_day = recurrence_rule.get("by_month_day") or []
+        if by_month_day and candidate.day not in {day for day in by_month_day if isinstance(day, int)}:
+            return False
+
+        by_year_day = recurrence_rule.get("by_year_day") or []
+        if by_year_day:
+            day_of_year = candidate.timetuple().tm_yday
+            if day_of_year not in {day for day in by_year_day if isinstance(day, int)}:
+                return False
+
+        return True
+
+    def _candidate_matches_recurrence(
+        self,
+        candidate: datetime,
+        *,
+        rule_start: datetime,
+        recurrence_rule: dict,
+    ) -> bool:
+        if candidate < rule_start:
+            return False
+
+        frequency = recurrence_rule.get("frequency")
+        interval = max(int(recurrence_rule.get("interval") or 1), 1)
+
+        if frequency == 3:
+            delta_days = (candidate.date() - rule_start.date()).days
+            if delta_days < 0 or delta_days % interval != 0:
+                return False
+        elif frequency == 2:
+            delta_days = (candidate.date() - rule_start.date()).days
+            if delta_days < 0:
+                return False
+            weeks_apart = delta_days // 7
+            if weeks_apart % interval != 0:
+                return False
+        elif frequency == 1:
+            months_apart = (candidate.year - rule_start.year) * 12 + (candidate.month - rule_start.month)
+            if months_apart < 0 or months_apart % interval != 0:
+                return False
+        elif frequency == 0:
+            years_apart = candidate.year - rule_start.year
+            if years_apart < 0 or years_apart % interval != 0:
+                return False
+        else:
+            return False
+
+        return self._matches_weekday_rules(candidate, recurrence_rule) and self._matches_month_rules(candidate, recurrence_rule)
+
+    def _iter_candidate_occurrences(
+        self,
+        *,
+        rule_start: datetime,
+        recurrence_rule: dict,
+        window_start: datetime,
+        window_end: datetime,
+    ):
+        frequency = recurrence_rule.get("frequency")
+        interval = max(int(recurrence_rule.get("interval") or 1), 1)
+        count = recurrence_rule.get("count")
+        max_count = count if isinstance(count, int) and count > 0 else None
+
+        if frequency == 3:
+            cursor = rule_start + timedelta(days=max(0, (window_start.date() - rule_start.date()).days // interval) * interval)
+            while cursor < window_start:
+                cursor += timedelta(days=interval)
+            step = lambda dt: dt + timedelta(days=interval)
+        elif frequency == 2:
+            delta_days = max(0, (window_start.date() - rule_start.date()).days)
+            weeks_offset = delta_days // 7
+            cursor = rule_start + timedelta(weeks=(weeks_offset // interval) * interval)
+            while cursor < window_start - timedelta(days=7):
+                cursor += timedelta(weeks=interval)
+            step = lambda dt: dt + timedelta(weeks=interval)
+        elif frequency == 1:
+            months_offset = max(0, (window_start.year - rule_start.year) * 12 + (window_start.month - rule_start.month))
+            cursor = self._add_months(rule_start, (months_offset // interval) * interval)
+            while cursor < window_start.replace(day=1) - timedelta(days=31):
+                cursor = self._add_months(cursor, interval)
+            step = lambda dt: self._add_months(dt, interval)
+        elif frequency == 0:
+            years_offset = max(0, window_start.year - rule_start.year)
+            cursor = self._add_years(rule_start, (years_offset // interval) * interval)
+            while cursor < window_start.replace(month=1, day=1) - timedelta(days=366):
+                cursor = self._add_years(cursor, interval)
+            step = lambda dt: self._add_years(dt, interval)
+        else:
+            return
+
+        emitted = 0
+        while cursor <= window_end:
+            if self._candidate_matches_recurrence(cursor, rule_start=rule_start, recurrence_rule=recurrence_rule):
+                emitted += 1
+                if max_count is None or emitted <= max_count:
+                    yield cursor
+                else:
+                    return
+            cursor = step(cursor)
+
+    def _find_matching_occurrence(
+        self,
+        *,
+        rule_start: datetime,
+        recurrence_rule: dict,
+        window_start: datetime,
+        window_end: datetime,
+    ) -> Optional[datetime]:
+        rule_end = self._parse_iso_datetime(recurrence_rule.get("end"))
+        if rule_end is not None and rule_end < window_start:
+            return None
+
+        if rule_end is not None and rule_end < window_end:
+            window_end = rule_end
+
+        for candidate in self._iter_candidate_occurrences(
+            rule_start=rule_start,
+            recurrence_rule=recurrence_rule,
+            window_start=window_start,
+            window_end=window_end,
+        ):
+            return candidate.astimezone(timezone.utc)
+        return None
+
     def _get_due_occurrence_start(
         self,
         payload: Optional[dict],
@@ -319,70 +488,23 @@ class EventDisplayCog(commands.Cog):
         if not recurrence_rule:
             return scheduled_start
 
-        try:
-            from dateutil.rrule import DAILY, MONTHLY, WEEKLY, YEARLY, FR, MO, SA, SU, TH, TU, WE, rrule
-        except Exception:
-            logger.warning("python-dateutil is unavailable; falling back to the base event start time for recurring events")
-            return scheduled_start
-
         rule_start = self._parse_iso_datetime(recurrence_rule.get("start")) or scheduled_start
         if rule_start is None:
             return scheduled_start
 
-        frequency_map = {0: YEARLY, 1: MONTHLY, 2: WEEKLY, 3: DAILY}
-        weekday_map = {0: MO, 1: TU, 2: WE, 3: TH, 4: FR, 5: SA, 6: SU}
-        frequency = frequency_map.get(recurrence_rule.get("frequency"))
-        if frequency is None:
-            return scheduled_start
-
-        kwargs: dict = {
-            "dtstart": rule_start,
-            "interval": max(int(recurrence_rule.get("interval") or 1), 1),
-        }
-
-        rule_end = self._parse_iso_datetime(recurrence_rule.get("end"))
-        if rule_end is not None:
-            kwargs["until"] = rule_end
-
-        count = recurrence_rule.get("count")
-        if isinstance(count, int) and count > 0:
-            kwargs["count"] = count
-
-        by_weekday = recurrence_rule.get("by_weekday") or []
-        if by_weekday:
-            kwargs["byweekday"] = [weekday_map[day] for day in by_weekday if day in weekday_map]
-
-        by_n_weekday = recurrence_rule.get("by_n_weekday") or []
-        if by_n_weekday:
-            kwargs["byweekday"] = [
-                weekday_map[item["day"]](item["n"])
-                for item in by_n_weekday
-                if isinstance(item, dict) and item.get("day") in weekday_map and isinstance(item.get("n"), int)
-            ]
-
-        by_month = recurrence_rule.get("by_month") or []
-        if by_month:
-            kwargs["bymonth"] = [month for month in by_month if isinstance(month, int)]
-
-        by_month_day = recurrence_rule.get("by_month_day") or []
-        if by_month_day:
-            kwargs["bymonthday"] = [day for day in by_month_day if isinstance(day, int)]
-
-        by_year_day = recurrence_rule.get("by_year_day") or []
-        if by_year_day:
-            kwargs["byyearday"] = [day for day in by_year_day if isinstance(day, int)]
-
         try:
-            occurrence_rule = rrule(frequency, **kwargs)
             window_start = now - EVENT_FORUM_SYNC_WINDOW
-            candidate = occurrence_rule.after(window_start, inc=True)
+            candidate = self._find_matching_occurrence(
+                rule_start=rule_start,
+                recurrence_rule=recurrence_rule,
+                window_start=window_start,
+                window_end=now + EVENT_FORUM_OPEN_LEAD,
+            )
         except Exception:
             logger.warning("Failed to calculate recurring event occurrence for payload %s", payload.get("id"), exc_info=True)
             return scheduled_start
 
         if candidate is None:
-            return None
-        if candidate > now + EVENT_FORUM_OPEN_LEAD:
             return None
         return candidate.astimezone(timezone.utc)
 
