@@ -15,9 +15,9 @@ ANSWER_POST_CHANNEL_ID = 1098331019364552845  # Channel where form responses are
 QUESTIONS = [
     "**Q1 What is your Age? (as a number/integer)**",
     "**Q2 What is your country of residence?**",
-    "**Q3 What is your Hell Let Loose in-game level? (Just type 'not sure' if you don't know right now)**",
+    "**Q3 What is your Hell Let Loose in-game level on either or both games? (Just type 'not sure' if you don't know right now)**",
     "**Q4 How did you find us?**",
-    "**Q5 Details of any previous milsim experience (established units, not games you've played)?**",
+    "**Q5 Which Hell let Loose Game(s) do you play and have you any previous clan (any game) experience?**",
     "**Q6 What do you enjoy about HLL, particular role and/or play style (offensive/defensive etc)?**",
 ]
 

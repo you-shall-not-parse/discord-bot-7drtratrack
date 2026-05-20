@@ -3,12 +3,17 @@ import re
 import json
 import os
 import asyncio
+import io
+import random
 from urllib.parse import urlencode
 from typing import Optional
 from datetime import datetime, timedelta, timezone
+
+import aiohttp
 import discord
 from discord.ext import commands, tasks
 
+from config.common import SCOREBOARD_FONT_PATH
 from data_paths import data_path
 
 logger = logging.getLogger(__name__)
@@ -49,6 +54,22 @@ EVENT_THREADS_PARENT_CHANNEL_ID = 1192922522673500190
 # Valid values depend on the server settings: 60, 1440, 4320, 10080.
 EVENT_THREAD_AUTO_ARCHIVE_MINUTES = 10080
 
+# Forum channel where event discussion posts should be created.
+EVENT_FORUM_CHANNEL_ID = 1506797609489272934
+
+# Random background image pool used for event cover images.
+EVENT_FORUM_BACKGROUND_URLS: list[str] = [
+    "https://cdn.discordapp.com/attachments/1098976074852999261/1448099075143503922/file_0000000040dc7208b0cf42742a355373.png?ex=6a0ef11b&is=6a0d9f9b&hm=3362f8760b775caaabe6f44e7bf55ad66bf54a42bd5f2f86911ab60a6b8eab54",
+    "https://cdn.discordapp.com/attachments/1098976074852999261/1444494673149300796/ChatGPT_Image_Nov_30_2025_01_05_17_AM.png?ex=6a0f033f&is=6a0db1bf&hm=57a1df865acdd76d2f13f81a92d3509cec8ee5e95ede2f8fd4de102c2b614122",
+    "https://cdn.discordapp.com/attachments/1098976074852999261/1444490230957608980/ChatGPT_Image_Nov_30_2025_12_47_57_AM.png?ex=6a0eff1c&is=6a0dad9c&hm=76b339a9b853a022c9588097227b29a9fe0503c10a8f5f8eaffff8eea9f60288",
+]
+
+EVENT_FORUM_FILENAME = "event-cover.png"
+EVENT_FORUM_IMAGE_SIZE = (1600, 900)
+EVENT_FORUM_OPEN_LEAD = timedelta(hours=24)
+EVENT_FORUM_SYNC_WINDOW = timedelta(hours=24)
+EVENT_IMAGE_FONT_PATH = SCOREBOARD_FONT_PATH
+
 # Persist which events we've already handled so we don't create duplicate threads.
 EVENTS_THREAD_STATE_PATH = data_path("events_threads_state.json")
 
@@ -86,6 +107,8 @@ class EventDisplayCog(commands.Cog):
         self._update_lock = asyncio.Lock()
         self._debounce_task: Optional[asyncio.Task] = None
         self._thread_state = self._load_thread_state()
+        self._background_cache: dict[str, bytes] = {}
+        self._missing_background_sources: set[str] = set()
         self.update_events_display.start()
         logger.info("EventDisplayCog initialized")
 
@@ -143,6 +166,9 @@ class EventDisplayCog(commands.Cog):
         seen.add(str(event_id))
         self._thread_state["seen_event_ids"] = sorted(seen)
 
+    def _get_event_state(self, event_id: int) -> dict:
+        return self._thread_state.setdefault("threads", {}).setdefault(str(event_id), {})
+
     async def _startup_sync_threads(self) -> None:
         """Initialize thread state and handle events created while offline."""
 
@@ -163,6 +189,7 @@ class EventDisplayCog(commands.Cog):
                 for ev in current_events:
                     self._mark_event_seen(ev.id)
                 self._thread_state["initialized"] = True
+                await self._sync_forum_posts(guild, current_events)
                 self._save_thread_state()
                 logger.info("Initialized events thread state (existing events marked as seen)")
                 return
@@ -172,6 +199,8 @@ class EventDisplayCog(commands.Cog):
                 if not self._is_event_seen(ev.id):
                     await self._create_event_thread(ev)
                     self._mark_event_seen(ev.id)
+
+            await self._sync_forum_posts(guild, current_events)
             self._save_thread_state()
 
         except Exception:
@@ -205,6 +234,8 @@ class EventDisplayCog(commands.Cog):
             f"**Added By:** {organiser}"
         )
 
+        state = self._get_event_state(scheduled_event.id)
+
         try:
             starter_msg = await parent.send(starter_text)
 
@@ -221,17 +252,498 @@ class EventDisplayCog(commands.Cog):
                 auto_archive_duration=EVENT_THREAD_AUTO_ARCHIVE_MINUTES,
             )
 
-            self._thread_state.setdefault("threads", {})[str(scheduled_event.id)] = {
-                "thread_id": thread.id,
-                "starter_message_id": starter_msg.id,
-                "created_at": datetime.utcnow().isoformat(),
-            }
+            state.update(
+                {
+                    "thread_id": thread.id,
+                    "starter_message_id": starter_msg.id,
+                    "created_at": datetime.utcnow().isoformat(),
+                }
+            )
             logger.info(f"Created thread {thread.id} for event {scheduled_event.id}")
 
         except discord.Forbidden:
             logger.warning("Missing permissions to create event thread (send message / create thread)")
         except Exception:
             logger.warning("Failed to create event thread.", exc_info=True)
+
+    async def _fetch_raw_scheduled_events(self, guild: discord.Guild) -> dict[int, dict]:
+        token = getattr(getattr(self.bot, "http", None), "token", None)
+        if not token:
+            return {}
+
+        headers = {"Authorization": f"Bot {token}"}
+        url = f"https://discord.com/api/v10/guilds/{guild.id}/scheduled-events?with_user_count=true"
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers) as response:
+                    if response.status != 200:
+                        logger.warning("Failed to fetch raw scheduled events for guild %s (status %s)", guild.id, response.status)
+                        return {}
+                    payload = await response.json()
+        except Exception:
+            logger.warning("Failed to fetch raw scheduled events for guild %s", guild.id, exc_info=True)
+            return {}
+
+        result: dict[int, dict] = {}
+        for item in payload if isinstance(payload, list) else []:
+            try:
+                result[int(item["id"])] = item
+            except Exception:
+                continue
+        return result
+
+    def _parse_iso_datetime(self, value: Optional[str]) -> Optional[datetime]:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+        except Exception:
+            return None
+
+    def _is_recurring_event_payload(self, payload: Optional[dict]) -> bool:
+        return bool(payload and payload.get("recurrence_rule"))
+
+    def _get_due_occurrence_start(
+        self,
+        payload: Optional[dict],
+        *,
+        now: datetime,
+        fallback_start: Optional[datetime],
+    ) -> Optional[datetime]:
+        if not payload:
+            return fallback_start
+
+        recurrence_rule = payload.get("recurrence_rule")
+        scheduled_start = self._parse_iso_datetime(payload.get("scheduled_start_time")) or fallback_start
+        if not recurrence_rule:
+            return scheduled_start
+
+        try:
+            from dateutil.rrule import DAILY, MONTHLY, WEEKLY, YEARLY, FR, MO, SA, SU, TH, TU, WE, rrule
+        except Exception:
+            logger.warning("python-dateutil is unavailable; falling back to the base event start time for recurring events")
+            return scheduled_start
+
+        rule_start = self._parse_iso_datetime(recurrence_rule.get("start")) or scheduled_start
+        if rule_start is None:
+            return scheduled_start
+
+        frequency_map = {0: YEARLY, 1: MONTHLY, 2: WEEKLY, 3: DAILY}
+        weekday_map = {0: MO, 1: TU, 2: WE, 3: TH, 4: FR, 5: SA, 6: SU}
+        frequency = frequency_map.get(recurrence_rule.get("frequency"))
+        if frequency is None:
+            return scheduled_start
+
+        kwargs: dict = {
+            "dtstart": rule_start,
+            "interval": max(int(recurrence_rule.get("interval") or 1), 1),
+        }
+
+        rule_end = self._parse_iso_datetime(recurrence_rule.get("end"))
+        if rule_end is not None:
+            kwargs["until"] = rule_end
+
+        count = recurrence_rule.get("count")
+        if isinstance(count, int) and count > 0:
+            kwargs["count"] = count
+
+        by_weekday = recurrence_rule.get("by_weekday") or []
+        if by_weekday:
+            kwargs["byweekday"] = [weekday_map[day] for day in by_weekday if day in weekday_map]
+
+        by_n_weekday = recurrence_rule.get("by_n_weekday") or []
+        if by_n_weekday:
+            kwargs["byweekday"] = [
+                weekday_map[item["day"]](item["n"])
+                for item in by_n_weekday
+                if isinstance(item, dict) and item.get("day") in weekday_map and isinstance(item.get("n"), int)
+            ]
+
+        by_month = recurrence_rule.get("by_month") or []
+        if by_month:
+            kwargs["bymonth"] = [month for month in by_month if isinstance(month, int)]
+
+        by_month_day = recurrence_rule.get("by_month_day") or []
+        if by_month_day:
+            kwargs["bymonthday"] = [day for day in by_month_day if isinstance(day, int)]
+
+        by_year_day = recurrence_rule.get("by_year_day") or []
+        if by_year_day:
+            kwargs["byyearday"] = [day for day in by_year_day if isinstance(day, int)]
+
+        try:
+            occurrence_rule = rrule(frequency, **kwargs)
+            window_start = now - EVENT_FORUM_SYNC_WINDOW
+            candidate = occurrence_rule.after(window_start, inc=True)
+        except Exception:
+            logger.warning("Failed to calculate recurring event occurrence for payload %s", payload.get("id"), exc_info=True)
+            return scheduled_start
+
+        if candidate is None:
+            return None
+        if candidate > now + EVENT_FORUM_OPEN_LEAD:
+            return None
+        return candidate.astimezone(timezone.utc)
+
+    def _format_event_datetime_text(
+        self,
+        start_time: Optional[datetime],
+        end_time: Optional[datetime],
+    ) -> str:
+        if start_time is None:
+            return "Date and time to be confirmed"
+
+        start_utc = start_time.astimezone(timezone.utc)
+        if end_time is not None:
+            end_utc = end_time.astimezone(timezone.utc)
+            if start_utc.date() == end_utc.date():
+                return f"{start_utc.strftime('%d %b %Y')}  |  {start_utc.strftime('%H:%M')} - {end_utc.strftime('%H:%M')} UTC"
+            return f"{start_utc.strftime('%d %b %Y %H:%M')} UTC  |  {end_utc.strftime('%d %b %Y %H:%M')} UTC"
+
+        return f"{start_utc.strftime('%d %b %Y  |  %H:%M UTC')}"
+
+    def _truncate_thread_name(self, value: str) -> str:
+        value = " ".join((value or "").split())
+        if len(value) <= 100:
+            return value
+        return value[:97].rstrip() + "..."
+
+    def _build_event_post_name(self, event_name: str, occurrence_start: Optional[datetime]) -> str:
+        suffix = "TBA"
+        if occurrence_start is not None:
+            suffix = occurrence_start.astimezone(timezone.utc).strftime("%d/%m/%Y")
+        return self._truncate_thread_name(f"{event_name} - {suffix}".strip())
+
+    def _build_event_post_content(
+        self,
+        scheduled_event: discord.ScheduledEvent,
+        title: str,
+        occurrence_start: Optional[datetime],
+        thread_id: Optional[int],
+    ) -> str:
+        lines = [f"📅 **{title}**"]
+
+        if occurrence_start is not None:
+            timestamp = int(occurrence_start.timestamp())
+            lines.append(f"**Starts:** <t:{timestamp}:F>")
+            lines.append(f"**Relative:** <t:{timestamp}:R>")
+        elif scheduled_event.start_time is not None:
+            timestamp = int(scheduled_event.start_time.timestamp())
+            lines.append(f"**Starts:** <t:{timestamp}:F>")
+
+        if scheduled_event.end_time is not None:
+            lines.append(f"**Ends:** <t:{int(scheduled_event.end_time.timestamp())}:F>")
+
+        organiser = "Unknown"
+        if getattr(scheduled_event, "creator", None):
+            organiser = scheduled_event.creator.mention
+        elif getattr(scheduled_event, "creator_id", None):
+            organiser = f"<@{scheduled_event.creator_id}>"
+        lines.append(f"**Added By:** {organiser}")
+
+        if scheduled_event.location:
+            lines.append(f"**Location:** {scheduled_event.location}")
+        elif scheduled_event.channel:
+            lines.append(f"**Channel:** {scheduled_event.channel.mention}")
+
+        if getattr(scheduled_event, "url", None):
+            lines.append(f"**Event:** {scheduled_event.url}")
+
+        google_calendar_url = self._build_google_calendar_url(scheduled_event)
+        if google_calendar_url:
+            lines.append(f"**Google Calendar:** {google_calendar_url}")
+
+        if thread_id:
+            lines.append(f"**Thread:** https://discord.com/channels/{scheduled_event.guild_id}/{thread_id}")
+
+        if scheduled_event.description:
+            lines.append("")
+            lines.append(self._truncate_text(scheduled_event.description, 1000))
+
+        return "\n".join(lines)
+
+    def _build_event_post_embed(
+        self,
+        *,
+        scheduled_event: discord.ScheduledEvent,
+        title: str,
+        occurrence_start: Optional[datetime],
+    ) -> discord.Embed:
+        embed = discord.Embed(
+            title=title,
+            colour=discord.Colour.blurple(),
+            timestamp=datetime.utcnow(),
+        )
+        embed.description = self._truncate_text(
+            scheduled_event.description or "Discussion thread for this scheduled event.",
+            4000,
+        )
+        embed.add_field(
+            name="Date / Time",
+            value=self._format_event_datetime_text(occurrence_start or scheduled_event.start_time, scheduled_event.end_time),
+            inline=False,
+        )
+        if scheduled_event.location:
+            embed.add_field(name="Location", value=scheduled_event.location, inline=False)
+        elif scheduled_event.channel:
+            embed.add_field(name="Channel", value=scheduled_event.channel.mention, inline=False)
+        if getattr(scheduled_event, "url", None):
+            embed.add_field(name="Event Link", value=str(scheduled_event.url), inline=False)
+        embed.set_image(url=f"attachment://{EVENT_FORUM_FILENAME}")
+        embed.set_footer(text="Event details update automatically")
+        return embed
+
+    async def _load_background_bytes(self, source: str) -> Optional[bytes]:
+        cached = self._background_cache.get(source)
+        if cached is not None:
+            return cached
+        if source in self._missing_background_sources:
+            return None
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(source) as response:
+                    if response.status != 200:
+                        self._missing_background_sources.add(source)
+                        logger.warning("Failed to fetch event background %s (status %s)", source, response.status)
+                        return None
+                    data = await response.read()
+        except Exception:
+            self._missing_background_sources.add(source)
+            logger.warning("Failed to load event background from %s", source, exc_info=True)
+            return None
+
+        self._background_cache[source] = data
+        return data
+
+    def _pick_event_background(self, event_id: int, state: dict) -> Optional[str]:
+        stored = state.get("background_url")
+        if stored:
+            return stored
+        if not EVENT_FORUM_BACKGROUND_URLS:
+            return None
+        url = random.choice(EVENT_FORUM_BACKGROUND_URLS)
+        state["background_url"] = url
+        return url
+
+    async def _render_event_cover_image(
+        self,
+        *,
+        title: str,
+        start_time: Optional[datetime],
+        end_time: Optional[datetime],
+        background_url: Optional[str],
+    ) -> bytes:
+        from PIL import Image, ImageDraw, ImageFont, ImageOps  # pyright: ignore[reportMissingImports]
+
+        width, height = EVENT_FORUM_IMAGE_SIZE
+        background_bytes = await self._load_background_bytes(background_url) if background_url else None
+
+        if background_bytes:
+            try:
+                with Image.open(io.BytesIO(background_bytes)) as source_image:
+                    base = ImageOps.fit(source_image.convert("RGBA"), (width, height), method=Image.Resampling.LANCZOS)
+            except Exception:
+                logger.warning("Failed to render event background from %s", background_url, exc_info=True)
+                base = Image.new("RGBA", (width, height), (18, 24, 38, 255))
+        else:
+            base = Image.new("RGBA", (width, height), (18, 24, 38, 255))
+
+        overlay = Image.new("RGBA", (width, height), (8, 12, 20, 145))
+        base = Image.alpha_composite(base, overlay)
+        draw = ImageDraw.Draw(base)
+        text_fill = (255, 255, 255, 255)
+        content_width = width - 220
+        title_top = 170
+
+        def load_font(size: int):
+            try:
+                return ImageFont.truetype(EVENT_IMAGE_FONT_PATH, size)
+            except Exception:
+                return ImageFont.load_default()
+
+        def wrap_text(text: str, font, max_width: int) -> list[str]:
+            words = text.split()
+            if not words:
+                return [""]
+
+            lines: list[str] = []
+            current = words[0]
+            for word in words[1:]:
+                candidate = f"{current} {word}".strip()
+                bbox = draw.textbbox((0, 0), candidate, font=font)
+                if (bbox[2] - bbox[0]) <= max_width:
+                    current = candidate
+                else:
+                    lines.append(current)
+                    current = word
+            lines.append(current)
+            return lines
+
+        def fit_multiline_font(text: str, max_width: int, max_height: int, start_size: int, min_size: int):
+            for size in range(start_size, min_size - 1, -2):
+                font = load_font(size)
+                lines = wrap_text(text, font, max_width)
+                spacing = max(10, size // 5)
+                bbox = draw.multiline_textbbox((0, 0), "\n".join(lines), font=font, spacing=spacing, align="center")
+                if (bbox[2] - bbox[0]) <= max_width and (bbox[3] - bbox[1]) <= max_height:
+                    return font, lines, spacing
+            font = load_font(min_size)
+            lines = wrap_text(text, font, max_width)
+            return font, lines, max(8, min_size // 5)
+
+        title_font, wrapped_title, title_spacing = fit_multiline_font(title, content_width, 360, 110, 38)
+        title_text = "\n".join(wrapped_title)
+        title_bbox = draw.multiline_textbbox((0, 0), title_text, font=title_font, spacing=title_spacing, align="center")
+        title_height = title_bbox[3] - title_bbox[1]
+
+        date_text = self._format_event_datetime_text(start_time, end_time)
+        date_font, wrapped_date, date_spacing = fit_multiline_font(date_text, content_width, 140, 62, 24)
+        date_render = "\n".join(wrapped_date)
+        date_bbox = draw.multiline_textbbox((0, 0), date_render, font=date_font, spacing=date_spacing, align="center")
+        date_height = date_bbox[3] - date_bbox[1]
+
+        title_y = max(title_top, (height - title_height - date_height - 80) // 2)
+        date_y = min(height - 180 - date_height, title_y + title_height + 60)
+
+        draw.multiline_text((width // 2, title_y), title_text, font=title_font, fill=text_fill, anchor="ma", align="center", spacing=title_spacing)
+        draw.multiline_text((width // 2, date_y), date_render, font=date_font, fill=text_fill, anchor="ma", align="center", spacing=date_spacing)
+
+        out = io.BytesIO()
+        base.save(out, format="PNG")
+        out.seek(0)
+        return out.getvalue()
+
+    async def _update_existing_event_thread(self, scheduled_event: discord.ScheduledEvent, occurrence_start: Optional[datetime]) -> None:
+        state = self._thread_state.get("threads", {}).get(str(scheduled_event.id))
+        if not isinstance(state, dict):
+            return
+
+        thread_id = state.get("thread_id")
+        starter_message_id = state.get("starter_message_id")
+        if not isinstance(thread_id, int) or not isinstance(starter_message_id, int):
+            return
+
+        parent = self.bot.get_channel(EVENT_THREADS_PARENT_CHANNEL_ID)
+        thread = self.bot.get_channel(thread_id)
+        if not isinstance(parent, discord.TextChannel) or not isinstance(thread, discord.Thread):
+            return
+
+        title = self._format_event_title(parent.guild, scheduled_event.name)
+        organiser = "Unknown"
+        if getattr(scheduled_event, "creator", None):
+            organiser = scheduled_event.creator.mention
+        elif getattr(scheduled_event, "creator_id", None):
+            organiser = f"<@{scheduled_event.creator_id}>"
+
+        start_to_display = occurrence_start or scheduled_event.start_time
+        start_time_str = f"<t:{int(start_to_display.timestamp())}:F>" if start_to_display else "TBA"
+        starter_text = (
+            f"📅 New event created: **{title}**\n"
+            f"**Date/Time:** {start_time_str}\n"
+            f"**Added By:** {organiser}"
+        )
+
+        try:
+            starter_message = await parent.fetch_message(starter_message_id)
+            await starter_message.edit(content=starter_text)
+        except Exception:
+            logger.warning("Failed to update starter message for event %s", scheduled_event.id, exc_info=True)
+
+        try:
+            await thread.edit(name=self._build_event_post_name(scheduled_event.name, start_to_display))
+        except Exception:
+            logger.warning("Failed to rename thread for event %s", scheduled_event.id, exc_info=True)
+
+    async def _upsert_forum_post(
+        self,
+        scheduled_event: discord.ScheduledEvent,
+        *,
+        occurrence_start: Optional[datetime],
+    ) -> None:
+        forum = self.bot.get_channel(EVENT_FORUM_CHANNEL_ID)
+        if not isinstance(forum, discord.ForumChannel):
+            logger.warning("Forum channel %s is missing or not a forum channel", EVENT_FORUM_CHANNEL_ID)
+            return
+
+        state = self._get_event_state(scheduled_event.id)
+        title = self._format_event_title(forum.guild, scheduled_event.name)
+        thread_id = state.get("thread_id") if isinstance(state.get("thread_id"), int) else None
+        content = self._build_event_post_content(scheduled_event, title, occurrence_start, thread_id)
+        embed = self._build_event_post_embed(scheduled_event=scheduled_event, title=title, occurrence_start=occurrence_start)
+        background_url = self._pick_event_background(scheduled_event.id, state)
+        image_bytes = await self._render_event_cover_image(
+            title=scheduled_event.name,
+            start_time=occurrence_start or scheduled_event.start_time,
+            end_time=scheduled_event.end_time,
+            background_url=background_url,
+        )
+
+        state["forum_occurrence_start"] = occurrence_start.isoformat() if occurrence_start else None
+
+        forum_thread_id = state.get("forum_thread_id")
+        forum_message_id = state.get("forum_message_id")
+        existing_thread = self.bot.get_channel(forum_thread_id) if isinstance(forum_thread_id, int) else None
+
+        if isinstance(existing_thread, discord.Thread) and isinstance(forum_message_id, int):
+            try:
+                starter_message = await existing_thread.fetch_message(forum_message_id)
+                await starter_message.edit(
+                    content=content,
+                    embed=embed,
+                    attachments=[discord.File(io.BytesIO(image_bytes), filename=EVENT_FORUM_FILENAME)],
+                )
+                await existing_thread.edit(name=self._build_event_post_name(scheduled_event.name, occurrence_start or scheduled_event.start_time))
+                return
+            except Exception:
+                logger.warning("Failed to update forum post for event %s", scheduled_event.id, exc_info=True)
+
+        try:
+            created = await forum.create_thread(
+                name=self._build_event_post_name(scheduled_event.name, occurrence_start or scheduled_event.start_time),
+                content=content,
+                embed=embed,
+                file=discord.File(io.BytesIO(image_bytes), filename=EVENT_FORUM_FILENAME),
+                auto_archive_duration=EVENT_THREAD_AUTO_ARCHIVE_MINUTES,
+            )
+            state.update(
+                {
+                    "forum_thread_id": created.thread.id,
+                    "forum_message_id": created.message.id,
+                    "forum_created_at": datetime.utcnow().isoformat(),
+                }
+            )
+        except discord.Forbidden:
+            logger.warning("Missing permissions to create event forum post")
+        except Exception:
+            logger.warning("Failed to create event forum post for event %s", scheduled_event.id, exc_info=True)
+
+    async def _sync_forum_posts(
+        self,
+        guild: discord.Guild,
+        events: list[discord.ScheduledEvent],
+    ) -> None:
+        raw_events = await self._fetch_raw_scheduled_events(guild)
+        now = datetime.now(timezone.utc)
+
+        for scheduled_event in events:
+            if scheduled_event.status not in (discord.EventStatus.scheduled, discord.EventStatus.active):
+                continue
+
+            payload = raw_events.get(scheduled_event.id)
+            occurrence_start = self._get_due_occurrence_start(
+                payload,
+                now=now,
+                fallback_start=scheduled_event.start_time,
+            )
+            is_recurring = self._is_recurring_event_payload(payload)
+
+            if is_recurring and occurrence_start is None:
+                continue
+
+            await self._update_existing_event_thread(scheduled_event, occurrence_start)
+            await self._upsert_forum_post(scheduled_event, occurrence_start=occurrence_start)
 
     def _load_display_message_id(self) -> Optional[int]:
         try:
@@ -394,6 +906,8 @@ class EventDisplayCog(commands.Cog):
 
                 # Save all events (not just filtered ones) to JSON
                 await self.save_events_to_json(events)
+                await self._sync_forum_posts(guild, events)
+                self._save_thread_state()
 
                 # Edit existing display message if possible (persists across restarts)
                 message: Optional[discord.Message] = None
@@ -455,12 +969,22 @@ class EventDisplayCog(commands.Cog):
             self._mark_event_seen(scheduled_event.id)
             self._save_thread_state()
 
+        if scheduled_event.guild is not None:
+            await self._sync_forum_posts(scheduled_event.guild, [scheduled_event])
+            self._save_thread_state()
+
         self._debounced_refresh()
 
     @commands.Cog.listener()
     async def on_scheduled_event_delete(self, scheduled_event: discord.ScheduledEvent):
         if self._target_guild_id and scheduled_event.guild_id != self._target_guild_id:
             return
+
+        state = self._thread_state.get("threads", {}).get(str(scheduled_event.id))
+        if isinstance(state, dict):
+            state["deleted_at"] = datetime.utcnow().isoformat()
+            self._save_thread_state()
+
         self._debounced_refresh()
 
     @commands.Cog.listener()
@@ -468,6 +992,11 @@ class EventDisplayCog(commands.Cog):
         guild_id = after.guild_id if after else before.guild_id
         if self._target_guild_id and guild_id != self._target_guild_id:
             return
+
+        if after and after.guild is not None:
+            await self._sync_forum_posts(after.guild, [after])
+            self._save_thread_state()
+
         self._debounced_refresh()
 
     async def save_events_to_json(self, events: list[discord.ScheduledEvent]):
