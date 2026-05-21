@@ -761,6 +761,9 @@ class EventDisplayCog(commands.Cog):
             return
 
         state = self._get_event_state(scheduled_event.id)
+        if state.get("forum_deleted_manually"):
+            return
+
         title = self._format_event_title(forum.guild, scheduled_event.name)
         embed = self._build_event_post_embed(scheduled_event=scheduled_event, title=title, occurrence_start=occurrence_start)
 
@@ -770,11 +773,28 @@ class EventDisplayCog(commands.Cog):
         forum_message_id = state.get("forum_message_id")
         existing_thread = self.bot.get_channel(forum_thread_id) if isinstance(forum_thread_id, int) else None
 
+        if isinstance(forum_thread_id, int) and existing_thread is None:
+            state["forum_deleted_manually"] = True
+            state["forum_deleted_at"] = datetime.utcnow().isoformat()
+            logger.info(
+                "Forum post for event %s is missing; treating it as manually deleted and not recreating it",
+                scheduled_event.id,
+            )
+            return
+
         if isinstance(existing_thread, discord.Thread) and isinstance(forum_message_id, int):
             try:
                 starter_message = await existing_thread.fetch_message(forum_message_id)
                 await starter_message.edit(content=None, embed=embed)
                 await existing_thread.edit(name=self._build_event_post_name(scheduled_event.name, occurrence_start or scheduled_event.start_time))
+                return
+            except discord.NotFound:
+                state["forum_deleted_manually"] = True
+                state["forum_deleted_at"] = datetime.utcnow().isoformat()
+                logger.info(
+                    "Forum starter message for event %s is missing; treating it as manually deleted and not recreating it",
+                    scheduled_event.id,
+                )
                 return
             except Exception:
                 logger.warning("Failed to update forum post for event %s", scheduled_event.id, exc_info=True)
