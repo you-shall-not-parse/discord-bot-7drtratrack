@@ -39,8 +39,8 @@ CREATORS = [
         "post_to": 1399102943004721224
     },
     {
-        "name": "Mitsi Studios",
-        "channel_id": "UCuXCgyOCMXic7j0_wghXnRA",
+        "name": "BattleGuideVT",
+        "channel_id": "UCq3-NSjXkXI-S_XTbj9bWog",
         "post_to": 1106900027659522108
     }
 ]
