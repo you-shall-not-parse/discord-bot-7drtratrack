@@ -21,9 +21,6 @@ THREAD_INTRO = "Auto-updated index of tracked members, Discord names, nicknames,
 SYNC_DEBOUNCE_SECONDS = 2.0
 TRACKED_ROLE_NAMES = [
     "Basic Trained",
-    "Infantry Trainee",
-    "Tank Crew Trainee",
-    "Recon Trainee",
 ]
 
 
