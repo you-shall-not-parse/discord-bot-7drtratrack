@@ -61,7 +61,7 @@ EVENT_FORUM_CHANNEL_ID = 1506797609489272934
 # Random background image pool used for event cover images.
 EVENT_FORUM_BACKGROUND_URLS: list[str] = [
     "https://cdn.discordapp.com/attachments/1098976074852999261/1448099075143503922/file_0000000040dc7208b0cf42742a355373.png?ex=6a0ef11b&is=6a0d9f9b&hm=3362f8760b775caaabe6f44e7bf55ad66bf54a42bd5f2f86911ab60a6b8eab54",
-    "https://cdn.discordapp.com/attachments/1098976074852999261/1444494673149300796/ChatGPT_Image_Nov_30_2025_01_05_17_AM.png?ex=6a0f033f&is=6a0db1bf&hm=57a1df865acdd76d2f13f81a92d3509cec8ee5e95ede2f8fd4de102c2b614122",
+    "https://cdn.discordapp.com/attachments/1098976074852999261/1444515451727253544/file_00000000e5f871f488f94dd458b30c09.png?ex=6a106819&is=6a0f1699&hm=564e2b7f03c66d88861f0e3719f68623ebbdd6bfd5e930401865b474de74f10a",
     "https://cdn.discordapp.com/attachments/1098976074852999261/1444490230957608980/ChatGPT_Image_Nov_30_2025_12_47_57_AM.png?ex=6a0eff1c&is=6a0dad9c&hm=76b339a9b853a022c9588097227b29a9fe0503c10a8f5f8eaffff8eea9f60288",
 ]
 
