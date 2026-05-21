@@ -763,13 +763,6 @@ class EventDisplayCog(commands.Cog):
         state = self._get_event_state(scheduled_event.id)
         title = self._format_event_title(forum.guild, scheduled_event.name)
         embed = self._build_event_post_embed(scheduled_event=scheduled_event, title=title, occurrence_start=occurrence_start)
-        background_url = self._pick_event_background(scheduled_event.id, state)
-        image_bytes = await self._render_event_cover_image(
-            title=scheduled_event.name,
-            start_time=occurrence_start or scheduled_event.start_time,
-            end_time=scheduled_event.end_time,
-            background_url=background_url,
-        )
 
         state["forum_occurrence_start"] = occurrence_start.isoformat() if occurrence_start else None
 
@@ -780,17 +773,20 @@ class EventDisplayCog(commands.Cog):
         if isinstance(existing_thread, discord.Thread) and isinstance(forum_message_id, int):
             try:
                 starter_message = await existing_thread.fetch_message(forum_message_id)
-                await starter_message.edit(
-                    content=None,
-                    embed=embed,
-                    attachments=[discord.File(io.BytesIO(image_bytes), filename=EVENT_FORUM_FILENAME)],
-                )
+                await starter_message.edit(content=None, embed=embed)
                 await existing_thread.edit(name=self._build_event_post_name(scheduled_event.name, occurrence_start or scheduled_event.start_time))
                 return
             except Exception:
                 logger.warning("Failed to update forum post for event %s", scheduled_event.id, exc_info=True)
 
         try:
+            background_url = self._pick_event_background(scheduled_event.id, state)
+            image_bytes = await self._render_event_cover_image(
+                title=scheduled_event.name,
+                start_time=occurrence_start or scheduled_event.start_time,
+                end_time=scheduled_event.end_time,
+                background_url=background_url,
+            )
             created = await forum.create_thread(
                 name=self._build_event_post_name(scheduled_event.name, occurrence_start or scheduled_event.start_time),
                 embed=embed,
