@@ -131,8 +131,8 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
             embeds.append(embed)
         return embeds
 
-    def _group_embeds(self, embeds: list[discord.Embed], *, size: int = 10) -> list[list[discord.Embed]]:
-        return [embeds[index:index + size] for index in range(0, len(embeds), size)] or [[]]
+    def _group_embeds(self, embeds: list[discord.Embed]) -> list[list[discord.Embed]]:
+        return [[embed] for embed in embeds] or [[]]
 
     async def _get_forum_channel(self) -> Optional[discord.ForumChannel]:
         channel = self.bot.get_channel(FORUM_CHANNEL_ID)
@@ -185,7 +185,14 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
     async def _ensure_thread(self, forum: discord.ForumChannel, first_batch: list[discord.Embed]) -> tuple[Optional[discord.Thread], list[discord.Message]]:
         thread = await self._get_thread(self._state.get("thread_id"))
         if thread is None or thread.parent_id != forum.id:
-            created = await forum.create_thread(name=THREAD_NAME, content=THREAD_INTRO, embeds=first_batch)
+            create_kwargs: dict[str, Any] = {
+                "name": THREAD_NAME,
+                "content": THREAD_INTRO,
+            }
+            if first_batch:
+                create_kwargs["embed"] = first_batch[0]
+
+            created = await forum.create_thread(**create_kwargs)
             thread, message = self._extract_created_post(created)
             if thread is None:
                 return None, []
