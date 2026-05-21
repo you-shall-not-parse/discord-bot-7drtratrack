@@ -182,6 +182,21 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
                 recovered.append(message)
         return recovered
 
+    def _is_header_message(self, message: discord.Message) -> bool:
+        return (message.content or "").strip() == THREAD_INTRO.strip()
+
+    async def _normalize_header_message(self, thread: discord.Thread) -> None:
+        try:
+            starter = await thread.fetch_message(thread.id)
+        except Exception:
+            return
+
+        if self._is_header_message(starter) and starter.embeds:
+            try:
+                await starter.edit(content=THREAD_INTRO, embeds=[])
+            except Exception:
+                self.logger.warning("Failed to normalize T17 index header message", exc_info=True)
+
     async def _ensure_thread(self, forum: discord.ForumChannel, first_batch: list[discord.Embed]) -> tuple[Optional[discord.Thread], list[discord.Message]]:
         thread = await self._get_thread(self._state.get("thread_id"))
         if thread is None or thread.parent_id != forum.id:
@@ -189,16 +204,18 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
                 "name": THREAD_NAME,
                 "content": THREAD_INTRO,
             }
-            if first_batch:
-                create_kwargs["embed"] = first_batch[0]
 
             created = await forum.create_thread(**create_kwargs)
             thread, message = self._extract_created_post(created)
             if thread is None:
                 return None, []
-            messages = [message] if message is not None else []
-            self._set_state(thread_id=thread.id, message_ids=[item.id for item in messages])
-            return thread, messages
+            if message is not None and self._is_header_message(message) and message.embeds:
+                try:
+                    await message.edit(content=THREAD_INTRO, embeds=[])
+                except Exception:
+                    self.logger.warning("Failed to normalize new T17 index header message", exc_info=True)
+            self._set_state(thread_id=thread.id, message_ids=[])
+            return thread, []
 
         if thread.archived:
             try:
@@ -206,16 +223,21 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
             except Exception:
                 self.logger.warning("Failed to unarchive T17 index thread", exc_info=True)
 
+        await self._normalize_header_message(thread)
+
         message_ids = [int(item) for item in self._state.get("message_ids", []) if isinstance(item, int)]
         messages: list[discord.Message] = []
         for message_id in message_ids:
             try:
-                messages.append(await thread.fetch_message(message_id))
+                message = await thread.fetch_message(message_id)
+                if self._is_header_message(message):
+                    continue
+                messages.append(message)
             except Exception:
                 self.logger.info("T17 index message %s no longer exists", message_id)
 
         if not messages:
-            messages = await self._recover_messages(thread)
+            messages = [message for message in await self._recover_messages(thread) if not self._is_header_message(message)]
             self._set_state(thread_id=thread.id, message_ids=[item.id for item in messages])
 
         return thread, messages
@@ -225,12 +247,11 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
         updated_ids: list[int] = []
 
         for index, embeds in enumerate(batches):
-            content = THREAD_INTRO if index == 0 else None
             if index < len(current_messages):
                 message = current_messages[index]
-                await message.edit(content=content, embeds=embeds)
+                await message.edit(content=None, embeds=embeds)
             else:
-                message = await thread.send(content=content, embeds=embeds)
+                message = await thread.send(embeds=embeds)
                 current_messages.append(message)
             updated_ids.append(message.id)
 

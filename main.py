@@ -85,7 +85,6 @@ async def main():
     if not TOKEN:
         raise RuntimeError("DISCORD_BOT_TOKEN is not set in your environment or .env file!")
     async with bot:
-        await bot.load_extension("cogs.botadmin")
         await bot.load_extension("cogs.rosterizer")
         await bot.load_extension("cogs.quick_exit")
         await bot.load_extension("cogs.bulkrole")

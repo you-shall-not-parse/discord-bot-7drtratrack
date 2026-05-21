@@ -54,10 +54,6 @@ KNOWN_VIDEOS_FILE = os.path.join(DATA_DIR, "yt_known_videos.json")
 LAST_SEEN_FILE = os.path.join(DATA_DIR, "yt_last_seen.json")
 LAST_POSTED_FILE = os.path.join(DATA_DIR, "yt_last_posted.json")
 
-# Guild and role configuration for slash command access
-GUILD_ID = MAIN_GUILD_ID
-CONTENT_ADMIN_ROLE_ID = 1213495462632361994  # Replace with role ID permitted to use /forcecontent
-
 logger = logging.getLogger("YouTubeFeed")
 logger.setLevel(logging.INFO)
 
@@ -331,48 +327,6 @@ class YouTubeFeed(commands.Cog, name="YouTubeFeed"):
             logger.error("Missing permissions to post in target channel")
         except discord.HTTPException as e:
             logger.error(f"HTTP error posting content: {e}")
-
-    # ---------------- Slash Command ----------------
-    @app_commands.command(name="forcecontent", description="Force-post the latest eligible content video to all channels")
-    @app_commands.guilds(discord.Object(id=GUILD_ID))
-    async def forcecontent(self, interaction: discord.Interaction):
-        user = interaction.user
-        if not isinstance(user, discord.Member):
-            return await interaction.response.send_message("This command is only usable in a server.", ephemeral=True)
-        if CONTENT_ADMIN_ROLE_ID not in [r.id for r in user.roles]:
-            return await interaction.response.send_message("You don't have permission to use this.", ephemeral=True)
-
-        # Refresh feeds now (so /forcecontent doesn't depend on the 30-minute loop).
-        # Defer to avoid Discord's interaction timeout during network fetches.
-        await interaction.response.defer(ephemeral=True)
-        try:
-            async with aiohttp.ClientSession() as session:
-                for creator in CREATORS:
-                    await self.fetch_creator_feed(session, creator)
-            save_json(KNOWN_VIDEOS_FILE, self.known_videos)
-            save_json(LAST_SEEN_FILE, self.last_seen)
-        except Exception as e:
-            logger.error(f"Forcecontent RSS refresh failed: {e}")
-
-        videos_by_channel = self._videos_by_target_channel()
-        
-        if not videos_by_channel:
-            return await interaction.followup.send("No videos available for any channel.")
-        
-        posted_videos = []
-        # For each channel, select and post one eligible video
-        for channel_id, videos in videos_by_channel.items():
-            video = self._select_eligible_video_from_pool(videos)
-            if video:
-                await self._post_video(video)
-                posted_videos.append(f"{video['creator']} to <#{channel_id}>")
-        
-        if not posted_videos:
-            return await interaction.followup.send("No videos available to post right now.")
-        
-        summary = "\n".join(posted_videos)
-        await interaction.followup.send(f"Posted videos:\n{summary}")
-
 
 async def setup(bot):
     await bot.add_cog(YouTubeFeed(bot))

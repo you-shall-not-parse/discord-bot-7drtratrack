@@ -303,7 +303,7 @@ class ClanT17Lookup:
             include_username=include_username,
             include_global_name=include_global_name,
         )
-        self.logger.info(
+        self.logger.debug(
             "resolve_start member_id=%s display_name=%r username=%r role_name=%r queries=%s",
             member.id,
             member.display_name,
@@ -324,7 +324,7 @@ class ClanT17Lookup:
                 source="manual_override",
                 queries=queries,
             )
-            self.logger.info("resolve_manual_override member_id=%s t17_id=%s", member.id, t17_id)
+            self.logger.debug("resolve_manual_override member_id=%s t17_id=%s", member.id, t17_id)
             return t17_id, "manual_override", queries
 
         # Check resolved_members by stable Discord user ID — survives display name changes
@@ -341,7 +341,7 @@ class ClanT17Lookup:
                 source="resolved_members",
                 queries=queries,
             )
-            self.logger.info("resolve_user_id_hit member_id=%s t17_id=%s", member.id, t17_id)
+            self.logger.debug("resolve_user_id_hit member_id=%s t17_id=%s", member.id, t17_id)
             return t17_id, "resolved_members", queries
 
         for query in queries:
@@ -355,13 +355,13 @@ class ClanT17Lookup:
                     source="name_cache",
                     queries=queries,
                 )
-                self.logger.info("resolve_name_cache_hit member_id=%s query=%r t17_id=%s", member.id, query, cached_t17)
+                self.logger.debug("resolve_name_cache_hit member_id=%s query=%r t17_id=%s", member.id, query, cached_t17)
                 return cached_t17, "name_cache", queries
 
         for query in queries:
-            self.logger.info("resolve_backend_try member_id=%s backend=%s query=%r", member.id, backend_source, query)
+            self.logger.debug("resolve_backend_try member_id=%s backend=%s query=%r", member.id, backend_source, query)
             t17_id, did_http = await self.fetch_player_id_cached(query)
-            self.logger.info(
+            self.logger.debug(
                 "resolve_backend_result member_id=%s backend=%s query=%r did_http=%s t17_id=%s",
                 member.id,
                 backend_source,
@@ -389,7 +389,7 @@ class ClanT17Lookup:
             source="unresolved",
             queries=queries,
         )
-        self.logger.info("resolve_failed member_id=%s role_name=%r queries=%s", member.id, role_name, queries)
+        self.logger.debug("resolve_failed member_id=%s role_name=%r queries=%s", member.id, role_name, queries)
         return None, "unresolved", queries
 
     async def resolve_member_for_role(
