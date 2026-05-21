@@ -82,7 +82,7 @@ def save_json(path, data):
         json.dump(data, f, indent=2)
 
 
-class YouTubeFeed(commands.Cog):
+class YouTubeFeed(commands.Cog, name="YouTubeFeed"):
     def __init__(self, bot):
         self.bot = bot
 

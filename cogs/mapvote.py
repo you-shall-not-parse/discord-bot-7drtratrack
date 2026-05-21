@@ -444,7 +444,7 @@ class MapVoteView(discord.ui.View):
 # COG
 # --------------------------------------------------
 
-class MapVote(commands.Cog):
+class MapVote(commands.Cog, name="[API] MapVote"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.state = VoteState()

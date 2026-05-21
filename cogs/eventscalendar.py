@@ -96,7 +96,7 @@ KEYWORD_EMOJI_TAGS: dict[str, str] = {
 }
 
 
-class EventDisplayCog(commands.Cog):
+class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
     """
     A cog that reads Discord scheduled events and displays them in an embed.
     """

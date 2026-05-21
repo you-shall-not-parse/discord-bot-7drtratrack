@@ -21,6 +21,7 @@ from urllib3.util.retry import Retry
 from clan_t17_lookup import ClanT17Lookup, DEFAULT_RANK_ORDER
 from config import MAIN_GUILD_ID, data_log_path
 from data_paths import data_path
+from hll_API_backend import get_hll_backend_client
 
 GUILD_ID = MAIN_GUILD_ID
 POST_CHANNEL_ID = 1500946848779862218  # channel or thread for the leaderboard message
@@ -114,7 +115,7 @@ def score_as_int(value: str) -> int:
     return int(value) if value.isdigit() else -1
 
 
-class HellorLeaderboard(commands.Cog):
+class HellorLeaderboard(commands.Cog, name="HellorLeaderboard"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.session = make_session()
@@ -122,7 +123,7 @@ class HellorLeaderboard(commands.Cog):
         self._synced = False
         self._initial_posted = False
         self.logger = self._build_logger()
-        self.lookup = ClanT17Lookup(logger=self.logger)
+        self.lookup = ClanT17Lookup(get_hll_backend_client(), logger=self.logger)
         self.leaderboard_message_id = self._load_leaderboard_message_id()
 
     def cog_unload(self):

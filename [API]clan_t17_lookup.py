@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -16,6 +17,8 @@ from hll_API_backend import HLLBackendClient, get_hll_backend_client
 
 CLAN_T17_MAP_FILE = data_path("clan_t17_map.json")
 T17_LOG_FILE = data_path("t17_lookup.log")
+CRCON_PANEL_URL = "https://7dr.hlladmin.com/api/"
+CRCON_API_KEY = os.getenv("CRCON_API_KEY")
 PLAYER_LOOKUP_CACHE_TTL_SECONDS = 3600
 PLAYER_LOOKUP_NEGATIVE_CACHE_TTL_SECONDS = 120
 
@@ -76,11 +79,6 @@ class ClanT17Lookup:
         self.logger = logger or get_t17_logger()
         self.backend = backend or get_hll_backend_client()
         self._player_id_cache: dict[str, tuple[str | None, float]] = {}
-
-    def backend_source_name(self) -> str:
-        provider = getattr(self.backend, "provider", "backend")
-        value = str(provider).strip().lower()
-        return value or "backend"
 
     def _load_json_file(self, path: str) -> dict[str, Any]:
         try:
@@ -297,7 +295,6 @@ class ClanT17Lookup:
         include_global_name: bool = True,
     ) -> tuple[str | None, str, list[str]]:
         member_key = self.member_key(member.guild.id, member.id)
-        backend_source = self.backend_source_name()
         queries = self.build_lookup_queries(
             member,
             include_username=include_username,
@@ -327,23 +324,6 @@ class ClanT17Lookup:
             self.logger.info("resolve_manual_override member_id=%s t17_id=%s", member.id, t17_id)
             return t17_id, "manual_override", queries
 
-        # Check resolved_members by stable Discord user ID — survives display name changes
-        resolved_key = self.resolved_member_key(member.guild.id, member.id, role_name)
-        existing = mapping.get("resolved_members", {}).get(resolved_key)
-        if isinstance(existing, dict) and existing.get("t17_id"):
-            t17_id = str(existing["t17_id"])
-            self.write_name_cache(mapping, queries, t17_id, "resolved_members")
-            self.store_resolved_member(
-                mapping,
-                member,
-                role_name=role_name,
-                t17_id=t17_id,
-                source="resolved_members",
-                queries=queries,
-            )
-            self.logger.info("resolve_user_id_hit member_id=%s t17_id=%s", member.id, t17_id)
-            return t17_id, "resolved_members", queries
-
         for query in queries:
             cached_t17 = self.read_name_cache(mapping, query)
             if cached_t17:
@@ -359,27 +339,26 @@ class ClanT17Lookup:
                 return cached_t17, "name_cache", queries
 
         for query in queries:
-            self.logger.info("resolve_backend_try member_id=%s backend=%s query=%r", member.id, backend_source, query)
+            self.logger.info("resolve_crcon_try member_id=%s query=%r", member.id, query)
             t17_id, did_http = await self.fetch_player_id_cached(query)
             self.logger.info(
-                "resolve_backend_result member_id=%s backend=%s query=%r did_http=%s t17_id=%s",
+                "resolve_crcon_result member_id=%s query=%r did_http=%s t17_id=%s",
                 member.id,
-                backend_source,
                 query,
                 did_http,
                 t17_id,
             )
             if t17_id:
-                self.write_name_cache(mapping, queries, t17_id, backend_source)
+                self.write_name_cache(mapping, queries, t17_id, "crcon")
                 self.store_resolved_member(
                     mapping,
                     member,
                     role_name=role_name,
                     t17_id=t17_id,
-                    source=backend_source,
+                    source="crcon",
                     queries=queries,
                 )
-                return t17_id, backend_source, queries
+                return t17_id, "crcon", queries
 
         self.store_resolved_member(
             mapping,

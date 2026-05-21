@@ -273,7 +273,7 @@ class T17ServerAdmin(commands.Cog, name="[API] T17ServerAdmin"):
         await interaction.followup.send(
             f"Granted {ADMIN_CAM_ROLE} admin cam to {member.mention}.\n"
             f"T17 ID: `{t17_id}`\n"
-            f"Description sent to backend: `{description}`\n"
+            f"Description sent to CRCON: `{description}`\n"
             f"Resolved via: `{source}`\n"
             f"Expires: <t:{int(expires_at)}:F> (<t:{int(expires_at)}:R>)",
         )

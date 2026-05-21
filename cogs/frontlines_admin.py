@@ -49,7 +49,7 @@ def _can_manage_frontlines(interaction: discord.Interaction) -> bool:
     return isinstance(user, discord.Member) and any(role.id == FRONTLINES_ADMIN_ROLE_ID for role in user.roles)
 
 
-class FrontlinesAdmin(commands.Cog):
+class FrontlinesAdmin(commands.Cog, name="[API] FrontlinesAdmin"):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self.logger = logging.getLogger("FrontlinesAdmin")

@@ -177,7 +177,7 @@ class PreferenceView(discord.ui.View):
             )
 
 
-class GameMonCog(commands.Cog):
+class GameMonCog(commands.Cog, name="GameMonCog"):
     def __init__(self, bot):
         self.bot = bot
         self.prefs = self.load_json(PREFS_FILE)
