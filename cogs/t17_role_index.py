@@ -355,7 +355,7 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
                     entry["t17_id"],
                     entry["player_name"],
                     platform="Xbox",
-                    membership_type="clan_member",
+                    membership_type="community",
                 )
                 self.logger.info(
                     "t17_role_index_member_added member_id=%s player_id=%s player_name=%r",
