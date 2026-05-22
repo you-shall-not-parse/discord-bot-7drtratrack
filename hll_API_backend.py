@@ -44,7 +44,7 @@ class HLLBackendClient(Protocol):
         player_name: str,
         *,
         platform: str = "PC",
-        membership_type: str = "community",
+        membership_type: str | None = None,
     ) -> None:
         ...
 
@@ -199,7 +199,7 @@ class CRCONBackendClient:
         player_name: str,
         *,
         platform: str = "PC",
-        membership_type: str = "community",
+        membership_type: str | None = None,
     ) -> None:
         raise HLLBackendConfigError("Guild member sync is only supported by the Bifrost backend")
 
@@ -415,22 +415,24 @@ class BifrostBackendClient:
         player_name: str,
         *,
         platform: str = "PC",
-        membership_type: str = "community",
+        membership_type: str | None = None,
     ) -> None:
         query = (
             "mutation GuildAddMember($input: GuildAddMemberInput!) {"
             " guildAddMember(input: $input) { success message error }"
             "}"
         )
+        input_payload = {
+            "playerId": player_id,
+            "playerName": player_name,
+            "platform": platform,
+        }
+        if membership_type is not None:
+            input_payload["membershipType"] = membership_type
         data = await self._graphql(
             query,
             {
-                "input": {
-                    "playerId": player_id,
-                    "playerName": player_name,
-                    "platform": platform,
-                    "membershipType": membership_type,
-                }
+                "input": input_payload
             },
         )
         payload = data.get("guildAddMember") or {}
