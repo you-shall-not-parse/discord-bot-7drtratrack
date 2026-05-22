@@ -11,7 +11,7 @@ from discord.ext import commands
 from clan_t17_lookup import ClanT17Lookup
 from config import MAIN_GUILD_ID
 from data_paths import data_path
-from hll_API_backend import get_hll_backend_client
+from hll_API_backend import HLLBackendError, get_hll_backend_client
 
 GUILD_ID = MAIN_GUILD_ID
 FORUM_CHANNEL_ID = 1388644379211862096
@@ -28,11 +28,13 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.logger = logging.getLogger(__name__)
-        self.lookup = ClanT17Lookup(get_hll_backend_client(), logger=self.logger)
+        self.backend = get_hll_backend_client()
+        self.lookup = ClanT17Lookup(self.backend, logger=self.logger)
         self._sync_lock = asyncio.Lock()
         self._sync_task: asyncio.Task | None = None
         self._started = False
         self._state = self._load_state()
+        self._membership_sync_warned = False
 
     def cog_unload(self) -> None:
         if self._sync_task and not self._sync_task.done():
@@ -54,6 +56,40 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
     def _set_state(self, *, thread_id: int | None, message_ids: list[int]) -> None:
         self._state["thread_id"] = thread_id
         self._state["message_ids"] = message_ids
+        self._save_state()
+
+    def _synced_members_state(self) -> dict[int, dict[str, str]]:
+        raw = self._state.get("synced_members")
+        if not isinstance(raw, dict):
+            return {}
+
+        normalized: dict[int, dict[str, str]] = {}
+        for key, value in raw.items():
+            try:
+                member_id = int(key)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(value, dict):
+                continue
+            t17_id = str(value.get("t17_id") or "").strip()
+            if not t17_id:
+                continue
+            player_name = str(value.get("player_name") or "").strip() or t17_id
+            normalized[member_id] = {
+                "t17_id": t17_id,
+                "player_name": player_name,
+            }
+        return normalized
+
+    def _save_synced_members_state(self, synced_members: dict[int, dict[str, str]]) -> None:
+        self._state["synced_members"] = {
+            str(member_id): {
+                "t17_id": str(entry.get("t17_id") or "").strip(),
+                "player_name": str(entry.get("player_name") or "").strip(),
+            }
+            for member_id, entry in synced_members.items()
+            if str(entry.get("t17_id") or "").strip()
+        }
         self._save_state()
 
     def _tracked_role_names(self) -> set[str]:
@@ -133,6 +169,15 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
 
     def _group_embeds(self, embeds: list[discord.Embed]) -> list[list[discord.Embed]]:
         return [[embed] for embed in embeds] or [[]]
+
+    def _preferred_player_name(self, target: dict[str, Any]) -> str:
+        queries = target.get("queries")
+        if isinstance(queries, list):
+            for query in queries:
+                value = str(query or "").strip()
+                if value:
+                    return value
+        return str(target.get("display_name") or "").strip() or str(target.get("t17_id") or "").strip()
 
     async def _get_forum_channel(self) -> Optional[discord.ForumChannel]:
         channel = self.bot.get_channel(FORUM_CHANNEL_ID)
@@ -263,16 +308,98 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
 
         self._set_state(thread_id=thread.id, message_ids=updated_ids)
 
-    async def _build_embed_batches(self, guild: discord.Guild) -> list[list[discord.Embed]]:
+    async def _build_embed_batches(self, guild: discord.Guild) -> tuple[list[list[discord.Embed]], dict[int, dict[str, str]], set[int]]:
         embeds: list[discord.Embed] = []
+        current_members: dict[int, dict[str, str]] = {}
+        active_member_ids: set[int] = set()
         for role_name in TRACKED_ROLE_NAMES:
             role = discord.utils.get(guild.roles, name=role_name)
             mapping: dict[str, Any] = self.lookup.empty_mapping()
             if role is not None and role.members:
-                _targets, mapping, _unresolved = await self.lookup.resolve_members_for_role(role.members, role_name=role_name)
+                active_member_ids.update(member.id for member in role.members)
+                targets, mapping, _unresolved = await self.lookup.resolve_members_for_role(role.members, role_name=role_name)
+                for target in targets:
+                    member_id = target.get("member_id")
+                    if not isinstance(member_id, int):
+                        continue
+                    t17_id = str(target.get("t17_id") or "").strip()
+                    if not t17_id:
+                        continue
+                    current_members[member_id] = {
+                        "t17_id": t17_id,
+                        "player_name": self._preferred_player_name(target),
+                    }
             embeds.extend(self._build_role_embeds(guild, role_name, mapping))
 
-        return self._group_embeds(embeds)
+        return self._group_embeds(embeds), current_members, active_member_ids
+
+    async def _sync_guild_membership(
+        self,
+        current_members: dict[int, dict[str, str]],
+        active_member_ids: set[int],
+    ) -> None:
+        if getattr(self.backend, "provider", "") != "bifrost":
+            if not self._membership_sync_warned:
+                self.logger.info("Skipping T17 guild member sync because the active backend is not Bifrost")
+                self._membership_sync_warned = True
+            return
+
+        previous_members = self._synced_members_state()
+
+        for member_id, entry in current_members.items():
+            previous_entry = previous_members.get(member_id)
+            if previous_entry == entry:
+                continue
+            try:
+                await self.backend.add_guild_member(
+                    entry["t17_id"],
+                    entry["player_name"],
+                    platform="Xbox",
+                    membership_type="clan_member",
+                )
+                self.logger.info(
+                    "t17_role_index_member_added member_id=%s player_id=%s player_name=%r",
+                    member_id,
+                    entry["t17_id"],
+                    entry["player_name"],
+                )
+            except HLLBackendError as exc:
+                self.logger.warning(
+                    "t17_role_index_member_add_failed member_id=%s player_id=%s error=%s",
+                    member_id,
+                    entry["t17_id"],
+                    exc,
+                )
+
+        for member_id, entry in previous_members.items():
+            if member_id in active_member_ids:
+                continue
+            try:
+                await self.backend.remove_guild_member(entry["t17_id"])
+                self.logger.info(
+                    "t17_role_index_member_removed member_id=%s player_id=%s",
+                    member_id,
+                    entry["t17_id"],
+                )
+            except HLLBackendError as exc:
+                self.logger.warning(
+                    "t17_role_index_member_remove_failed member_id=%s player_id=%s error=%s",
+                    member_id,
+                    entry["t17_id"],
+                    exc,
+                )
+
+        next_state: dict[int, dict[str, str]] = {}
+        for member_id in active_member_ids:
+            current_entry = current_members.get(member_id)
+            if current_entry is not None:
+                next_state[member_id] = current_entry
+                continue
+            previous_entry = previous_members.get(member_id)
+            if previous_entry is not None:
+                next_state[member_id] = previous_entry
+
+        self._save_synced_members_state(next_state)
 
     async def _sync_index(self, *, reason: str) -> None:
         await self.bot.wait_until_ready()
@@ -288,7 +415,8 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
 
         async with self._sync_lock:
             self.logger.info("t17_role_index_sync_start reason=%s", reason)
-            batches = await self._build_embed_batches(guild)
+            batches, current_members, active_member_ids = await self._build_embed_batches(guild)
+            await self._sync_guild_membership(current_members, active_member_ids)
             first_batch = batches[0] if batches else []
             thread, messages = await self._ensure_thread(forum, first_batch)
             if thread is None:

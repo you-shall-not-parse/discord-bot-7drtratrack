@@ -38,6 +38,19 @@ class HLLBackendClient(Protocol):
     async def resolve_player_id_by_name(self, player_name: str) -> str | None:
         ...
 
+    async def add_guild_member(
+        self,
+        player_id: str,
+        player_name: str,
+        *,
+        platform: str = "PC",
+        membership_type: str = "community",
+    ) -> None:
+        ...
+
+    async def remove_guild_member(self, player_id: str) -> None:
+        ...
+
     async def grant_admin_cam(self, player_id: str, player_name: str) -> None:
         ...
 
@@ -160,6 +173,19 @@ class CRCONBackendClient:
         if not isinstance(payload, dict) or payload.get("failed") or payload.get("error"):
             return None
         return _extract_first_player_id(payload.get("result", payload))
+
+    async def add_guild_member(
+        self,
+        player_id: str,
+        player_name: str,
+        *,
+        platform: str = "PC",
+        membership_type: str = "community",
+    ) -> None:
+        raise HLLBackendConfigError("Guild member sync is only supported by the Bifrost backend")
+
+    async def remove_guild_member(self, player_id: str) -> None:
+        raise HLLBackendConfigError("Guild member sync is only supported by the Bifrost backend")
 
     async def grant_admin_cam(self, player_id: str, player_name: str) -> None:
         quoted_role = urllib.parse.quote(ADMIN_CAM_ROLE, safe="")
@@ -363,6 +389,52 @@ class BifrostBackendClient:
                 break
 
         return exact_match or first_match
+
+    async def add_guild_member(
+        self,
+        player_id: str,
+        player_name: str,
+        *,
+        platform: str = "PC",
+        membership_type: str = "community",
+    ) -> None:
+        query = (
+            "mutation GuildAddMember($input: GuildAddMemberInput!) {"
+            " guildAddMember(input: $input) { success message error }"
+            "}"
+        )
+        data = await self._graphql(
+            query,
+            {
+                "input": {
+                    "playerId": player_id,
+                    "playerName": player_name,
+                    "platform": platform,
+                    "membershipType": membership_type,
+                }
+            },
+        )
+        payload = data.get("guildAddMember") or {}
+        if not isinstance(payload, dict) or not payload.get("success"):
+            raise HLLBackendError(_extract_error_message(payload))
+
+    async def remove_guild_member(self, player_id: str) -> None:
+        query = (
+            "mutation GuildRemoveMember($input: GuildRemoveMemberInput!) {"
+            " guildRemoveMember(input: $input) { success message error }"
+            "}"
+        )
+        data = await self._graphql(
+            query,
+            {
+                "input": {
+                    "playerId": player_id,
+                }
+            },
+        )
+        payload = data.get("guildRemoveMember") or {}
+        if not isinstance(payload, dict) or not payload.get("success"):
+            raise HLLBackendError(_extract_error_message(payload))
 
     async def grant_admin_cam(self, player_id: str, player_name: str) -> None:
         query = (
