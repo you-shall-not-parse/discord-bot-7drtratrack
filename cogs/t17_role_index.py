@@ -408,15 +408,19 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
             self.logger.warning("T17 role index guild %s is not available", GUILD_ID)
             return
 
-        forum = await self._get_forum_channel()
-        if forum is None:
-            self.logger.warning("T17 role index forum channel %s is unavailable or not a forum", FORUM_CHANNEL_ID)
-            return
-
         async with self._sync_lock:
             self.logger.info("t17_role_index_sync_start reason=%s", reason)
             batches, current_members, active_member_ids = await self._build_embed_batches(guild)
             await self._sync_guild_membership(current_members, active_member_ids)
+
+            forum = await self._get_forum_channel()
+            if forum is None:
+                self.logger.warning(
+                    "T17 role index forum channel %s is unavailable or not a forum; membership sync still ran",
+                    FORUM_CHANNEL_ID,
+                )
+                return
+
             first_batch = batches[0] if batches else []
             thread, messages = await self._ensure_thread(forum, first_batch)
             if thread is None:
