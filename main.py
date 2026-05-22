@@ -97,7 +97,7 @@ async def main():
         await bot.load_extension("cogs.contentfeed")
         await bot.load_extension("cogs.discordgreeting")
         await bot.load_extension("cogs.echo")
-        await bot.load_extension("cogs.mapvote")
+#        await bot.load_extension("cogs.mapvote")
         await bot.load_extension("cogs.HLLInfLeaderboard")
         await bot.load_extension("cogs.HLLArmLeaderboard")
         await bot.load_extension("cogs.GameMonCog")
