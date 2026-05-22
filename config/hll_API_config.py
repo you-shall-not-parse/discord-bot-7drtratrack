@@ -5,7 +5,7 @@ from typing import Any
 
 
 # Set these in code to choose which backend/server this bot should use.
-HLL_BACKEND_PROVIDER = "crcon"
+HLL_BACKEND_PROVIDER = "bifrost"
 HLL_BACKEND_DEFAULT_SERVER = "main"
 
 BIFROST_OAUTH_URL = os.getenv("BIFROST_OAUTH_URL", "https://api.dev.bifrostgaming.com/v1/oauth/token").strip()
