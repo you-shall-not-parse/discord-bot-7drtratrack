@@ -345,11 +345,9 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
             return
 
         previous_members = self._synced_members_state()
+        confirmed_members: dict[int, dict[str, str]] = {}
 
         for member_id, entry in current_members.items():
-            previous_entry = previous_members.get(member_id)
-            if previous_entry == entry:
-                continue
             try:
                 await self.backend.add_guild_member(
                     entry["t17_id"],
@@ -363,6 +361,7 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
                     entry["t17_id"],
                     entry["player_name"],
                 )
+                confirmed_members[member_id] = entry
             except HLLBackendError as exc:
                 self.logger.warning(
                     "t17_role_index_member_add_failed member_id=%s player_id=%s error=%s",
@@ -391,9 +390,9 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
 
         next_state: dict[int, dict[str, str]] = {}
         for member_id in active_member_ids:
-            current_entry = current_members.get(member_id)
-            if current_entry is not None:
-                next_state[member_id] = current_entry
+            confirmed_entry = confirmed_members.get(member_id)
+            if confirmed_entry is not None:
+                next_state[member_id] = confirmed_entry
                 continue
             previous_entry = previous_members.get(member_id)
             if previous_entry is not None:

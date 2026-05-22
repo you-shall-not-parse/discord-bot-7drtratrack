@@ -81,8 +81,27 @@ def _extract_error_message(payload: Any) -> str:
             value = payload.get(key)
             if value:
                 return str(value)
+        errors = payload.get("errors")
+        if isinstance(errors, list):
+            messages = []
+            for item in errors:
+                if isinstance(item, dict):
+                    message = item.get("message") or item.get("detail") or item.get("error")
+                    if message:
+                        messages.append(str(message))
+                elif item:
+                    messages.append(str(item))
+            if messages:
+                return "; ".join(messages)
     if isinstance(payload, list):
-        messages = [str(item) for item in payload if item]
+        messages = []
+        for item in payload:
+            if isinstance(item, dict):
+                message = item.get("message") or item.get("detail") or item.get("error")
+                if message:
+                    messages.append(str(message))
+            elif item:
+                messages.append(str(item))
         if messages:
             return "; ".join(messages)
     if isinstance(payload, str) and payload.strip():
