@@ -19,6 +19,7 @@ STATE_FILE = data_path("t17_role_index_state.json")
 THREAD_NAME = "T17 Member Index"
 THREAD_INTRO = "Auto-updated index of tracked members, Discord names, nicknames, and T17 IDs."
 SYNC_DEBOUNCE_SECONDS = 2.0
+MEMBERSHIP_SYNC_COOLDOWN_SECONDS = 300
 TRACKED_ROLE_NAMES = [
     "Basic Trained",
 ]
@@ -91,6 +92,40 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
             if str(entry.get("t17_id") or "").strip()
         }
         self._save_state()
+
+    def _membership_sync_cooldown_until(self) -> float:
+        raw_value = self._state.get("membership_sync_cooldown_until")
+        try:
+            return float(raw_value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _set_membership_sync_cooldown(self, seconds: float) -> None:
+        self._state["membership_sync_cooldown_until"] = max(0.0, seconds)
+        self._save_state()
+
+    def _clear_membership_sync_cooldown(self) -> None:
+        if "membership_sync_cooldown_until" in self._state:
+            self._state.pop("membership_sync_cooldown_until", None)
+            self._save_state()
+
+    def _membership_sync_is_cooling_down(self) -> bool:
+        cooldown_until = self._membership_sync_cooldown_until()
+        if cooldown_until <= 0.0:
+            return False
+        now = asyncio.get_running_loop().time()
+        if now >= cooldown_until:
+            self._clear_membership_sync_cooldown()
+            return False
+        return True
+
+    def _trigger_membership_sync_cooldown(self) -> None:
+        cooldown_until = asyncio.get_running_loop().time() + MEMBERSHIP_SYNC_COOLDOWN_SECONDS
+        self._set_membership_sync_cooldown(cooldown_until)
+
+    def _is_bifrost_high_error_rate_lockout(self, error: BaseException) -> bool:
+        message = str(error or "").casefold()
+        return "high error rate" in message and "restored automatically" in message
 
     def _tracked_role_names(self) -> set[str]:
         return set(TRACKED_ROLE_NAMES)
@@ -344,6 +379,12 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
                 self._membership_sync_warned = True
             return
 
+        if self._membership_sync_is_cooling_down():
+            self.logger.warning("Skipping T17 guild member sync because Bifrost is in a temporary error-rate cooldown")
+            return
+
+        self._clear_membership_sync_cooldown()
+
         previous_members = self._synced_members_state()
         confirmed_members: dict[int, dict[str, str]] = {}
 
@@ -369,6 +410,13 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
                     entry["t17_id"],
                     exc,
                 )
+                if self._is_bifrost_high_error_rate_lockout(exc):
+                    self._trigger_membership_sync_cooldown()
+                    self.logger.warning(
+                        "Pausing T17 guild member sync for %s seconds to let the Bifrost error-rate lockout clear",
+                        MEMBERSHIP_SYNC_COOLDOWN_SECONDS,
+                    )
+                    break
 
         for member_id, entry in previous_members.items():
             if member_id in active_member_ids:
