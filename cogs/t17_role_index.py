@@ -20,6 +20,7 @@ THREAD_NAME = "T17 Member Index"
 THREAD_INTRO = "Auto-updated index of tracked members, Discord names, nicknames, and T17 IDs."
 SYNC_DEBOUNCE_SECONDS = 2.0
 MEMBERSHIP_SYNC_COOLDOWN_SECONDS = 300
+MEMBERSHIP_ADD_PACING_SECONDS = 1.0
 TRACKED_ROLE_NAMES = [
     "Basic Trained",
 ]
@@ -119,8 +120,9 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
             return False
         return True
 
-    def _trigger_membership_sync_cooldown(self) -> None:
-        cooldown_until = asyncio.get_running_loop().time() + MEMBERSHIP_SYNC_COOLDOWN_SECONDS
+    def _trigger_membership_sync_cooldown(self, seconds: float | None = None) -> None:
+        cooldown_seconds = MEMBERSHIP_SYNC_COOLDOWN_SECONDS if seconds is None else max(0.0, seconds)
+        cooldown_until = asyncio.get_running_loop().time() + cooldown_seconds
         self._set_membership_sync_cooldown(cooldown_until)
 
     def _is_bifrost_high_error_rate_lockout(self, error: BaseException) -> bool:
@@ -388,13 +390,14 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
         previous_members = self._synced_members_state()
         confirmed_members: dict[int, dict[str, str]] = {}
 
-        for member_id, entry in current_members.items():
+        for index, (member_id, entry) in enumerate(current_members.items()):
+            if index > 0:
+                await asyncio.sleep(MEMBERSHIP_ADD_PACING_SECONDS)
             try:
                 await self.backend.add_guild_member(
                     entry["t17_id"],
                     entry["player_name"],
                     platform="Xbox",
-                    membership_type="community",
                 )
                 self.logger.info(
                     "t17_role_index_member_added member_id=%s player_id=%s player_name=%r",
@@ -410,6 +413,14 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
                     entry["t17_id"],
                     exc,
                 )
+                retry_after = getattr(exc, "retry_after", None)
+                if retry_after is not None:
+                    self._trigger_membership_sync_cooldown(retry_after)
+                    self.logger.warning(
+                        "Pausing T17 guild member sync for %s seconds to honor the Bifrost retry window",
+                        retry_after,
+                    )
+                    break
                 if self._is_bifrost_high_error_rate_lockout(exc):
                     self._trigger_membership_sync_cooldown()
                     self.logger.warning(

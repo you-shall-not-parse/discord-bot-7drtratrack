@@ -25,7 +25,9 @@ ADMIN_CAM_ROLE = "Spectator"
 
 
 class HLLBackendError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 class HLLBackendConfigError(HLLBackendError):
@@ -44,7 +46,6 @@ class HLLBackendClient(Protocol):
         player_name: str,
         *,
         platform: str = "PC",
-        membership_type: str | None = None,
     ) -> None:
         ...
 
@@ -199,7 +200,6 @@ class CRCONBackendClient:
         player_name: str,
         *,
         platform: str = "PC",
-        membership_type: str | None = None,
     ) -> None:
         raise HLLBackendConfigError("Guild member sync is only supported by the Bifrost backend")
 
@@ -289,7 +289,8 @@ class BifrostBackendClient:
                     retry_after = _extract_retry_after_seconds(payload)
                     if retry_after is None or attempt >= self.max_rate_limit_retries:
                         raise HLLBackendError(
-                            f"Bifrost OAuth rate limited: {_extract_error_message(payload)}"
+                            f"Bifrost OAuth rate limited: {_extract_error_message(payload)}",
+                            retry_after=retry_after,
                         )
                     logger.warning(
                         "bifrost_oauth_rate_limited retry_after=%s attempt=%s",
@@ -340,7 +341,10 @@ class BifrostBackendClient:
             if status_code == 429:
                 retry_after = _extract_retry_after_seconds(payload)
                 if retry_after is None or attempt >= self.max_rate_limit_retries:
-                    raise HLLBackendError(f"Bifrost rate limited: {_extract_error_message(payload)}")
+                    raise HLLBackendError(
+                        f"Bifrost rate limited: {_extract_error_message(payload)}",
+                        retry_after=retry_after,
+                    )
                 logger.warning(
                     "bifrost_graphql_rate_limited retry_after=%s attempt=%s",
                     retry_after,
@@ -364,7 +368,10 @@ class BifrostBackendClient:
                     messages.append(str(item["message"]))
                 elif item:
                     messages.append(str(item))
-            raise HLLBackendError("; ".join(messages) or "Bifrost returned GraphQL errors")
+            raise HLLBackendError(
+                "; ".join(messages) or "Bifrost returned GraphQL errors",
+                retry_after=_extract_retry_after_seconds(payload),
+            )
 
         data = payload.get("data")
         if not isinstance(data, dict):
@@ -415,7 +422,6 @@ class BifrostBackendClient:
         player_name: str,
         *,
         platform: str = "PC",
-        membership_type: str | None = None,
     ) -> None:
         query = (
             "mutation GuildAddMember($input: GuildAddMemberInput!) {"
@@ -427,8 +433,6 @@ class BifrostBackendClient:
             "playerName": player_name,
             "platform": platform,
         }
-        if membership_type is not None:
-            input_payload["membershipType"] = membership_type
         data = await self._graphql(
             query,
             {
