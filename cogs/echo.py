@@ -1,4 +1,6 @@
 import os
+from typing import Optional
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -35,6 +37,14 @@ ECHO_ALLOWED_USER_IDS: set[int] = _parse_user_ids(ECHO_USER_IDS_RAW)
 TARGET_GUILD = discord.Object(id=ECHO_GUILD_ID)
 
 
+def _is_image_attachment(attachment: discord.Attachment) -> bool:
+	content_type = (attachment.content_type or "").lower()
+	if content_type.startswith("image/"):
+		return True
+	filename = attachment.filename.lower()
+	return filename.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"))
+
+
 def _can_use_echo(interaction: discord.Interaction) -> bool:
 	user = interaction.user
 	# Allow by explicit user ID.
@@ -67,6 +77,38 @@ class Echo(commands.Cog):
 		if interaction.channel is not None:
 			await interaction.channel.send(message)
 
+	@app_commands.guilds(TARGET_GUILD)
+	@app_commands.guild_only()
+	@app_commands.command(name="7drechoembed", description="Send an embed with a title, message, and optional image.")
+	@app_commands.describe(
+		title="The embed title",
+		message="The embed message",
+		image="Optional image to attach to the embed"
+	)
+	@app_commands.check(_can_use_echo)
+	async def seven_drechoembed(
+		self,
+		interaction: discord.Interaction,
+		title: str,
+		message: str,
+		image: Optional[discord.Attachment] = None,
+	):
+		if image is not None and not _is_image_attachment(image):
+			await interaction.response.send_message("The optional attachment must be an image.", ephemeral=True)
+			return
+
+		embed = discord.Embed(title=title, description=message, color=discord.Color.red())
+		await interaction.response.send_message("Sent.", ephemeral=True)
+
+		if interaction.channel is None:
+			return
+
+		if image is not None:
+			embed.set_image(url=f"attachment://{image.filename}")
+			await interaction.channel.send(embed=embed, file=await image.to_file())
+		else:
+			await interaction.channel.send(embed=embed)
+
 	@seven_drecho.error
 	async def seven_drecho_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
 		if isinstance(error, app_commands.CheckFailure):
@@ -79,6 +121,10 @@ class Echo(commands.Cog):
 				await interaction.response.send_message(msg, ephemeral=True)
 			return
 		raise error
+
+	@seven_drechoembed.error
+	async def seven_drechoembed_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+		await self.seven_drecho_error(interaction, error)
 
 	@commands.Cog.listener()
 	async def on_ready(self):

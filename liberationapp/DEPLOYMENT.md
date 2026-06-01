@@ -18,6 +18,8 @@ Use `Caddyfile.production` as the starting point.
 
 - `www.hllfrontline.com` redirects to `hllfrontline.com`
 - `hllfrontline.com` reverse proxies to `127.0.0.1:8081`
+- `www.7drhistostats.hllfrontline.com` redirects to `7drhistostats.hllfrontline.com`
+- `7drhistostats.hllfrontline.com` reverse proxies to `127.0.0.1:7010`
 - compression is enabled with `zstd` and `gzip`
 - access logs are written to `/var/log/caddy/hllfrontline.access.log`
 
@@ -42,6 +44,8 @@ Recommended DNS records:
 
 - `A` record: `hllfrontline.com -> 130.162.174.77`
 - `CNAME` record: `www -> hllfrontline.com`
+- `A` record: `7drhistostats.hllfrontline.com -> 130.162.174.77`
+- `CNAME` record: `www.7drhistostats.hllfrontline.com -> 7drhistostats.hllfrontline.com`
 
 Once HTTPS works through Caddy, Cloudflare can be switched from `DNS only` to `Proxied`.
 
@@ -84,6 +88,8 @@ Check the public domain:
 curl -I http://hllfrontline.com
 curl -I https://hllfrontline.com
 curl -I https://www.hllfrontline.com
+curl -I https://7drhistostats.hllfrontline.com
+curl -I https://www.7drhistostats.hllfrontline.com
 ```
 
 Expected result:
@@ -91,3 +97,4 @@ Expected result:
 - HTTP redirects to HTTPS
 - apex domain serves the app
 - `www` redirects to the apex domain
+- `7drhistostats.hllfrontline.com` serves the archive site

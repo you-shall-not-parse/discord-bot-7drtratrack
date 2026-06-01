@@ -16,3 +16,22 @@ hllfrontline.com {
 
     reverse_proxy 127.0.0.1:8081
 }
+
+www.7drhistostats.hllfrontline.com {
+    redir https://7drhistostats.hllfrontline.com{uri} permanent
+}
+
+7drhistostats.hllfrontline.com {
+    encode zstd gzip
+
+    log {
+        output file /var/log/caddy/7drhistostats.access.log {
+            roll_size 10MiB
+            roll_keep 10
+            roll_keep_for 720h
+        }
+        format console
+    }
+
+    reverse_proxy 127.0.0.1:7010
+}
