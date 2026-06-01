@@ -45,6 +45,10 @@ def _is_image_attachment(attachment: discord.Attachment) -> bool:
 	return filename.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"))
 
 
+def _expand_newlines(value: str) -> str:
+	return value.replace("\\n", "\n")
+
+
 def _can_use_echo(interaction: discord.Interaction) -> bool:
 	user = interaction.user
 	# Allow by explicit user ID.
@@ -75,7 +79,7 @@ class Echo(commands.Cog):
 		# Ephemeral ack so the channel doesn't show "<user> used /7drecho".
 		await interaction.response.send_message("Sent.", ephemeral=True)
 		if interaction.channel is not None:
-			await interaction.channel.send(message)
+			await interaction.channel.send(_expand_newlines(message))
 
 	@app_commands.guilds(TARGET_GUILD)
 	@app_commands.guild_only()
@@ -97,7 +101,11 @@ class Echo(commands.Cog):
 			await interaction.response.send_message("The optional attachment must be an image.", ephemeral=True)
 			return
 
-		embed = discord.Embed(title=title, description=message, color=discord.Color.red())
+		embed = discord.Embed(
+			title=_expand_newlines(title),
+			description=_expand_newlines(message),
+			color=discord.Color.red(),
+		)
 		await interaction.response.send_message("Sent.", ephemeral=True)
 
 		if interaction.channel is None:
