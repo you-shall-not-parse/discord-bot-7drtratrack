@@ -59,6 +59,7 @@ WAR_DIARY_MAP_IMAGE_FILES: dict[str, str] = {
 	"Foy": "Foy.png",
 	"Hill 400": "Hill 400.png",
 	"St. Marie Du Mont": "St. Marie Du Mont.png",
+	"Juno Beach": "Juno Beach.png",
 	"Utah Beach": "Utah Beach.png",
 	"St. Mere Eglise": "St. Mere Eglise.png",
 	"El Alamein": "El Alamein.png",
@@ -75,7 +76,29 @@ WAR_DIARY_MAP_IMAGE_FILES: dict[str, str] = {
 	"Stalingrad": "Stalingrad.png",
 }
 
-WAR_DIARY_MAP_OPTIONS: list[str] = [*WAR_DIARY_MAP_IMAGE_FILES.keys(), OTHER_MAP_OPTION]
+WAR_DIARY_MAP_OPTIONS: list[str] = [
+	"Elsenborn Ridge",
+	"Carentan",
+	"Foy",
+	"Hill 400",
+	"St. Marie Du Mont",
+	"Juno Beach",
+	"Utah Beach",
+	"St. Mere Eglise",
+	"El Alamein",
+	"Mortain",
+	"Smolensk",
+	"Driel",
+	"Kursk",
+	"Hurtgen Forest",
+	"Remagen",
+	"Omaha Beach",
+	"Kharkov",
+	"Purple Heart Lane",
+	"Tobruk",
+	"Stalingrad",
+	OTHER_MAP_OPTION,
+]
 
 
 def _safe_int(value: Any) -> Optional[int]:
@@ -936,7 +959,8 @@ class WarDiaryCog(commands.Cog):
 			map_image_file = WAR_DIARY_MAP_IMAGE_FILES.get(map_name)
 			if map_image_file:
 				map_image_path = os.path.join(MAP_IMAGES_DIR, map_image_file)
-				return map_image_path, _media_extension(map_image_path) or ".png"
+				if os.path.exists(map_image_path):
+					return map_image_path, _media_extension(map_image_path) or ".png"
 
 		if os.path.exists(BACKGROUND_IMAGE_PATH):
 			return BACKGROUND_IMAGE_PATH, ".png"

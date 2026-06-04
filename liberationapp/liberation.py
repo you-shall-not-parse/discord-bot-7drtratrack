@@ -53,6 +53,7 @@ MAP_ID_TO_PRETTY: dict[str, str] = {
 	"foy_warfare": "Foy Warfare",
 	"hill400_warfare": "Hill 400 Warfare",
 	"stmariedumont_warfare": "St. Marie Du Mont Warfare",
+	"junobeach_warfare": "Juno Beach Warfare",
 	"utahbeach_warfare": "Utah Beach Warfare",
 	"stmereeglise_warfare": "St. Mere Eglise Warfare",
 	"elalamein_warfare": "El Alamein Warfare",

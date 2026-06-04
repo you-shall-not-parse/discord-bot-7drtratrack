@@ -27,6 +27,7 @@ FRONTLINES_MAP_NAMES: tuple[str, ...] = tuple(
             "Foy Warfare",
             "Hill 400 Warfare",
             "Hurtgen Forest Warfare",
+            "Juno Beach Warfare",
             "Kharkov Warfare",
             "Kursk Warfare",
             "Mortain Warfare (Dusk)",
