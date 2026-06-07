@@ -179,6 +179,32 @@ def _set_last_gamestate_error(message: str | None) -> None:
     MAPVOTE_LAST_GAMESTATE_ERROR = cleaned or None
 
 
+def _coerce_bifrost_gamestate_payload(raw_payload: object) -> dict[str, object]:
+    if isinstance(raw_payload, dict):
+        return raw_payload
+    if isinstance(raw_payload, str):
+        text = raw_payload.strip()
+        if not text:
+            return {}
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _seconds_to_clock(total_seconds: float | int | None) -> str:
+    try:
+        seconds = max(0, int(float(total_seconds or 0)))
+    except (TypeError, ValueError):
+        return "0:00:00"
+
+    hours, remainder = divmod(seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}"
+
+
 def _normalize_bifrost_mapvote_pretty_name(current_map: str | None, current_game_mode: str | None) -> str | None:
     map_name = str(current_map or "").strip()
     game_mode = str(current_game_mode or "").strip()
@@ -281,10 +307,15 @@ async def fetch_gamestate():
         return None
 
     if getattr(MAPVOTE_BACKEND, "provider", "") == "bifrost":
-        payload = data.get("data") if isinstance(data.get("data"), dict) else {}
+        payload = _coerce_bifrost_gamestate_payload(data.get("data"))
         team1 = data.get("team1") if isinstance(data.get("team1"), dict) else {}
         team2 = data.get("team2") if isinstance(data.get("team2"), dict) else {}
-        raw_time_remaining = str(payload.get("timeRemaining") or payload.get("time_remaining") or "0:00:00")
+        match_time_remaining_seconds = data.get("matchTimeRemainingSeconds")
+        raw_time_remaining = str(
+            payload.get("timeRemaining")
+            or payload.get("time_remaining")
+            or _seconds_to_clock(match_time_remaining_seconds)
+        )
 
         try:
             parsed = {
@@ -294,7 +325,7 @@ async def fetch_gamestate():
                     payload.get("currentGameMode") or payload.get("current_game_mode"),
                 ) or str(payload.get("currentMap") or "Unknown"),
                 "current_image_name": payload.get("currentMap") or payload.get("current_map") or "Unknown",
-                "time_remaining": float(data.get("matchTimeRemainingSeconds") or 0),
+                "time_remaining": float(match_time_remaining_seconds or 0),
                 "raw_time_remaining": raw_time_remaining,
                 "axis_players": int(team2.get("playerCount") or 0),
                 "allied_players": int(team1.get("playerCount") or 0),
