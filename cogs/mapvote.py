@@ -208,6 +208,16 @@ def _seconds_to_clock(total_seconds: float | int | None) -> str:
     return f"{hours}:{minutes:02d}:{secs:02d}"
 
 
+def _normalize_raw_time_remaining(raw_value: object, fallback_seconds: float | int | None = None) -> str:
+    text = str(raw_value or "").strip()
+    if text:
+        try:
+            return _seconds_to_clock(int(float(text)))
+        except (TypeError, ValueError):
+            return text
+    return _seconds_to_clock(fallback_seconds)
+
+
 def _first_payload_value(payload: dict[str, object], *keys: str) -> str | None:
     for key in keys:
         value = payload.get(key)
@@ -343,6 +353,7 @@ async def fetch_gamestate():
         team1 = data.get("team1") if isinstance(data.get("team1"), dict) else {}
         team2 = data.get("team2") if isinstance(data.get("team2"), dict) else {}
         match_time_remaining_seconds = data.get("matchTimeRemainingSeconds")
+        current_map_id = _normalize_bifrost_current_map_id(data)
         current_map_name = _first_payload_value(
             payload,
             "currentMap",
@@ -369,17 +380,20 @@ async def fetch_gamestate():
             "name",
             "server.name",
         ) or "Unknown server"
-        raw_time_remaining = str(
+        raw_time_remaining = _normalize_raw_time_remaining(
             payload.get("timeRemaining")
             or payload.get("time_remaining")
             or payload.get("remainingTime")
             or payload.get("remaining_time")
             or payload.get("server.map.timeremaining")
-            or _seconds_to_clock(match_time_remaining_seconds)
+            or "",
+            match_time_remaining_seconds,
         )
 
         try:
             current_map_pretty = _normalize_bifrost_mapvote_pretty_name(current_map_name, current_game_mode)
+            if current_map_id and current_map_id in MAP_ID_TO_PRETTY:
+                current_map_pretty = MAP_ID_TO_PRETTY[current_map_id]
             if current_map_pretty is None:
                 MAPVOTE_LOGGER.info(
                     "Mapvote Bifrost gamestate missing current map fields; payload_keys=%s top_level_keys=%s",
@@ -387,9 +401,9 @@ async def fetch_gamestate():
                     sorted(data.keys()),
                 )
             parsed = {
-                "current_map_id": _normalize_bifrost_current_map_id(data),
+                "current_map_id": current_map_id,
                 "current_map_pretty": current_map_pretty or current_map_name or "Unknown",
-                "current_image_name": current_map_name or "Unknown",
+                "current_image_name": current_map_pretty or current_map_name or "Unknown",
                 "time_remaining": float(match_time_remaining_seconds or 0),
                 "raw_time_remaining": raw_time_remaining,
                 "axis_players": int(team2.get("playerCount") or _first_payload_int(payload, "game.hll.axisplayers.total") or 0),
