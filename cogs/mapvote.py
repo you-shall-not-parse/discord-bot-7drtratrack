@@ -140,6 +140,9 @@ DEFAULT_ROTATION = [
     "utahbeach_warfare",
 ]
 
+# Full rotation template used when a voted winner is promoted to the front.
+MAPVOTE_BASE_ROTATION = list(MAPS.values())
+
 # Map images (put your real CDN URLs back in here)
 MAP_CDN_IMAGES = {
     "Elsenborn Ridge Warfare (Dawn)": "https://cdn.discordapp.com/attachments/1098976074852999261/1444494673149300796/ChatGPT_Image_Nov_30_2025_01_05_17_AM.png?ex=69381ebf&is=6936cd3f&hm=cdb114a6a2550d2d83318d3b3c1d6717022fa0c8665c645818fb8c78b8f71fa3",
@@ -313,6 +316,16 @@ def fmt_vote_secs(sec):
     m = sec // 60
     s = sec % 60
     return f"{m:02d}:{s:02d}"
+
+
+def build_rotation_with_winner(winner_id: str) -> list[str]:
+    winner = str(winner_id or "").strip()
+    if not winner:
+        return list(MAPVOTE_BASE_ROTATION)
+
+    ordered = [winner]
+    ordered.extend(map_id for map_id in MAPVOTE_BASE_ROTATION if map_id != winner)
+    return ordered
 
 
 def load_persistent_state() -> dict:
@@ -1273,12 +1286,13 @@ class MapVote(commands.Cog, name="[API] MapVote"):
             if len(tied) == 1:
                 winner_id = tied[0]
                 pretty = MAP_ID_TO_PRETTY.get(winner_id, winner_id)
-                res = await rcon_set_rotation([winner_id])
+                winner_rotation = build_rotation_with_winner(winner_id)
+                res = await rcon_set_rotation(winner_rotation)
 
                 await self.send_broadcast("WINNER", winner=pretty)
                 self._embed_last_result = f"🏆 Winner: {pretty}"
 
-                await log_channel.send(f"Backend response (set rotation to winner):\n```{res}```")
+                await log_channel.send(f"Backend response (set rotation with winner first):\n```{res}```")
                 print(f"[MapVote] Vote ended, winner {pretty}")
             else:
                 # Tie: choose a random winner from tied maps and announce tie
@@ -1286,12 +1300,13 @@ class MapVote(commands.Cog, name="[API] MapVote"):
                 pretty_winner = MAP_ID_TO_PRETTY.get(winner_id, winner_id)
                 pretty_tied = [MAP_ID_TO_PRETTY.get(mid_t, mid_t) for mid_t in tied]
 
-                res = await rcon_set_rotation([winner_id])
+                winner_rotation = build_rotation_with_winner(winner_id)
+                res = await rcon_set_rotation(winner_rotation)
 
                 await self.send_broadcast("TIE", winner=pretty_winner, tied=", ".join(pretty_tied))
                 self._embed_last_result = f"🤝 Tie: {pretty_winner} selected from {', '.join(pretty_tied)}"
 
-                await log_channel.send(f"Backend response (tie - set rotation to random winner):\n```{res}```")
+                await log_channel.send(f"Backend response (tie - set rotation with random winner first):\n```{res}```")
                 print(f"[MapVote] Tie among {pretty_tied}. Random winner: {pretty_winner}")
 
         # Refresh embed to reflect that the vote is no longer active
