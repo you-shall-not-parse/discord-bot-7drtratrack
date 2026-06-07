@@ -5,6 +5,7 @@ import asyncio
 import os
 import json
 import random
+import logging
 from dotenv import load_dotenv
 from datetime import datetime, timezone, timedelta
 
@@ -168,6 +169,14 @@ DISABLED_CDN_IMAGE = "https://cdn.discordapp.com/attachments/1098976074852999261
 # Back-compat: older constants removed in favor of BROADCAST_SCHEDULE above.
 
 MAPVOTE_BACKEND = get_hll_backend_client()
+MAPVOTE_LOGGER = logging.getLogger("MapVote")
+MAPVOTE_LAST_GAMESTATE_ERROR: str | None = None
+
+
+def _set_last_gamestate_error(message: str | None) -> None:
+    global MAPVOTE_LAST_GAMESTATE_ERROR
+    cleaned = str(message or "").strip()
+    MAPVOTE_LAST_GAMESTATE_ERROR = cleaned or None
 
 
 def _normalize_bifrost_mapvote_pretty_name(current_map: str | None, current_game_mode: str | None) -> str | None:
@@ -262,11 +271,13 @@ async def fetch_gamestate():
     try:
         data = await MAPVOTE_BACKEND.get_mapvote_game_state()
     except HLLBackendError as e:
-        print(f"[MapVote] Gamestate read failed: {e}")
+        _set_last_gamestate_error(str(e))
+        MAPVOTE_LOGGER.warning("Mapvote gamestate read failed: %s", e)
         return None
 
     if not data:
-        print("[MapVote] Gamestate read failed: empty response")
+        _set_last_gamestate_error("empty response from HLL backend")
+        MAPVOTE_LOGGER.warning("Mapvote gamestate read failed: empty response")
         return None
 
     if getattr(MAPVOTE_BACKEND, "provider", "") == "bifrost":
@@ -276,7 +287,7 @@ async def fetch_gamestate():
         raw_time_remaining = str(payload.get("timeRemaining") or payload.get("time_remaining") or "0:00:00")
 
         try:
-            return {
+            parsed = {
                 "current_map_id": _normalize_bifrost_current_map_id(data),
                 "current_map_pretty": _normalize_bifrost_mapvote_pretty_name(
                     payload.get("currentMap") or payload.get("current_map"),
@@ -291,15 +302,18 @@ async def fetch_gamestate():
                 "allied_score": int(team1.get("score") or 0),
                 "server_name": payload.get("serverName", "Unknown server"),
             }
+            _set_last_gamestate_error(None)
+            return parsed
         except Exception as e:
-            print("[MapVote] Error parsing Bifrost gamestate:", e, data)
+            _set_last_gamestate_error(f"Bifrost gamestate parse error: {e}")
+            MAPVOTE_LOGGER.warning("Mapvote Bifrost gamestate parse failed: %s | payload=%r", e, data)
             return None
 
     res = data
     cur = res.get("current_map", {})
 
     try:
-        return {
+        parsed = {
             "current_map_id": cur.get("id"),
             "current_map_pretty": cur.get("pretty_name"),
             "current_image_name": cur.get("image_name"),
@@ -311,8 +325,11 @@ async def fetch_gamestate():
             "allied_score": int(res.get("allied_score", 0)),
             "server_name": res.get("server_name", "Unknown server"),
         }
+        _set_last_gamestate_error(None)
+        return parsed
     except Exception as e:
-        print("[MapVote] Error parsing gamestate:", e, data)
+        _set_last_gamestate_error(f"Gamestate parse error: {e}")
+        MAPVOTE_LOGGER.warning("Mapvote gamestate parse failed: %s | payload=%r", e, data)
         return None
 
 
@@ -882,6 +899,8 @@ class MapVote(commands.Cog, name="[API] MapVote"):
                 "Map voting is currently **offline**.\n"
                 "The server will continue using its current map rotation."
             )
+            if MAPVOTE_LAST_GAMESTATE_ERROR:
+                embed.description += f"\n\n**Last backend error:** `{MAPVOTE_LAST_GAMESTATE_ERROR}`"
             embed.set_image(url=OFFLINE_CDN_IMAGE)
 
         elif status == "DISABLED":
