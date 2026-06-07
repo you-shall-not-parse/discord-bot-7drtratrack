@@ -374,6 +374,8 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
         self,
         current_members: dict[int, dict[str, str]],
         active_member_ids: set[int],
+        *,
+        reason: str,
     ) -> None:
         if getattr(self.backend, "provider", "") != "bifrost":
             if not self._membership_sync_warned:
@@ -391,6 +393,18 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
         confirmed_members: dict[int, dict[str, str]] = {}
 
         for index, (member_id, entry) in enumerate(current_members.items()):
+            previous_entry = previous_members.get(member_id)
+            if (
+                reason == "ready"
+                and previous_entry is not None
+                and previous_entry.get("t17_id") == entry.get("t17_id")
+            ):
+                confirmed_members[member_id] = {
+                    "t17_id": entry["t17_id"],
+                    "player_name": entry["player_name"],
+                }
+                continue
+
             if index > 0:
                 await asyncio.sleep(MEMBERSHIP_ADD_PACING_SECONDS)
             try:
@@ -469,7 +483,7 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
         async with self._sync_lock:
             self.logger.info("t17_role_index_sync_start reason=%s", reason)
             batches, current_members, active_member_ids = await self._build_embed_batches(guild)
-            await self._sync_guild_membership(current_members, active_member_ids)
+            await self._sync_guild_membership(current_members, active_member_ids, reason=reason)
 
             forum = await self._get_forum_channel()
             if forum is None:
