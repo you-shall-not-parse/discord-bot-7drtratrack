@@ -6,6 +6,7 @@ import logging
 import os
 import time
 import urllib.parse
+from datetime import datetime
 from typing import Any, Protocol
 
 import requests
@@ -38,6 +39,18 @@ class HLLBackendClient(Protocol):
     provider: str
 
     async def resolve_player_id_by_name(self, player_name: str) -> str | None:
+        ...
+
+    async def get_mapvote_game_state(self) -> dict[str, Any] | None:
+        ...
+
+    async def get_mapvote_logs(self) -> list[dict[str, Any]]:
+        ...
+
+    async def set_mapvote_rotation(self, map_ids: list[str]) -> dict[str, Any]:
+        ...
+
+    async def send_mapvote_message_to_all(self, message: str) -> dict[str, Any]:
         ...
 
     async def add_guild_member(
@@ -145,6 +158,27 @@ def _parse_response_payload(response: requests.Response) -> Any:
         return body
 
 
+def _iso_to_timestamp_ms(value: str | None) -> int:
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return 0
+    try:
+        return int(datetime.fromisoformat(raw_value.replace("Z", "+00:00")).timestamp() * 1000)
+    except ValueError:
+        return 0
+
+
+def _infer_rotation_game_mode(map_id: str) -> str:
+    normalized = str(map_id or "").strip().casefold()
+    if "offensive" in normalized:
+        return "Offensive"
+    if "control" in normalized:
+        return "Control"
+    if "skirmish" in normalized:
+        return "Skirmish"
+    return "Warfare"
+
+
 class CRCONBackendClient:
     provider = "crcon"
 
@@ -193,6 +227,63 @@ class CRCONBackendClient:
         if not isinstance(payload, dict) or payload.get("failed") or payload.get("error"):
             return None
         return _extract_first_player_id(payload.get("result", payload))
+
+    async def get_mapvote_game_state(self) -> dict[str, Any] | None:
+        status, payload = await self._request("GET", "get_gamestate")
+        if status >= 400:
+            raise HLLBackendError(_extract_error_message(payload))
+        if not isinstance(payload, dict) or payload.get("failed") or payload.get("error"):
+            return None
+        result = payload.get("result")
+        return result if isinstance(result, dict) else None
+
+    async def get_mapvote_logs(self) -> list[dict[str, Any]]:
+        status, payload = await self._request("GET", "get_recent_logs")
+        if status >= 400:
+            raise HLLBackendError(_extract_error_message(payload))
+        if not isinstance(payload, dict) or payload.get("failed") or payload.get("error"):
+            return []
+        result = payload.get("result")
+        logs = result.get("logs") if isinstance(result, dict) else None
+        return [item for item in logs if isinstance(item, dict)] if isinstance(logs, list) else []
+
+    async def set_mapvote_rotation(self, map_ids: list[str]) -> dict[str, Any]:
+        status, payload = await self._request("POST", "set_map_rotation", {"map_names": map_ids})
+        if status >= 400:
+            raise HLLBackendError(_extract_error_message(payload))
+        if isinstance(payload, dict):
+            payload.setdefault("_http_status", status)
+            payload.setdefault("_provider", self.provider)
+            return payload
+        return {"success": True, "result": payload, "_http_status": status, "_provider": self.provider}
+
+    async def send_mapvote_message_to_all(self, message: str) -> dict[str, Any]:
+        payload = {"message": message}
+        status, response_payload = await self._request("POST", "message_all_players", payload)
+        if status >= 400 and status not in (404, 405):
+            raise HLLBackendError(_extract_error_message(response_payload))
+
+        unsupported = status in (404, 405)
+        if isinstance(response_payload, dict):
+            response_blob = json.dumps(response_payload, default=str).casefold()
+            if "not found" in response_blob or "unknown endpoint" in response_blob or "no route" in response_blob:
+                unsupported = True
+
+        if unsupported:
+            fallback_status, fallback_payload = await self._request("POST", "server_broadcast", payload)
+            if fallback_status >= 400:
+                raise HLLBackendError(_extract_error_message(fallback_payload))
+            if isinstance(fallback_payload, dict):
+                fallback_payload.setdefault("_http_status", fallback_status)
+                fallback_payload.setdefault("_provider", self.provider)
+                return fallback_payload
+            return {"success": True, "result": fallback_payload, "_http_status": fallback_status, "_provider": self.provider}
+
+        if isinstance(response_payload, dict):
+            response_payload.setdefault("_http_status", status)
+            response_payload.setdefault("_provider", self.provider)
+            return response_payload
+        return {"success": True, "result": response_payload, "_http_status": status, "_provider": self.provider}
 
     async def add_guild_member(
         self,
@@ -415,6 +506,118 @@ class BifrostBackendClient:
                 break
 
         return exact_match or first_match
+
+    async def get_mapvote_game_state(self) -> dict[str, Any] | None:
+        query = (
+            "query GuildGetGameState($serverId: ID!, $gameType: String) {"
+            " guildGetGameState(serverId: $serverId, gameType: $gameType) {"
+            " data timestamp matchTimeRemainingSeconds"
+            " team1 { teamName name playerCount score faction }"
+            " team2 { teamName name playerCount score faction }"
+            " nextMap nextMapGameMode pendingNextMap"
+            " }"
+            "}"
+        )
+        data = await self._graphql(
+            query,
+            {
+                "serverId": self.server_id,
+                "gameType": self.game_type,
+            },
+        )
+        payload = data.get("guildGetGameState") or {}
+        return payload if isinstance(payload, dict) else None
+
+    async def get_mapvote_logs(self) -> list[dict[str, Any]]:
+        query = (
+            "query GuildGetLogs($serverId: ID!, $gameType: String) {"
+            " guildGetLogs(serverId: $serverId, gameType: $gameType) {"
+            " success totalCount error timestamp"
+            " logs { action timestamp data }"
+            " }"
+            "}"
+        )
+        data = await self._graphql(
+            query,
+            {
+                "serverId": self.server_id,
+                "gameType": self.game_type,
+            },
+        )
+        payload = data.get("guildGetLogs") or {}
+        if not isinstance(payload, dict):
+            return []
+        if payload.get("error"):
+            raise HLLBackendError(str(payload["error"]), retry_after=_extract_retry_after_seconds(payload))
+
+        logs = payload.get("logs")
+        normalized_logs: list[dict[str, Any]] = []
+        if not isinstance(logs, list):
+            return normalized_logs
+
+        for item in logs:
+            if not isinstance(item, dict):
+                continue
+            timestamp = str(item.get("timestamp") or "").strip()
+            timestamp_ms = _iso_to_timestamp_ms(timestamp)
+            normalized_logs.append(
+                {
+                    "action": str(item.get("action") or item.get("type") or "").strip(),
+                    "timestamp": timestamp,
+                    "timestamp_ms": timestamp_ms,
+                    "id": timestamp_ms,
+                    "data": item.get("data"),
+                }
+            )
+        return normalized_logs
+
+    async def set_mapvote_rotation(self, map_ids: list[str]) -> dict[str, Any]:
+        query = (
+            "mutation GuildSetServerRotation($serverId: ID!, $rotation: [MapRotationInput!]!, $gameType: String) {"
+            " guildSetServerRotation(serverId: $serverId, rotation: $rotation, gameType: $gameType) { success message }"
+            "}"
+        )
+        rotation = [
+            {
+                "mapName": map_id,
+                "gameMode": _infer_rotation_game_mode(map_id),
+            }
+            for map_id in map_ids
+        ]
+        data = await self._graphql(
+            query,
+            {
+                "serverId": self.server_id,
+                "rotation": rotation,
+                "gameType": self.game_type,
+            },
+        )
+        payload = data.get("guildSetServerRotation") or {}
+        if not isinstance(payload, dict) or not payload.get("success"):
+            raise HLLBackendError(_extract_error_message(payload))
+        payload.setdefault("_provider", self.provider)
+        return payload
+
+    async def send_mapvote_message_to_all(self, message: str) -> dict[str, Any]:
+        query = (
+            "mutation GuildSendMessageToAll($input: GuildSendMessageToAllInput!) {"
+            " guildSendMessageToAll(input: $input) { success message playersNotified error timestamp }"
+            "}"
+        )
+        data = await self._graphql(
+            query,
+            {
+                "input": {
+                    "serverId": self.server_id,
+                    "message": message,
+                }
+            },
+        )
+        payload = data.get("guildSendMessageToAll") or {}
+        if not isinstance(payload, dict) or not payload.get("success"):
+            raise HLLBackendError(_extract_error_message(payload))
+        payload.setdefault("_provider", self.provider)
+        return payload
 
     async def add_guild_member(
         self,

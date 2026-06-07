@@ -5,12 +5,12 @@ import asyncio
 import os
 import json
 import random
-import requests
 from dotenv import load_dotenv
 from datetime import datetime, timezone, timedelta
 
-from config import CRCON_PANEL_URL, MAIN_GUILD_ID
+from config import MAIN_GUILD_ID
 from data_paths import data_path
+from hll_API_backend import HLLBackendError, get_hll_backend_client
 
 load_dotenv()
 
@@ -167,63 +167,63 @@ DISABLED_CDN_IMAGE = "https://cdn.discordapp.com/attachments/1098976074852999261
 
 # Back-compat: older constants removed in favor of BROADCAST_SCHEDULE above.
 
-# --------------------------------------------------
-# CRCON API (Bearer token)
-# -----------------------------------------------
-
-CRCON_API_KEY = os.getenv("CRCON_API_KEY")
+MAPVOTE_BACKEND = get_hll_backend_client()
 
 
-def rcon_get(endpoint: str):
-    try:
-        r = requests.get(
-            CRCON_PANEL_URL + endpoint,
-            headers={"Authorization": f"Bearer {CRCON_API_KEY}"},
-            timeout=10
+def _normalize_bifrost_mapvote_pretty_name(current_map: str | None, current_game_mode: str | None) -> str | None:
+    map_name = str(current_map or "").strip()
+    game_mode = str(current_game_mode or "").strip()
+    if not map_name and not game_mode:
+        return None
+
+    combined = f"{map_name} {game_mode}".strip()
+    if combined in MAPS:
+        return combined
+    return combined or map_name or None
+
+
+def _normalize_bifrost_current_map_id(raw_state: dict[str, object]) -> str | None:
+    payload = raw_state.get("data") if isinstance(raw_state.get("data"), dict) else {}
+    if isinstance(payload, dict):
+        for key in ("currentMapId", "current_map_id", "currentMapRconName", "current_map_rcon_name"):
+            value = str(payload.get(key) or "").strip()
+            if value:
+                return value
+
+        current_pretty = _normalize_bifrost_mapvote_pretty_name(
+            payload.get("currentMap") or payload.get("current_map"),
+            payload.get("currentGameMode") or payload.get("current_game_mode"),
         )
-        return r.json()
-    except Exception as e:
-        print(f"[MapVote] rcon_get error on {endpoint}: {e}")
-        return {"error": str(e)}
+        if current_pretty and current_pretty in MAPS:
+            return MAPS[current_pretty]
+
+    return None
 
 
-def rcon_post(endpoint: str, payload: dict):
+async def rcon_set_rotation(map_ids: list[str]):
     try:
-        r = requests.post(
-            CRCON_PANEL_URL + endpoint,
-            json=payload,
-            headers={"Authorization": f"Bearer {CRCON_API_KEY}"},
-            timeout=10
-        )
-        try:
-            data = r.json()
-            # Preserve existing return shapes, but annotate dict responses with HTTP status
-            if isinstance(data, dict):
-                data.setdefault("_http_status", r.status_code)
-                data.setdefault("_endpoint", endpoint)
-            return data
-        except Exception:
-            return {
-                "status": r.status_code,
-                "_http_status": r.status_code,
-                "_endpoint": endpoint,
-                "text": r.text or "",
-            }
-    except Exception as e:
-        print(f"[MapVote] rcon_post error on {endpoint}: {e}")
-        return {"error": str(e)}
+        return await MAPVOTE_BACKEND.set_mapvote_rotation(map_ids)
+    except HLLBackendError as e:
+        print(f"[MapVote] set rotation failed: {e}")
+        return {"error": str(e), "failed": True}
 
 
-def rcon_set_rotation(map_ids: list[str]):
-    """Wrapper around set_map_rotation."""
-    return rcon_post("set_map_rotation", {"map_names": map_ids})
+async def rcon_get_recent_logs(filter_actions: list[str], limit: int = 100):
+    try:
+        logs = await MAPVOTE_BACKEND.get_mapvote_logs()
+    except HLLBackendError as e:
+        print(f"[MapVote] recent logs failed: {e}")
+        return {"error": str(e), "failed": True}
 
-
-def rcon_get_recent_logs(filter_actions: list[str], limit: int = 100):
-    """Get recent logs filtered by action types."""
-    params = "&".join([f"filter_action={action}" for action in filter_actions])
-    endpoint = f"get_recent_logs?{params}&limit={limit}"
-    return rcon_get(endpoint)
+    selected_actions = {str(action or "").strip().upper() for action in filter_actions}
+    filtered_logs = [
+        log for log in logs
+        if str(log.get("action") or "").strip().upper() in selected_actions
+    ]
+    filtered_logs.sort(key=lambda item: item.get("timestamp_ms") or item.get("id") or 0)
+    if limit > 0:
+        filtered_logs = filtered_logs[-limit:]
+    return {"result": {"logs": filtered_logs}}
 
 
 # --------------------------------------------------
@@ -259,12 +259,43 @@ def save_persistent_state(data: dict):
 
 
 async def fetch_gamestate():
-    data = rcon_get("get_gamestate")
-    if not data or data.get("failed") or data.get("error"):
-        print("[MapVote] Gamestate read failed:", data)
+    try:
+        data = await MAPVOTE_BACKEND.get_mapvote_game_state()
+    except HLLBackendError as e:
+        print(f"[MapVote] Gamestate read failed: {e}")
         return None
 
-    res = data.get("result", {})
+    if not data:
+        print("[MapVote] Gamestate read failed: empty response")
+        return None
+
+    if getattr(MAPVOTE_BACKEND, "provider", "") == "bifrost":
+        payload = data.get("data") if isinstance(data.get("data"), dict) else {}
+        team1 = data.get("team1") if isinstance(data.get("team1"), dict) else {}
+        team2 = data.get("team2") if isinstance(data.get("team2"), dict) else {}
+        raw_time_remaining = str(payload.get("timeRemaining") or payload.get("time_remaining") or "0:00:00")
+
+        try:
+            return {
+                "current_map_id": _normalize_bifrost_current_map_id(data),
+                "current_map_pretty": _normalize_bifrost_mapvote_pretty_name(
+                    payload.get("currentMap") or payload.get("current_map"),
+                    payload.get("currentGameMode") or payload.get("current_game_mode"),
+                ) or str(payload.get("currentMap") or "Unknown"),
+                "current_image_name": payload.get("currentMap") or payload.get("current_map") or "Unknown",
+                "time_remaining": float(data.get("matchTimeRemainingSeconds") or 0),
+                "raw_time_remaining": raw_time_remaining,
+                "axis_players": int(team2.get("playerCount") or 0),
+                "allied_players": int(team1.get("playerCount") or 0),
+                "axis_score": int(team2.get("score") or 0),
+                "allied_score": int(team1.get("score") or 0),
+                "server_name": payload.get("serverName", "Unknown server"),
+            }
+        except Exception as e:
+            print("[MapVote] Error parsing Bifrost gamestate:", e, data)
+            return None
+
+    res = data
     cur = res.get("current_map", {})
 
     try:
@@ -432,7 +463,7 @@ class MapVoteSelect(discord.ui.Select):
             ephemeral=True
         )
 
-        # Refresh the live embed without forcing a new CRCON read.
+        # Refresh the live embed without forcing a new backend read.
         await self.cog.refresh_active_embed(force=False)
 
 
@@ -490,13 +521,13 @@ class MapVote(commands.Cog, name="[API] MapVote"):
         self._last_gamestate_ts = now_ts
         return gs
 
-    def _fast_forward_match_log_cursor(self):
+    async def _fast_forward_match_log_cursor(self):
         """Advance last_processed_log_id to the newest match log entry.
 
         This prevents replaying a backlog of Match Start/Ended logs after the
         bot has been disabled/offline for a while.
         """
-        logs_data = rcon_get_recent_logs(["Match Start", "Match Ended", "Match"], limit=1)
+        logs_data = await rcon_get_recent_logs(["Match Start", "Match Ended", "Match"], limit=1)
         if not logs_data or logs_data.get("error") or logs_data.get("failed"):
             return
 
@@ -541,9 +572,9 @@ class MapVote(commands.Cog, name="[API] MapVote"):
         for attr in extra_reset_attrs or []:
             setattr(self, attr, None)
 
-    def _get_latest_match_start_id(self) -> int | None:
+    async def _get_latest_match_start_id(self) -> int | None:
         """Return timestamp_ms/id of the latest Match Start log entry."""
-        logs_data = rcon_get_recent_logs(["Match Start"], limit=1)
+        logs_data = await rcon_get_recent_logs(["Match Start"], limit=1)
         if not logs_data or logs_data.get("error") or logs_data.get("failed"):
             return None
         logs = logs_data.get("result", {}).get("logs", []) or []
@@ -556,13 +587,13 @@ class MapVote(commands.Cog, name="[API] MapVote"):
         except Exception:
             return None
 
-    def _schedule_broadcast_start(self):
+    async def _schedule_broadcast_start(self):
         """Schedule BROADCAST_START for X minutes after match start."""
         cfg = BROADCAST_SCHEDULE.get("START", {})
         if not cfg.get("enabled", True):
             return
 
-        match_id = self._get_latest_match_start_id()
+        match_id = await self._get_latest_match_start_id()
 
         # If we can't identify the match, just schedule from "now" as best-effort.
         if not match_id:
@@ -630,7 +661,7 @@ class MapVote(commands.Cog, name="[API] MapVote"):
 
             # Ensure we're still in the same match (if match_id is known)
             if match_id is not None:
-                current_match_id = self._get_latest_match_start_id()
+                current_match_id = await self._get_latest_match_start_id()
                 # If we can't read logs right now, don't abort the broadcast.
                 # We'll send best-effort rather than silently skipping.
                 if current_match_id is not None and current_match_id != match_id:
@@ -693,7 +724,7 @@ class MapVote(commands.Cog, name="[API] MapVote"):
         # Prevent replaying a backlog of match logs after downtime.
         # We'll derive the current state from gamestate instead.
         try:
-            self._fast_forward_match_log_cursor()
+            await self._fast_forward_match_log_cursor()
         except Exception as e:
             print(f"[MapVote] Failed to fast-forward match log cursor: {e}")
 
@@ -719,59 +750,14 @@ class MapVote(commands.Cog, name="[API] MapVote"):
         if not message:
             return
 
-        if not CRCON_API_KEY:
-            print("[MapVote] message_all_players: CRCON_API_KEY is not set; cannot broadcast")
+        try:
+            resp = await MAPVOTE_BACKEND.send_mapvote_message_to_all(message)
+        except HLLBackendError as e:
+            print(f"[MapVote] message_all_players failed: {e}")
             return
 
-        async def _try(endpoint: str):
-            resp = rcon_post(endpoint, {"message": message})
-            return resp
-
-        # CRCON historically used `message_all_players`, but some deployments expose `server_broadcast`.
-        # Try the primary endpoint first, then fallback if it looks unsupported.
-        resp = await _try("message_all_players")
-
-        # Some CRCON variants return a raw JSON boolean.
-        if isinstance(resp, bool):
-            if not resp:
-                print("[MapVote] message_all_players: message_all_players returned False")
-            return
-
-        # If we got a non-JSON response, rcon_post returns {status/text}.
-        if isinstance(resp, dict):
-            http_status = resp.get("_http_status") or resp.get("status")
-
-            # Some CRCON frontends return 200 with an error JSON body for unknown endpoints.
-            # Treat common "not found" patterns as unsupported and try the fallback.
-            resp_text = (resp.get("text") or "") if isinstance(resp.get("text"), str) else ""
-            try:
-                resp_blob = (resp_text + " " + json.dumps(resp, default=str)).lower()
-            except Exception:
-                resp_blob = (resp_text + " " + str(resp)).lower()
-
-            # Fallback on common "endpoint not found" / "method not allowed" statuses.
-            looks_unsupported = http_status in (404, 405)
-            if "not found" in resp_blob or "unknown endpoint" in resp_blob or "no route" in resp_blob:
-                looks_unsupported = True
-
-            if looks_unsupported:
-                fallback = await _try("server_broadcast")
-                if isinstance(fallback, bool):
-                    if not fallback:
-                        print("[MapVote] message_all_players: server_broadcast returned False")
-                    return
-                if isinstance(fallback, dict):
-                    fb_status = fallback.get("_http_status") or fallback.get("status")
-                    if fb_status and int(fb_status) >= 400:
-                        print("[MapVote] message_all_players: server_broadcast failed:", fallback)
-                    return
-
-            if http_status and int(http_status) >= 400:
-                print("[MapVote] message_all_players failed:", resp)
-                return
-
-        if not resp or (isinstance(resp, dict) and (resp.get("error") or resp.get("failed"))):
-            print("[MapVote] message_all_players: message_all_players failed:", resp)
+        if not resp or (isinstance(resp, dict) and (resp.get("error") or resp.get("failed") or resp.get("success") is False)):
+            print("[MapVote] message_all_players failed:", resp)
 
     async def send_broadcast(self, key: str, **fmt_kwargs):
         cfg = BROADCAST_SCHEDULE.get(key)
@@ -807,7 +793,7 @@ class MapVote(commands.Cog, name="[API] MapVote"):
 
         # Do NOT replay historical match logs when coming back online.
         # Fast-forward the cursor first, then enable voting.
-        self._fast_forward_match_log_cursor()
+        await self._fast_forward_match_log_cursor()
 
         self.mapvote_enabled = True
         self._save_state_file()
@@ -856,7 +842,7 @@ class MapVote(commands.Cog, name="[API] MapVote"):
         self._save_state_file()
 
         if DEFAULT_ROTATION:
-            rcon_set_rotation(DEFAULT_ROTATION)
+            await rcon_set_rotation(DEFAULT_ROTATION)
 
         await interaction.response.send_message(
             "⛔ Map voting has been **disabled** and the **default map rotation** has been restored.",
@@ -892,7 +878,7 @@ class MapVote(commands.Cog, name="[API] MapVote"):
         # Status-specific description + image
         if status == "OFFLINE":
             embed.description = (
-                "⚠️ **CRCON / API unreachable or server offline.**\n\n"
+                "⚠️ **HLL backend unreachable or server offline.**\n\n"
                 "Map voting is currently **offline**.\n"
                 "The server will continue using its current map rotation."
             )
@@ -1121,7 +1107,7 @@ class MapVote(commands.Cog, name="[API] MapVote"):
 
         print(f"[MapVote] Vote started for {gs['current_map_pretty']}")
         # Schedule the in-game broadcast for X minutes into the match.
-        self._schedule_broadcast_start()
+        await self._schedule_broadcast_start()
 
     async def end_vote_and_queue(self, gs: dict):
         """End the current vote and update map rotation."""
@@ -1133,7 +1119,7 @@ class MapVote(commands.Cog, name="[API] MapVote"):
             print("[MapVote] end_vote_and_queue called with no channel")
             return
 
-        # Resolve log destination for CRCON responses (can be a thread)
+        # Resolve log destination for backend responses (can be a thread)
         log_channel = self.bot.get_channel(MAPVOTE_LOG_CHANNEL_ID)
         if log_channel is None:
             try:
@@ -1148,22 +1134,22 @@ class MapVote(commands.Cog, name="[API] MapVote"):
         tied = self.state.winners_tied()
         if not tied:
             # No votes: use default rotation
-            res = rcon_set_rotation(DEFAULT_ROTATION)
+            res = await rcon_set_rotation(DEFAULT_ROTATION)
 
             await self.send_broadcast("NO_VOTES")
             self._embed_last_result = "No votes — default map rotation restored."
-            await log_channel.send(f"CRCON Response (restored default rotation - no votes):\n```{res}```")
+            await log_channel.send(f"Backend response (restored default rotation - no votes):\n```{res}```")
             print("[MapVote] Vote ended with no votes — restored default rotation.")
         else:
             if len(tied) == 1:
                 winner_id = tied[0]
                 pretty = MAP_ID_TO_PRETTY.get(winner_id, winner_id)
-                res = rcon_set_rotation([winner_id])
+                res = await rcon_set_rotation([winner_id])
 
                 await self.send_broadcast("WINNER", winner=pretty)
                 self._embed_last_result = f"🏆 Winner: {pretty}"
 
-                await log_channel.send(f"CRCON Response (set rotation to winner):\n```{res}```")
+                await log_channel.send(f"Backend response (set rotation to winner):\n```{res}```")
                 print(f"[MapVote] Vote ended, winner {pretty}")
             else:
                 # Tie: choose a random winner from tied maps and announce tie
@@ -1171,12 +1157,12 @@ class MapVote(commands.Cog, name="[API] MapVote"):
                 pretty_winner = MAP_ID_TO_PRETTY.get(winner_id, winner_id)
                 pretty_tied = [MAP_ID_TO_PRETTY.get(mid_t, mid_t) for mid_t in tied]
 
-                res = rcon_set_rotation([winner_id])
+                res = await rcon_set_rotation([winner_id])
 
                 await self.send_broadcast("TIE", winner=pretty_winner, tied=", ".join(pretty_tied))
                 self._embed_last_result = f"🤝 Tie: {pretty_winner} selected from {', '.join(pretty_tied)}"
 
-                await log_channel.send(f"CRCON Response (tie - set rotation to random winner):\n```{res}```")
+                await log_channel.send(f"Backend response (tie - set rotation to random winner):\n```{res}```")
                 print(f"[MapVote] Tie among {pretty_tied}. Random winner: {pretty_winner}")
 
         # Refresh embed to reflect that the vote is no longer active
@@ -1236,7 +1222,7 @@ class MapVote(commands.Cog, name="[API] MapVote"):
 
     async def check_match_events(self, gs: dict):
         """Check audit logs for match start/end events."""
-        logs_data = rcon_get_recent_logs(["Match Start", "Match Ended", "Match"], limit=100)
+        logs_data = await rcon_get_recent_logs(["Match Start", "Match Ended", "Match"], limit=100)
         if not logs_data or logs_data.get("error") or logs_data.get("failed"):
             return
 
