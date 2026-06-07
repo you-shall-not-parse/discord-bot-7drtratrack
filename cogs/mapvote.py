@@ -33,6 +33,9 @@ VOTE_END_OFFSET_SECONDS = 120
 # Embed update speed
 EMBED_UPDATE_INTERVAL = 10
 
+# Bifrost allows guildGetGameState once every 30 seconds per server.
+GAMESTATE_FETCH_INTERVAL = 30
+
 # Match event audit-log checks can run much slower than the embed redraw loop.
 MATCH_LOG_CHECK_INTERVAL = 30
 
@@ -623,7 +626,7 @@ class MapVote(commands.Cog, name="[API] MapVote"):
 
     async def get_cached_gamestate(self, *, force: bool = False) -> dict | None:
         now_ts = asyncio.get_running_loop().time()
-        if not force and (now_ts - self._last_gamestate_ts) < EMBED_UPDATE_INTERVAL:
+        if not force and (now_ts - self._last_gamestate_ts) < GAMESTATE_FETCH_INTERVAL:
             return self._last_gamestate
 
         gs = await fetch_gamestate()
@@ -1285,7 +1288,7 @@ class MapVote(commands.Cog, name="[API] MapVote"):
     # --------------------------------------------------
     @tasks.loop(seconds=EMBED_UPDATE_INTERVAL)
     async def tick_task(self):
-        gs = await self.get_cached_gamestate(force=True)
+        gs = await self.get_cached_gamestate(force=False)
         status = classify_status(gs, self.mapvote_enabled)
 
         # Status-based behaviour
