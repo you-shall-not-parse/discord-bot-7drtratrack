@@ -205,6 +205,15 @@ def _seconds_to_clock(total_seconds: float | int | None) -> str:
     return f"{hours}:{minutes:02d}:{secs:02d}"
 
 
+def _first_payload_value(payload: dict[str, object], *keys: str) -> str | None:
+    for key in keys:
+        value = payload.get(key)
+        text = str(value or "").strip()
+        if text:
+            return text
+    return None
+
+
 def _normalize_bifrost_mapvote_pretty_name(current_map: str | None, current_game_mode: str | None) -> str | None:
     map_name = str(current_map or "").strip()
     game_mode = str(current_game_mode or "").strip()
@@ -218,16 +227,25 @@ def _normalize_bifrost_mapvote_pretty_name(current_map: str | None, current_game
 
 
 def _normalize_bifrost_current_map_id(raw_state: dict[str, object]) -> str | None:
-    payload = raw_state.get("data") if isinstance(raw_state.get("data"), dict) else {}
+    payload = _coerce_bifrost_gamestate_payload(raw_state.get("data"))
     if isinstance(payload, dict):
-        for key in ("currentMapId", "current_map_id", "currentMapRconName", "current_map_rcon_name"):
+        for key in (
+            "currentMapId",
+            "current_map_id",
+            "currentMapRconName",
+            "current_map_rcon_name",
+            "mapId",
+            "map_id",
+            "mapName",
+            "map_name",
+        ):
             value = str(payload.get(key) or "").strip()
             if value:
                 return value
 
         current_pretty = _normalize_bifrost_mapvote_pretty_name(
-            payload.get("currentMap") or payload.get("current_map"),
-            payload.get("currentGameMode") or payload.get("current_game_mode"),
+            _first_payload_value(payload, "currentMap", "current_map", "map", "mapName", "map_name"),
+            _first_payload_value(payload, "currentGameMode", "current_game_mode", "gameMode", "gamemode", "game_mode"),
         )
         if current_pretty and current_pretty in MAPS:
             return MAPS[current_pretty]
@@ -308,30 +326,40 @@ async def fetch_gamestate():
 
     if getattr(MAPVOTE_BACKEND, "provider", "") == "bifrost":
         payload = _coerce_bifrost_gamestate_payload(data.get("data"))
+        score_payload = payload.get("score") if isinstance(payload.get("score"), dict) else {}
         team1 = data.get("team1") if isinstance(data.get("team1"), dict) else {}
         team2 = data.get("team2") if isinstance(data.get("team2"), dict) else {}
         match_time_remaining_seconds = data.get("matchTimeRemainingSeconds")
+        current_map_name = _first_payload_value(payload, "currentMap", "current_map", "map", "mapName", "map_name")
+        current_game_mode = _first_payload_value(payload, "currentGameMode", "current_game_mode", "gameMode", "gamemode", "game_mode")
+        server_name = _first_payload_value(payload, "serverName", "server_name", "server", "name") or "Unknown server"
         raw_time_remaining = str(
             payload.get("timeRemaining")
             or payload.get("time_remaining")
+            or payload.get("remainingTime")
+            or payload.get("remaining_time")
             or _seconds_to_clock(match_time_remaining_seconds)
         )
 
         try:
+            current_map_pretty = _normalize_bifrost_mapvote_pretty_name(current_map_name, current_game_mode)
+            if current_map_pretty is None:
+                MAPVOTE_LOGGER.info(
+                    "Mapvote Bifrost gamestate missing current map fields; payload_keys=%s top_level_keys=%s",
+                    sorted(payload.keys()),
+                    sorted(data.keys()),
+                )
             parsed = {
                 "current_map_id": _normalize_bifrost_current_map_id(data),
-                "current_map_pretty": _normalize_bifrost_mapvote_pretty_name(
-                    payload.get("currentMap") or payload.get("current_map"),
-                    payload.get("currentGameMode") or payload.get("current_game_mode"),
-                ) or str(payload.get("currentMap") or "Unknown"),
-                "current_image_name": payload.get("currentMap") or payload.get("current_map") or "Unknown",
+                "current_map_pretty": current_map_pretty or current_map_name or "Unknown",
+                "current_image_name": current_map_name or "Unknown",
                 "time_remaining": float(match_time_remaining_seconds or 0),
                 "raw_time_remaining": raw_time_remaining,
                 "axis_players": int(team2.get("playerCount") or 0),
                 "allied_players": int(team1.get("playerCount") or 0),
-                "axis_score": int(team2.get("score") or 0),
-                "allied_score": int(team1.get("score") or 0),
-                "server_name": payload.get("serverName", "Unknown server"),
+                "axis_score": int(team2.get("score") or score_payload.get("axis") or 0),
+                "allied_score": int(team1.get("score") or score_payload.get("allies") or score_payload.get("allied") or 0),
+                "server_name": server_name,
             }
             _set_last_gamestate_error(None)
             return parsed
