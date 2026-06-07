@@ -214,6 +214,16 @@ def _first_payload_value(payload: dict[str, object], *keys: str) -> str | None:
     return None
 
 
+def _first_payload_int(payload: dict[str, object], *keys: str) -> int:
+    for key in keys:
+        value = payload.get(key)
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            continue
+    return 0
+
+
 def _normalize_bifrost_mapvote_pretty_name(current_map: str | None, current_game_mode: str | None) -> str | None:
     map_name = str(current_map or "").strip()
     game_mode = str(current_game_mode or "").strip()
@@ -330,14 +340,38 @@ async def fetch_gamestate():
         team1 = data.get("team1") if isinstance(data.get("team1"), dict) else {}
         team2 = data.get("team2") if isinstance(data.get("team2"), dict) else {}
         match_time_remaining_seconds = data.get("matchTimeRemainingSeconds")
-        current_map_name = _first_payload_value(payload, "currentMap", "current_map", "map", "mapName", "map_name")
-        current_game_mode = _first_payload_value(payload, "currentGameMode", "current_game_mode", "gameMode", "gamemode", "game_mode")
-        server_name = _first_payload_value(payload, "serverName", "server_name", "server", "name") or "Unknown server"
+        current_map_name = _first_payload_value(
+            payload,
+            "currentMap",
+            "current_map",
+            "map",
+            "mapName",
+            "map_name",
+            "server.map.name",
+        )
+        current_game_mode = _first_payload_value(
+            payload,
+            "currentGameMode",
+            "current_game_mode",
+            "gameMode",
+            "gamemode",
+            "game_mode",
+            "server.map.gamemode",
+        )
+        server_name = _first_payload_value(
+            payload,
+            "serverName",
+            "server_name",
+            "server",
+            "name",
+            "server.name",
+        ) or "Unknown server"
         raw_time_remaining = str(
             payload.get("timeRemaining")
             or payload.get("time_remaining")
             or payload.get("remainingTime")
             or payload.get("remaining_time")
+            or payload.get("server.map.timeremaining")
             or _seconds_to_clock(match_time_remaining_seconds)
         )
 
@@ -355,10 +389,10 @@ async def fetch_gamestate():
                 "current_image_name": current_map_name or "Unknown",
                 "time_remaining": float(match_time_remaining_seconds or 0),
                 "raw_time_remaining": raw_time_remaining,
-                "axis_players": int(team2.get("playerCount") or 0),
-                "allied_players": int(team1.get("playerCount") or 0),
-                "axis_score": int(team2.get("score") or score_payload.get("axis") or 0),
-                "allied_score": int(team1.get("score") or score_payload.get("allies") or score_payload.get("allied") or 0),
+                "axis_players": int(team2.get("playerCount") or _first_payload_int(payload, "game.hll.axisplayers.total") or 0),
+                "allied_players": int(team1.get("playerCount") or _first_payload_int(payload, "game.hll.alliedplayers.total") or 0),
+                "axis_score": int(team2.get("score") or score_payload.get("axis") or _first_payload_int(payload, "game.hll.axisscore") or 0),
+                "allied_score": int(team1.get("score") or score_payload.get("allies") or score_payload.get("allied") or _first_payload_int(payload, "game.hll.alliedscore") or 0),
                 "server_name": server_name,
             }
             _set_last_gamestate_error(None)
