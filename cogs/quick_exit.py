@@ -21,7 +21,7 @@ from data_paths import data_path
 logger = logging.getLogger(__name__)
 
 LEAVE_CHANNEL_ID = 1097913605539774484  # 👈 replace with your channel ID
-ENTREE_CHANNEL_ID = 1099806153170489485
+ENTREE_CHANNEL_ID = 1098330967166419055
 TESTJOIN_ROLE_ID = 1213495462632361994
 WELCOME_STATE_PATH = Path(data_path("quick_exit_welcome_state.json"))
 MAP_IMAGES_DIR = Path(data_path("map_images"))
