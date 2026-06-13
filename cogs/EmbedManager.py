@@ -121,7 +121,7 @@ class EmbedManager(commands.Cog):
         embed2.add_field(
             name=":question: How do I see my in-game stats?",
             value=(
-                "[Here are our HLL server stats](https://7dr-stats.hlladmin.com/games), you can also delve into a stats tool which goes across multiple servers here https://hllrecords.com/"
+                "[Here are our HLL server stats](https://frostbite.bifrostgaming.com/hll/leaderboards/servers/9a8cf7bc3af5), you can also delve into a stats tool which goes across multiple servers here https://hllrecords.com/"
             ),
             inline=False
         )
@@ -175,9 +175,17 @@ class EmbedManager(commands.Cog):
         embed3.add_field(
             name=":military_helmet:｜Recruits",
             value=(
-            "- <#1098330967166419055> [B][D]\n"
+            "- <#1098330967166419055> [B]\n"
             "- <#1401634001248190515> [B]\n"
             "- <#1098665953706909848> [B]"
+            ),
+            inline=False
+        )
+
+        embed3.add_field(
+            name=":speech_balloon:HLL Vietnam",
+            value=(
+            "- <#1495034963459051652> [B][D] via <#1099248200776421406>"
             ),
             inline=False
         )
@@ -186,11 +194,7 @@ class EmbedManager(commands.Cog):
             name=":speech_balloon:｜General",
             value=(
             "- <#1441511200474271875> [B][D]\n"
-            "- <#1099090838203666474> [B]\n"
-            "- <#1106900027659522108> [B][D]\n"
-            "- <#1114905902651285565> [B][D]\n"
-            "- <#1398672228803018763> [B][D]\n"
-            "- <#1399082728313458778> [B][D]"
+            "- <#1099090838203666474> [B]"
             ),
             inline=False
         )

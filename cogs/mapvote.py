@@ -39,6 +39,9 @@ GAMESTATE_FETCH_INTERVAL = 30
 # Match event audit-log checks can run much slower than the embed redraw loop.
 MATCH_LOG_CHECK_INTERVAL = 30
 
+# Bifrost advised spacing set-server-rotation and set-next-map apart.
+ROTATION_TO_NEXT_MAP_DELAY_SECONDS = 60
+
 # How many map options to show
 OPTIONS_PER_VOTE = 20
 
@@ -287,6 +290,14 @@ async def rcon_set_rotation(map_ids: list[str]):
         return {"error": str(e), "failed": True}
 
 
+async def rcon_set_next_map(map_id: str):
+    try:
+        return await MAPVOTE_BACKEND.set_mapvote_next_map(map_id)
+    except HLLBackendError as e:
+        print(f"[MapVote] set next map failed: {e}")
+        return {"error": str(e), "failed": True}
+
+
 async def rcon_get_recent_logs(filter_actions: list[str], limit: int = 100):
     try:
         logs = await MAPVOTE_BACKEND.get_mapvote_logs()
@@ -297,7 +308,10 @@ async def rcon_get_recent_logs(filter_actions: list[str], limit: int = 100):
     selected_actions = {str(action or "").strip().upper() for action in filter_actions}
     filtered_logs = [
         log for log in logs
-        if str(log.get("action") or "").strip().upper() in selected_actions
+        if any(
+            selected_action in str(log.get("action") or "").strip().upper()
+            for selected_action in selected_actions
+        )
     ]
     filtered_logs.sort(key=lambda item: item.get("timestamp_ms") or item.get("id") or 0)
     if limit > 0:
@@ -650,6 +664,7 @@ class MapVote(commands.Cog, name="[API] MapVote"):
         self._broadcast_start_task: asyncio.Task | None = None
         self._broadcast_start_scheduled_for_match_id: int | None = None
         self._broadcast_start_sent_for_match_id: int | None = None
+        self._set_next_map_task: asyncio.Task | None = None
 
     async def get_cached_gamestate(self, *, force: bool = False) -> dict | None:
         now_ts = asyncio.get_running_loop().time()
@@ -703,6 +718,7 @@ class MapVote(commands.Cog, name="[API] MapVote"):
             self.tick_task.cancel()
 
         self._cancel_task("_broadcast_start_task", extra_reset_attrs=["_broadcast_start_scheduled_for_match_id"])
+        self._cancel_task("_set_next_map_task")
 
     def _cancel_task(self, task_attr: str, *, extra_reset_attrs: list[str] | None = None):
         task = getattr(self, task_attr, None)
@@ -828,6 +844,39 @@ class MapVote(commands.Cog, name="[API] MapVote"):
             return
         except Exception as e:
             print(f"[MapVote] {key} broadcast task error: {e}")
+
+    async def _set_next_map_after_delay(
+        self,
+        *,
+        winner_id: str,
+        pretty_name: str,
+        log_channel: discord.abc.Messageable,
+    ):
+        try:
+            await asyncio.sleep(ROTATION_TO_NEXT_MAP_DELAY_SECONDS)
+            res = await rcon_set_next_map(winner_id)
+            await log_channel.send(f"Backend response (set next map after rotation delay):\n```{res}```")
+            print(f"[MapVote] Set next map after rotation delay: {pretty_name}")
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            print(f"[MapVote] set next map delayed task error: {e}")
+
+    def _schedule_set_next_map(
+        self,
+        *,
+        winner_id: str,
+        pretty_name: str,
+        log_channel: discord.abc.Messageable,
+    ):
+        self._cancel_task("_set_next_map_task")
+        self._set_next_map_task = asyncio.create_task(
+            self._set_next_map_after_delay(
+                winner_id=winner_id,
+                pretty_name=pretty_name,
+                log_channel=log_channel,
+            )
+        )
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -1291,8 +1340,11 @@ class MapVote(commands.Cog, name="[API] MapVote"):
 
                 await self.send_broadcast("WINNER", winner=pretty)
                 self._embed_last_result = f"🏆 Winner: {pretty}"
+                self._schedule_set_next_map(winner_id=winner_id, pretty_name=pretty, log_channel=log_channel)
 
-                await log_channel.send(f"Backend response (set rotation with winner first):\n```{res}```")
+                await log_channel.send(
+                    f"Backend response (set rotation with winner first; next-map scheduled in {ROTATION_TO_NEXT_MAP_DELAY_SECONDS}s):\n```{res}```"
+                )
                 print(f"[MapVote] Vote ended, winner {pretty}")
             else:
                 # Tie: choose a random winner from tied maps and announce tie
@@ -1305,8 +1357,11 @@ class MapVote(commands.Cog, name="[API] MapVote"):
 
                 await self.send_broadcast("TIE", winner=pretty_winner, tied=", ".join(pretty_tied))
                 self._embed_last_result = f"🤝 Tie: {pretty_winner} selected from {', '.join(pretty_tied)}"
+                self._schedule_set_next_map(winner_id=winner_id, pretty_name=pretty_winner, log_channel=log_channel)
 
-                await log_channel.send(f"Backend response (tie - set rotation with random winner first):\n```{res}```")
+                await log_channel.send(
+                    f"Backend response (tie - set rotation with random winner first; next-map scheduled in {ROTATION_TO_NEXT_MAP_DELAY_SECONDS}s):\n```{res}```"
+                )
                 print(f"[MapVote] Tie among {pretty_tied}. Random winner: {pretty_winner}")
 
         # Refresh embed to reflect that the vote is no longer active
@@ -1335,6 +1390,20 @@ class MapVote(commands.Cog, name="[API] MapVote"):
             await self.ensure_embed("STANDBY", gs)
             self.state.active = False
             return
+
+        if (
+            status == "ACTIVE"
+            and self.mapvote_enabled
+            and not self.state.active
+            and gs
+            and gs.get("time_remaining", 0) > 0
+        ):
+            current_map_id = gs.get("current_map_id")
+            previous_map_id = self.state.match_map_id
+            if current_map_id and previous_map_id and current_map_id != previous_map_id:
+                print(f"[MapVote] Map change detected without match-start log ({previous_map_id} -> {current_map_id})")
+                await self.start_vote(gs)
+                return
 
         # ACTIVE - check audit logs on a slower cadence than embed redraws.
         now_ts = asyncio.get_running_loop().time()
@@ -1391,11 +1460,11 @@ class MapVote(commands.Cog, name="[API] MapVote"):
             self._save_state_file()
 
             # Normalize actions: API returns "MATCH START"/"MATCH ENDED" (sometimes "MATCH")
-            if action in ("MATCH START", "MATCH"):
+            if "MATCH START" in action or action == "MATCH":
                 if not self.state.active and self.mapvote_enabled and gs:
                     print(f"[MapVote] MATCH START detected (#{log_id})")
                     await self.start_vote(gs)
-            elif action == "MATCH ENDED":
+            elif "MATCH END" in action:
                 print(f"[MapVote] MATCH ENDED detected (#{log_id})")
                 if self.state.active:
                     # End the vote immediately when the match ends

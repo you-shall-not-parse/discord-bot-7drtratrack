@@ -50,6 +50,9 @@ class HLLBackendClient(Protocol):
     async def set_mapvote_rotation(self, map_ids: list[str]) -> dict[str, Any]:
         ...
 
+    async def set_mapvote_next_map(self, map_id: str) -> dict[str, Any]:
+        ...
+
     async def send_mapvote_message_to_all(self, message: str) -> dict[str, Any]:
         ...
 
@@ -256,6 +259,9 @@ class CRCONBackendClient:
             payload.setdefault("_provider", self.provider)
             return payload
         return {"success": True, "result": payload, "_http_status": status, "_provider": self.provider}
+
+    async def set_mapvote_next_map(self, map_id: str) -> dict[str, Any]:
+        return await self.set_mapvote_rotation([map_id])
 
     async def send_mapvote_message_to_all(self, message: str) -> dict[str, Any]:
         payload = {"message": message}
@@ -593,6 +599,27 @@ class BifrostBackendClient:
             },
         )
         payload = data.get("guildSetServerRotation") or {}
+        if not isinstance(payload, dict) or not payload.get("success"):
+            raise HLLBackendError(_extract_error_message(payload))
+        payload.setdefault("_provider", self.provider)
+        return payload
+
+    async def set_mapvote_next_map(self, map_id: str) -> dict[str, Any]:
+        query = (
+            "mutation GuildSetNextMap($input: GuildSetNextMapInput!) {"
+            " guildSetNextMap(input: $input) { success message error timestamp }"
+            "}"
+        )
+        data = await self._graphql(
+            query,
+            {
+                "input": {
+                    "serverId": self.server_id,
+                    "mapRconName": map_id,
+                }
+            },
+        )
+        payload = data.get("guildSetNextMap") or {}
         if not isinstance(payload, dict) or not payload.get("success"):
             raise HLLBackendError(_extract_error_message(payload))
         payload.setdefault("_provider", self.provider)
