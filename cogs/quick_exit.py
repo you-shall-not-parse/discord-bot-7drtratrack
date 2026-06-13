@@ -214,7 +214,7 @@ class QuickExit(commands.Cog):
 
         overlay = Image.new("RGBA", WELCOME_IMAGE_SIZE, (0, 0, 0, 0))
         overlay_draw = ImageDraw.Draw(overlay)
-        overlay_draw.rectangle((0, 58, 1200, 616), fill=(5, 8, 14, 182))
+        overlay_draw.rectangle((0, 58, 1200, 616), fill=(5, 8, 14, 146))
         background.alpha_composite(overlay)
 
         draw = ImageDraw.Draw(background)
@@ -230,7 +230,7 @@ class QuickExit(commands.Cog):
         background.alpha_composite(avatar, (avatar_x, avatar_y))
 
         title_bbox = draw.textbbox((0, 0), "WELCOME TO 7DR!", font=title_font)
-        draw.text(((WELCOME_IMAGE_SIZE[0] - (title_bbox[2] - title_bbox[0])) / 2, 46), "WELCOME TO 7DR!", font=title_font, fill=(248, 243, 233, 255))
+        draw.text(((WELCOME_IMAGE_SIZE[0] - (title_bbox[2] - title_bbox[0])) / 2, 50), "WELCOME TO 7DR!", font=title_font, fill=(248, 243, 233, 255))
 
         name_bbox = draw.textbbox((0, 0), display_name, font=name_font)
         draw.text(((WELCOME_IMAGE_SIZE[0] - (name_bbox[2] - name_bbox[0])) / 2, 438), display_name, font=name_font, fill=(248, 243, 233, 255))
