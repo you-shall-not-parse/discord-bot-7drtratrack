@@ -20,7 +20,7 @@ from data_paths import data_path
 logger = logging.getLogger(__name__)
 
 LEAVE_CHANNEL_ID = 1097913605539774484  # 👈 replace with your channel ID
-ENTREE_CHANNEL_ID = 1098330967166419055
+ENTREE_CHANNEL_ID = 1099806153170489485
 WELCOME_STATE_PATH = Path(data_path("quick_exit_welcome_state.json"))
 WELCOME_IMAGE_SIZE = (1200, 675)
 
@@ -256,7 +256,7 @@ class QuickExit(commands.Cog):
         output.seek(0)
         return discord.File(output, filename=f"welcome-{member.id}.png")
 
-    async def _get_entree_channel(self) -> Optional[discord.abc.MessageableChannel]:
+    async def _get_entree_channel(self) -> Optional[discord.abc.Messageable]:
         channel = self.bot.get_channel(ENTREE_CHANNEL_ID)
         if channel is not None:
             return channel
