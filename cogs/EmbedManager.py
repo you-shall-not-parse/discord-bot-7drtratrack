@@ -213,11 +213,6 @@ class EmbedManager(commands.Cog):
             inline=False
         )
 
-        embed3.add_field(
-            name=":shirt:｜Merchandise",
-            value="- <#1212477923542704188> [B][D]",
-            inline=False
-        )
         blocks.append({
             "key": "ServDir",
             "channel_id": 1441744889145720942,
