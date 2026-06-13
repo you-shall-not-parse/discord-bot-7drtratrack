@@ -244,7 +244,7 @@ class QuickExit(commands.Cog):
             return
 
         sticker = await self._pick_wave_sticker(interaction.guild)
-        wave_text = f"{interaction.user.mention} waved at <@{target_id}>!"
+        wave_text = f"{interaction.user.mention} waved!"
 
         try:
             if sticker is not None and isinstance(interaction.channel, discord.abc.Messageable):
