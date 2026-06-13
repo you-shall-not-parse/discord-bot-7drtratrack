@@ -9,6 +9,7 @@ from typing import Optional
 
 import aiohttp
 import discord
+from discord import app_commands
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from discord.ext import commands
 
@@ -24,6 +25,7 @@ ENTREE_CHANNEL_ID = 1099806153170489485
 WELCOME_STATE_PATH = Path(data_path("quick_exit_welcome_state.json"))
 MAP_IMAGES_DIR = Path(data_path("map_images"))
 WELCOME_IMAGE_SIZE = (1200, 675)
+TARGET_GUILD = discord.Object(id=MAIN_GUILD_ID)
 
 LEAVE_MESSAGE = "**{display} ({name})** has just left the server, fuck em"
 
@@ -160,7 +162,7 @@ class QuickExit(commands.Cog):
             return None
 
     def _compose_welcome_copy(self, member: discord.Member) -> tuple[str, str]:
-        return (f"Hey {member.mention}, welcome to **7DR!**", "just joined the server")
+        return (f"Hey {member.mention}, **welcome to 7DR!**", "just joined the server")
 
     def _build_fallback_background(self) -> Image.Image:
         background = Image.new("RGBA", WELCOME_IMAGE_SIZE, (8, 12, 20, 255))
@@ -198,7 +200,7 @@ class QuickExit(commands.Cog):
         logger.warning("No usable welcome background images found in %s; using fallback background.", MAP_IMAGES_DIR)
         return self._build_fallback_background(), "7DR Welcome"
 
-    async def _build_welcome_image(self, member: discord.Member, detail_line: str) -> discord.File:
+    async def _build_welcome_image(self, member: discord.Member, display_name: str, detail_line: str) -> discord.File:
         avatar_url = member.display_avatar.replace(format="png", size=256).url
 
         try:
@@ -211,42 +213,65 @@ class QuickExit(commands.Cog):
 
         overlay = Image.new("RGBA", WELCOME_IMAGE_SIZE, (0, 0, 0, 0))
         overlay_draw = ImageDraw.Draw(overlay)
-        overlay_draw.rounded_rectangle((90, 48, 1110, 627), radius=30, fill=(5, 8, 14, 168))
-        overlay_draw.rectangle((90, 500, 1110, 627), fill=(3, 5, 10, 210))
+        overlay_draw.rounded_rectangle((0, 46, 1200, 628), radius=30, fill=(5, 8, 14, 168))
+        overlay_draw.rectangle((0, 530, 1200, 628), fill=(3, 5, 10, 210))
         background.alpha_composite(overlay)
 
         draw = ImageDraw.Draw(background)
         title_font = self._fit_text(draw, "WELCOME TO 7DR!", CERTIFICATE_BOLD_FONT_PATH, 900, 74, 48)
-        name_font = self._fit_text(draw, member.display_name, CERTIFICATE_BOLD_FONT_PATH, 860, 58, 34)
+        name_font = self._fit_text(draw, display_name, CERTIFICATE_BOLD_FONT_PATH, 860, 58, 34)
         subtitle_font = self._fit_text(draw, detail_line, CERTIFICATE_REGULAR_FONT_PATH, 860, 34, 22)
         member_font = self._load_font(CERTIFICATE_REGULAR_FONT_PATH, 28)
         map_font = self._load_font(CERTIFICATE_REGULAR_FONT_PATH, 22)
 
         avatar = self._render_avatar(avatar_bytes, 220)
         avatar_x = (WELCOME_IMAGE_SIZE[0] - avatar.width) // 2
-        avatar_y = 125
+        avatar_y = 155
         background.alpha_composite(avatar, (avatar_x, avatar_y))
 
         title_bbox = draw.textbbox((0, 0), "WELCOME TO 7DR!", font=title_font)
-        draw.text(((WELCOME_IMAGE_SIZE[0] - (title_bbox[2] - title_bbox[0])) / 2, 8), "WELCOME TO 7DR!", font=title_font, fill=(248, 243, 233, 255))
+        draw.text(((WELCOME_IMAGE_SIZE[0] - (title_bbox[2] - title_bbox[0])) / 2, 28), "WELCOME TO 7DR!", font=title_font, fill=(248, 243, 233, 255))
 
-        name_bbox = draw.textbbox((0, 0), member.display_name, font=name_font)
-        draw.text(((WELCOME_IMAGE_SIZE[0] - (name_bbox[2] - name_bbox[0])) / 2, 380), member.display_name, font=name_font, fill=(248, 243, 233, 255))
+        name_bbox = draw.textbbox((0, 0), display_name, font=name_font)
+        draw.text(((WELCOME_IMAGE_SIZE[0] - (name_bbox[2] - name_bbox[0])) / 2, 415), display_name, font=name_font, fill=(248, 243, 233, 255))
 
         subtitle_bbox = draw.textbbox((0, 0), detail_line, font=subtitle_font)
-        draw.text(((WELCOME_IMAGE_SIZE[0] - (subtitle_bbox[2] - subtitle_bbox[0])) / 2, 448), detail_line, font=subtitle_font, fill=(205, 213, 225, 255))
+        draw.text(((WELCOME_IMAGE_SIZE[0] - (subtitle_bbox[2] - subtitle_bbox[0])) / 2, 485), detail_line, font=subtitle_font, fill=(205, 213, 225, 255))
 
         member_text = f"Member #{member.guild.member_count or len(member.guild.members)}"
         member_bbox = draw.textbbox((0, 0), member_text, font=member_font)
-        draw.text(((WELCOME_IMAGE_SIZE[0] - (member_bbox[2] - member_bbox[0])) / 2, 492), member_text, font=member_font, fill=(157, 199, 255, 255))
+        draw.text(((WELCOME_IMAGE_SIZE[0] - (member_bbox[2] - member_bbox[0])) / 2, 532), member_text, font=member_font, fill=(157, 199, 255, 255))
 
         map_bbox = draw.textbbox((0, 0), map_name, font=map_font)
-        draw.text((WELCOME_IMAGE_SIZE[0] - (map_bbox[2] - map_bbox[0]) - 120, 575), map_name, font=map_font, fill=(130, 162, 193, 255))
+        draw.text((WELCOME_IMAGE_SIZE[0] - (map_bbox[2] - map_bbox[0]) - 80, 575), map_name, font=map_font, fill=(130, 162, 193, 255))
 
         output = io.BytesIO()
         background.save(output, format="PNG")
         output.seek(0)
         return discord.File(output, filename=f"welcome-{member.id}.png")
+
+    async def _send_welcome_preview(
+        self,
+        channel: discord.abc.Messageable,
+        member: discord.Member,
+        *,
+        display_name: Optional[str] = None,
+        message_text: Optional[str] = None,
+        detail_line: str = "just joined the server",
+    ) -> None:
+        preview_name = display_name or member.display_name
+        preview_message = message_text or f"**{preview_name}** has joined 7DR."
+
+        try:
+            image_file = await self._build_welcome_image(member, preview_name, detail_line)
+        except Exception:
+            logger.warning("Failed to build quick-exit welcome card for %s (%s)", member, member.id, exc_info=True)
+            image_file = None
+
+        if image_file is not None:
+            await channel.send(preview_message, file=image_file)
+        else:
+            await channel.send(preview_message)
 
     async def _get_entree_channel(self) -> Optional[discord.abc.Messageable]:
         channel = self.bot.get_channel(ENTREE_CHANNEL_ID)
@@ -275,16 +300,13 @@ class QuickExit(commands.Cog):
             if channel is None:
                 return
 
-            try:
-                image_file = await self._build_welcome_image(member, detail_line)
-            except Exception:
-                logger.warning("Failed to build quick-exit welcome card for %s (%s)", member, member.id, exc_info=True)
-                image_file = None
-
-            if image_file is not None:
-                await channel.send(message_text, file=image_file)
-            else:
-                await channel.send(message_text)
+            await self._send_welcome_preview(
+                channel,
+                member,
+                display_name=member.display_name,
+                message_text=message_text,
+                detail_line=detail_line,
+            )
 
             await self._mark_welcomed(member_id)
         except asyncio.CancelledError:
@@ -349,6 +371,32 @@ class QuickExit(commands.Cog):
         )
 
         await channel.send(message)
+
+    @app_commands.guilds(TARGET_GUILD)
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.command(name="testjoin", description="Post a fake join welcome card for preview/testing.")
+    @app_commands.describe(name="Display name to use for the fake member", avatar_source="Optional member whose avatar should be used on the card")
+    async def testjoin(
+        self,
+        interaction: discord.Interaction,
+        name: Optional[str] = None,
+        avatar_source: Optional[discord.Member] = None,
+    ) -> None:
+        if not isinstance(interaction.user, discord.Member) or not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("Administrator permission is required.", ephemeral=True)
+            return
+
+        channel = await self._get_entree_channel()
+        if channel is None:
+            await interaction.response.send_message("Entree channel is unavailable.", ephemeral=True)
+            return
+
+        preview_member = avatar_source or interaction.user
+        preview_name = (name or "Test Member").strip() or "Test Member"
+
+        await interaction.response.send_message(f"Posted test join preview for **{preview_name}**.", ephemeral=True)
+        await self._send_welcome_preview(channel, preview_member, display_name=preview_name)
 
 # ================== SETUP ==================
 
