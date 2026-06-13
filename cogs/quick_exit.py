@@ -207,7 +207,7 @@ class QuickExit(commands.Cog):
             return None
 
     def _compose_welcome_copy(self, member: discord.Member) -> tuple[str, str]:
-        return (f"Hey {member.mention} **Welcome to 7DR!** check your DMs for an instructions message from our bot to get started!", "just joined the server")
+        return (f"Hey {member.mention} **Welcome to 7DR!** check your DMs for instructions message from our bot to get started!", "just joined the server")
 
     def _extract_welcome_target_id(self, content: str) -> Optional[int]:
         match = WELCOME_TARGET_RE.search(content)
@@ -247,13 +247,10 @@ class QuickExit(commands.Cog):
         wave_text = f"{interaction.user.mention} waved!"
 
         try:
-            if sticker is not None and isinstance(interaction.channel, discord.abc.Messageable):
-                await interaction.channel.send(wave_text, stickers=[sticker])
-            elif isinstance(interaction.channel, discord.abc.Messageable):
-                await interaction.channel.send(wave_text)
+            if sticker is not None:
+                await interaction.message.reply(wave_text, stickers=[sticker], mention_author=False)
             else:
-                await interaction.response.send_message("I can't post the wave in this channel.", ephemeral=True)
-                return
+                await interaction.message.reply(wave_text, mention_author=False)
         except discord.HTTPException:
             logger.warning("Failed to post wave response in channel %s", getattr(interaction.channel, "id", "unknown"), exc_info=True)
             await interaction.response.send_message("I couldn't post the wave right now.", ephemeral=True)
