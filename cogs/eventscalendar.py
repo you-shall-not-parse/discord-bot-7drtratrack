@@ -7,7 +7,7 @@ import io
 import random
 import calendar
 from urllib.parse import urlencode
-from typing import Optional
+from typing import Awaitable, Callable, Optional, TypeVar
 from datetime import datetime, timedelta, timezone
 
 import aiohttp
@@ -18,6 +18,8 @@ from config.common import SCOREBOARD_FONT_PATH
 from data_paths import data_path
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 # =============================
 # CONFIG (EDIT THIS)
@@ -118,6 +120,37 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
         self.update_events_display.cancel()
         if self._debounce_task and not self._debounce_task.done():
             self._debounce_task.cancel()
+
+    async def _retry_discord_request(
+        self,
+        action: str,
+        operation: Callable[[], Awaitable[T]],
+        *,
+        attempts: int = 3,
+        base_delay: float = 1.5,
+    ) -> T:
+        for attempt in range(1, attempts + 1):
+            try:
+                return await operation()
+            except (discord.NotFound, discord.Forbidden):
+                raise
+            except discord.HTTPException as exc:
+                status = getattr(exc, "status", None)
+                if status is None or status < 500 or attempt >= attempts:
+                    raise
+
+                delay = min(5.0, base_delay * attempt)
+                logger.warning(
+                    "Transient Discord API failure during %s (attempt %s/%s, status %s); retrying in %.1fs",
+                    action,
+                    attempt,
+                    attempts,
+                    status,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+
+        raise RuntimeError(f"Retry loop exhausted for {action}")
         logger.info("EventDisplayCog unloaded")
 
     @tasks.loop(minutes=UPDATE_INTERVAL_MINUTES)
@@ -739,8 +772,14 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
         )
 
         try:
-            starter_message = await parent.fetch_message(starter_message_id)
-            await starter_message.edit(content=starter_text)
+            starter_message = await self._retry_discord_request(
+                f"fetching starter message for event {scheduled_event.id}",
+                lambda: parent.fetch_message(starter_message_id),
+            )
+            await self._retry_discord_request(
+                f"editing starter message for event {scheduled_event.id}",
+                lambda: starter_message.edit(content=starter_text),
+            )
         except Exception:
             logger.warning("Failed to update starter message for event %s", scheduled_event.id, exc_info=True)
 
@@ -784,9 +823,18 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
 
         if isinstance(existing_thread, discord.Thread) and isinstance(forum_message_id, int):
             try:
-                starter_message = await existing_thread.fetch_message(forum_message_id)
-                await starter_message.edit(content=None, embed=embed)
-                await existing_thread.edit(name=self._build_event_post_name(scheduled_event.name, occurrence_start or scheduled_event.start_time))
+                starter_message = await self._retry_discord_request(
+                    f"fetching forum starter message for event {scheduled_event.id}",
+                    lambda: existing_thread.fetch_message(forum_message_id),
+                )
+                await self._retry_discord_request(
+                    f"editing forum starter message for event {scheduled_event.id}",
+                    lambda: starter_message.edit(content=None, embed=embed),
+                )
+                await self._retry_discord_request(
+                    f"renaming forum thread for event {scheduled_event.id}",
+                    lambda: existing_thread.edit(name=self._build_event_post_name(scheduled_event.name, occurrence_start or scheduled_event.start_time)),
+                )
                 return
             except discord.NotFound:
                 state["forum_deleted_manually"] = True
@@ -1019,7 +1067,10 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
                 message: Optional[discord.Message] = None
                 if self.display_message_id:
                     try:
-                        message = await channel.fetch_message(self.display_message_id)
+                        message = await self._retry_discord_request(
+                            "fetching the existing events display message",
+                            lambda: channel.fetch_message(self.display_message_id),
+                        )
                     except discord.NotFound:
                         message = None
                     except discord.Forbidden:
@@ -1031,7 +1082,10 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
 
                 if message is not None:
                     try:
-                        await message.edit(embed=embed)
+                        await self._retry_discord_request(
+                            "editing the existing events display message",
+                            lambda: message.edit(embed=embed),
+                        )
                         logger.info(f"Refreshed events display ({reason}) with {len(sorted_events)} events")
                         return
                     except discord.Forbidden:

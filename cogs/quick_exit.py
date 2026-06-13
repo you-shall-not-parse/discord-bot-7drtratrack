@@ -13,7 +13,7 @@ from discord import app_commands
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from discord.ext import commands
 
-from config.common import MAIN_GUILD_ID, SCOREBOARD_FONT_PATH
+from config.common import CERTIFICATE_BOLD_FONT_PATH, CERTIFICATE_REGULAR_FONT_PATH, MAIN_GUILD_ID
 from data_paths import data_path
 
 # ================== CONFIG ==================
@@ -248,10 +248,10 @@ class QuickExit(commands.Cog):
         background.alpha_composite(overlay)
 
         draw = ImageDraw.Draw(background)
-        title_font = self._fit_text(draw, "WELCOME TO 7DR!", SCOREBOARD_FONT_PATH, 840, 74, 48)
-        name_font = self._fit_text(draw, display_name, SCOREBOARD_FONT_PATH, 790, 58, 34)
-        subtitle_font = self._fit_text(draw, detail_line, SCOREBOARD_FONT_PATH, 820, 34, 22)
-        member_font = self._load_font(SCOREBOARD_FONT_PATH, 28)
+        title_font = self._fit_text(draw, "WELCOME TO 7DR!", CERTIFICATE_BOLD_FONT_PATH, 840, 74, 48)
+        name_font = self._fit_text(draw, display_name, CERTIFICATE_BOLD_FONT_PATH, 790, 58, 34)
+        subtitle_font = self._fit_text(draw, detail_line, CERTIFICATE_REGULAR_FONT_PATH, 820, 34, 22)
+        member_font = self._load_font(CERTIFICATE_REGULAR_FONT_PATH, 28)
 
         avatar = self._render_avatar(avatar_bytes, 220)
         avatar_x = (WELCOME_IMAGE_SIZE[0] - avatar.width) // 2
