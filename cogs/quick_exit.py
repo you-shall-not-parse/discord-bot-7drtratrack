@@ -145,6 +145,36 @@ class QuickExit(commands.Cog):
                 return font
         return self._load_font(font_path, min_size)
 
+    def _tracked_text_width(
+        self,
+        draw: ImageDraw.ImageDraw,
+        text: str,
+        font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+        tracking: int,
+    ) -> int:
+        width = 0
+        for index, char in enumerate(text):
+            bbox = draw.textbbox((0, 0), char, font=font)
+            width += bbox[2] - bbox[0]
+            if index < len(text) - 1:
+                width += tracking
+        return width
+
+    def _draw_centered_tracked_text(
+        self,
+        draw: ImageDraw.ImageDraw,
+        text: str,
+        y: int,
+        font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+        fill: tuple[int, int, int, int],
+        tracking: int,
+    ) -> None:
+        x = (WELCOME_IMAGE_SIZE[0] - self._tracked_text_width(draw, text, font, tracking)) / 2
+        for char in text:
+            draw.text((x, y), char, font=font, fill=fill)
+            bbox = draw.textbbox((0, 0), char, font=font)
+            x += (bbox[2] - bbox[0]) + tracking
+
     async def _resolve_member(self, member_id: int) -> Optional[discord.Member]:
         guild = self.bot.get_guild(MAIN_GUILD_ID)
         if guild is None:
@@ -210,7 +240,7 @@ class QuickExit(commands.Cog):
             logger.warning("Failed to fetch quick-exit welcome avatar for %s (%s)", member, member.id, exc_info=True)
             raise
 
-        background, map_name = await self._load_background_image()
+        background, _map_name = await self._load_background_image()
 
         overlay = Image.new("RGBA", WELCOME_IMAGE_SIZE, (0, 0, 0, 0))
         overlay_draw = ImageDraw.Draw(overlay)
@@ -218,31 +248,22 @@ class QuickExit(commands.Cog):
         background.alpha_composite(overlay)
 
         draw = ImageDraw.Draw(background)
-        title_font = self._fit_text(draw, "WELCOME TO 7DR!", SCOREBOARD_FONT_PATH, 900, 74, 48)
-        name_font = self._fit_text(draw, display_name, SCOREBOARD_FONT_PATH, 860, 58, 34)
-        subtitle_font = self._fit_text(draw, detail_line, SCOREBOARD_FONT_PATH, 860, 34, 22)
+        title_font = self._fit_text(draw, "WELCOME TO 7DR!", SCOREBOARD_FONT_PATH, 840, 74, 48)
+        name_font = self._fit_text(draw, display_name, SCOREBOARD_FONT_PATH, 790, 58, 34)
+        subtitle_font = self._fit_text(draw, detail_line, SCOREBOARD_FONT_PATH, 820, 34, 22)
         member_font = self._load_font(SCOREBOARD_FONT_PATH, 28)
-        map_font = self._load_font(SCOREBOARD_FONT_PATH, 22)
 
         avatar = self._render_avatar(avatar_bytes, 220)
         avatar_x = (WELCOME_IMAGE_SIZE[0] - avatar.width) // 2
-        avatar_y = 179
+        avatar_y = 187
         background.alpha_composite(avatar, (avatar_x, avatar_y))
 
-        title_bbox = draw.textbbox((0, 0), "WELCOME TO 7DR!", font=title_font)
-        draw.text(((WELCOME_IMAGE_SIZE[0] - (title_bbox[2] - title_bbox[0])) / 2, 54), "WELCOME TO 7DR!", font=title_font, fill=(248, 243, 233, 255))
-
-        name_bbox = draw.textbbox((0, 0), display_name, font=name_font)
-        draw.text(((WELCOME_IMAGE_SIZE[0] - (name_bbox[2] - name_bbox[0])) / 2, 442), display_name, font=name_font, fill=(248, 243, 233, 255))
-
-        subtitle_bbox = draw.textbbox((0, 0), detail_line, font=subtitle_font)
-        draw.text(((WELCOME_IMAGE_SIZE[0] - (subtitle_bbox[2] - subtitle_bbox[0])) / 2, 511), detail_line, font=subtitle_font, fill=(205, 213, 225, 255))
+        self._draw_centered_tracked_text(draw, "WELCOME TO 7DR!", 62, title_font, (248, 243, 233, 255), 4)
+        self._draw_centered_tracked_text(draw, display_name, 450, name_font, (248, 243, 233, 255), 3)
+        self._draw_centered_tracked_text(draw, detail_line.upper(), 519, subtitle_font, (205, 213, 225, 255), 2)
 
         member_text = f"Member #{member.guild.member_count or len(member.guild.members)}"
-        member_bbox = draw.textbbox((0, 0), member_text, font=member_font)
-        draw.text(((WELCOME_IMAGE_SIZE[0] - (member_bbox[2] - member_bbox[0])) / 2, 558), member_text, font=member_font, fill=(248, 243, 233, 255))
-
-        draw.text((WELCOME_IMAGE_SIZE[0] - draw.textbbox((0, 0), map_name, font=map_font)[2] - 80, 590), map_name, font=map_font, fill=(130, 162, 193, 255))
+        self._draw_centered_tracked_text(draw, member_text.upper(), 566, member_font, (248, 243, 233, 255), 1)
 
         output = io.BytesIO()
         background.save(output, format="PNG")
