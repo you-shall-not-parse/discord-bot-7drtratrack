@@ -201,21 +201,32 @@ class QuickExit(commands.Cog):
         avatar.putalpha(mask)
         return avatar
 
+    async def _load_background_image(self) -> tuple[Image.Image, str]:
+        map_items = list(MAP_CDN_IMAGES.items())
+        random.shuffle(map_items)
+
+        for map_name, background_url in map_items:
+            try:
+                background_bytes = await self._fetch_bytes(background_url)
+                with Image.open(io.BytesIO(background_bytes)).convert("RGBA") as background_src:
+                    background = ImageOps.fit(background_src, WELCOME_IMAGE_SIZE, Image.Resampling.LANCZOS)
+                return background, map_name
+            except Exception:
+                continue
+
+        logger.warning("All welcome background CDN URLs failed; using fallback background.")
+        return self._build_fallback_background(), "7DR Welcome"
+
     async def _build_welcome_image(self, member: discord.Member, detail_line: str) -> discord.File:
-        map_name, background_url = random.choice(list(MAP_CDN_IMAGES.items()))
         avatar_url = member.display_avatar.replace(format="png", size=256).url
 
         try:
-            background_bytes, avatar_bytes = await asyncio.gather(
-                self._fetch_bytes(background_url),
-                self._fetch_bytes(avatar_url),
-            )
-            with Image.open(io.BytesIO(background_bytes)).convert("RGBA") as background_src:
-                background = ImageOps.fit(background_src, WELCOME_IMAGE_SIZE, Image.Resampling.LANCZOS)
-        except Exception:
-            logger.warning("Failed to fetch quick-exit welcome image assets for %s (%s)", member, member.id, exc_info=True)
-            background = self._build_fallback_background()
             avatar_bytes = await self._fetch_bytes(avatar_url)
+        except Exception:
+            logger.warning("Failed to fetch quick-exit welcome avatar for %s (%s)", member, member.id, exc_info=True)
+            raise
+
+        background, map_name = await self._load_background_image()
 
         overlay = Image.new("RGBA", WELCOME_IMAGE_SIZE, (0, 0, 0, 0))
         overlay_draw = ImageDraw.Draw(overlay)
