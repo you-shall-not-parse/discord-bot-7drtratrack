@@ -3,6 +3,7 @@ import io
 import json
 import logging
 import random
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -31,6 +32,17 @@ TARGET_GUILD = discord.Object(id=MAIN_GUILD_ID)
 LEAVE_MESSAGE = "**{display} ({name})** has just left the server, fuck em"
 
 MAP_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".avif"}
+WELCOME_TARGET_RE = re.compile(r"<@(?!&!?)(!?)(\d+)>")
+
+
+class WelcomeWaveView(discord.ui.View):
+    def __init__(self, cog: "QuickExit"):
+        super().__init__(timeout=None)
+        self.cog = cog
+
+    @discord.ui.button(label="Wave", emoji="👋", style=discord.ButtonStyle.secondary, custom_id="quick_exit:wave")
+    async def wave(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self.cog._handle_wave_interaction(interaction)
 
 # ================== COG ==================
 
@@ -43,6 +55,8 @@ class QuickExit(commands.Cog):
         self._welcomed_member_ids: set[int] = set()
         self._pending_member_ids: set[int] = set()
         self._backfill_complete = False
+        self._wave_view = WelcomeWaveView(self)
+        self.bot.add_view(self._wave_view)
         self._load_state()
 
     def cog_unload(self) -> None:
@@ -195,6 +209,62 @@ class QuickExit(commands.Cog):
     def _compose_welcome_copy(self, member: discord.Member) -> tuple[str, str]:
         return (f"Hey {member.mention} **Welcome to 7DR!**", "just joined the server")
 
+    def _extract_welcome_target_id(self, content: str) -> Optional[int]:
+        match = WELCOME_TARGET_RE.search(content)
+        if match is None:
+            return None
+
+        try:
+            return int(match.group(2))
+        except ValueError:
+            return None
+
+    async def _pick_wave_sticker(self, guild: discord.Guild) -> Optional[discord.GuildSticker]:
+        stickers = [sticker for sticker in guild.stickers if isinstance(sticker, discord.GuildSticker)]
+        if not stickers:
+            try:
+                stickers = await guild.fetch_stickers()
+            except discord.HTTPException:
+                logger.warning("Failed to fetch guild stickers for wave button in guild %s", guild.id, exc_info=True)
+                return None
+
+        if not stickers:
+            return None
+
+        return random.choice(stickers)
+
+    async def _handle_wave_interaction(self, interaction: discord.Interaction) -> None:
+        if interaction.guild is None or interaction.channel is None or interaction.message is None:
+            await interaction.response.send_message("This button only works inside the server welcome post.", ephemeral=True)
+            return
+
+        target_id = self._extract_welcome_target_id(interaction.message.content or "")
+        if target_id is None:
+            await interaction.response.send_message("I couldn't find who this welcome was for.", ephemeral=True)
+            return
+
+        sticker = await self._pick_wave_sticker(interaction.guild)
+        wave_text = f"{interaction.user.mention} waved at <@{target_id}>!"
+
+        try:
+            if sticker is not None and isinstance(interaction.channel, discord.abc.Messageable):
+                await interaction.channel.send(wave_text, stickers=[sticker])
+            elif isinstance(interaction.channel, discord.abc.Messageable):
+                await interaction.channel.send(wave_text)
+            else:
+                await interaction.response.send_message("I can't post the wave in this channel.", ephemeral=True)
+                return
+        except discord.HTTPException:
+            logger.warning("Failed to post wave response in channel %s", getattr(interaction.channel, "id", "unknown"), exc_info=True)
+            await interaction.response.send_message("I couldn't post the wave right now.", ephemeral=True)
+            return
+
+        if sticker is None:
+            await interaction.response.send_message("Wave sent, but this server has no available stickers to attach.", ephemeral=True)
+            return
+
+        await interaction.response.send_message("Wave sent.", ephemeral=True)
+
     def _build_fallback_background(self) -> Image.Image:
         background = Image.new("RGBA", WELCOME_IMAGE_SIZE, (8, 12, 20, 255))
         gradient = Image.new("RGBA", WELCOME_IMAGE_SIZE, (0, 0, 0, 0))
@@ -289,9 +359,9 @@ class QuickExit(commands.Cog):
             image_file = None
 
         if image_file is not None:
-            await channel.send(preview_message, file=image_file)
+            await channel.send(preview_message, file=image_file, view=self._wave_view)
         else:
-            await channel.send(preview_message)
+            await channel.send(preview_message, view=self._wave_view)
 
     async def _get_entree_channel(self) -> Optional[discord.abc.Messageable]:
         channel = self.bot.get_channel(ENTREE_CHANNEL_ID)
