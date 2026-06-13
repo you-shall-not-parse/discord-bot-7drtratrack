@@ -193,7 +193,7 @@ class QuickExit(commands.Cog):
             return None
 
     def _compose_welcome_copy(self, member: discord.Member) -> tuple[str, str]:
-        return (f"Hey {member.mention}, **welcome to 7DR!**", "just joined the server")
+        return (f"Hey {member.mention} **Welcome to 7DR!**", "just joined the server")
 
     def _build_fallback_background(self) -> Image.Image:
         background = Image.new("RGBA", WELCOME_IMAGE_SIZE, (8, 12, 20, 255))
