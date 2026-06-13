@@ -13,7 +13,7 @@ from discord import app_commands
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from discord.ext import commands
 
-from config.common import CERTIFICATE_BOLD_FONT_PATH, CERTIFICATE_REGULAR_FONT_PATH, MAIN_GUILD_ID
+from config.common import MAIN_GUILD_ID, SCOREBOARD_FONT_PATH
 from data_paths import data_path
 
 # ================== CONFIG ==================
@@ -218,32 +218,31 @@ class QuickExit(commands.Cog):
         background.alpha_composite(overlay)
 
         draw = ImageDraw.Draw(background)
-        title_font = self._fit_text(draw, "WELCOME TO 7DR!", CERTIFICATE_BOLD_FONT_PATH, 900, 74, 48)
-        name_font = self._fit_text(draw, display_name, CERTIFICATE_BOLD_FONT_PATH, 860, 58, 34)
-        subtitle_font = self._fit_text(draw, detail_line, CERTIFICATE_REGULAR_FONT_PATH, 860, 34, 22)
-        member_font = self._load_font(CERTIFICATE_REGULAR_FONT_PATH, 28)
-        map_font = self._load_font(CERTIFICATE_REGULAR_FONT_PATH, 22)
+        title_font = self._fit_text(draw, "WELCOME TO 7DR!", SCOREBOARD_FONT_PATH, 900, 74, 48)
+        name_font = self._fit_text(draw, display_name, SCOREBOARD_FONT_PATH, 860, 58, 34)
+        subtitle_font = self._fit_text(draw, detail_line, SCOREBOARD_FONT_PATH, 860, 34, 22)
+        member_font = self._load_font(SCOREBOARD_FONT_PATH, 28)
+        map_font = self._load_font(SCOREBOARD_FONT_PATH, 22)
 
         avatar = self._render_avatar(avatar_bytes, 220)
         avatar_x = (WELCOME_IMAGE_SIZE[0] - avatar.width) // 2
-        avatar_y = 175
+        avatar_y = 179
         background.alpha_composite(avatar, (avatar_x, avatar_y))
 
         title_bbox = draw.textbbox((0, 0), "WELCOME TO 7DR!", font=title_font)
-        draw.text(((WELCOME_IMAGE_SIZE[0] - (title_bbox[2] - title_bbox[0])) / 2, 50), "WELCOME TO 7DR!", font=title_font, fill=(248, 243, 233, 255))
+        draw.text(((WELCOME_IMAGE_SIZE[0] - (title_bbox[2] - title_bbox[0])) / 2, 54), "WELCOME TO 7DR!", font=title_font, fill=(248, 243, 233, 255))
 
         name_bbox = draw.textbbox((0, 0), display_name, font=name_font)
-        draw.text(((WELCOME_IMAGE_SIZE[0] - (name_bbox[2] - name_bbox[0])) / 2, 438), display_name, font=name_font, fill=(248, 243, 233, 255))
+        draw.text(((WELCOME_IMAGE_SIZE[0] - (name_bbox[2] - name_bbox[0])) / 2, 442), display_name, font=name_font, fill=(248, 243, 233, 255))
 
         subtitle_bbox = draw.textbbox((0, 0), detail_line, font=subtitle_font)
-        draw.text(((WELCOME_IMAGE_SIZE[0] - (subtitle_bbox[2] - subtitle_bbox[0])) / 2, 507), detail_line, font=subtitle_font, fill=(205, 213, 225, 255))
+        draw.text(((WELCOME_IMAGE_SIZE[0] - (subtitle_bbox[2] - subtitle_bbox[0])) / 2, 511), detail_line, font=subtitle_font, fill=(205, 213, 225, 255))
 
         member_text = f"Member #{member.guild.member_count or len(member.guild.members)}"
         member_bbox = draw.textbbox((0, 0), member_text, font=member_font)
-        draw.text(((WELCOME_IMAGE_SIZE[0] - (member_bbox[2] - member_bbox[0])) / 2, 554), member_text, font=member_font, fill=(157, 199, 255, 255))
+        draw.text(((WELCOME_IMAGE_SIZE[0] - (member_bbox[2] - member_bbox[0])) / 2, 558), member_text, font=member_font, fill=(248, 243, 233, 255))
 
-        map_bbox = draw.textbbox((0, 0), map_name, font=map_font)
-        draw.text((WELCOME_IMAGE_SIZE[0] - (map_bbox[2] - map_bbox[0]) - 80, 586), map_name, font=map_font, fill=(130, 162, 193, 255))
+        draw.text((WELCOME_IMAGE_SIZE[0] - draw.textbbox((0, 0), map_name, font=map_font)[2] - 80, 590), map_name, font=map_font, fill=(130, 162, 193, 255))
 
         output = io.BytesIO()
         background.save(output, format="PNG")
