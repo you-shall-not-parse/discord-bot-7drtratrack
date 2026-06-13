@@ -22,33 +22,12 @@ logger = logging.getLogger(__name__)
 LEAVE_CHANNEL_ID = 1097913605539774484  # 👈 replace with your channel ID
 ENTREE_CHANNEL_ID = 1099806153170489485
 WELCOME_STATE_PATH = Path(data_path("quick_exit_welcome_state.json"))
+MAP_IMAGES_DIR = Path(data_path("map_images"))
 WELCOME_IMAGE_SIZE = (1200, 675)
 
 LEAVE_MESSAGE = "**{display} ({name})** has just left the server, fuck em"
 
-MAP_CDN_IMAGES = {
-    "Elsenborn Ridge Warfare (Dawn)": "https://cdn.discordapp.com/attachments/1098976074852999261/1444494673149300796/ChatGPT_Image_Nov_30_2025_01_05_17_AM.png?ex=69381ebf&is=6936cd3f&hm=cdb114a6a2550d2d83318d3b3c1d6717022fa0c8665c645818fb8c78b8f71fa3",
-    "Carentan Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444515451727253544/file_00000000e5f871f488f94dd458b30c09.png?ex=69383219&is=6936e099&hm=40998a104cbffc2fe0b37c515f6158c9722606b7c1ec5d33bdc03e5eb4341e2a",
-    "Foy Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444492145913499800/ChatGPT_Image_Nov_30_2025_12_55_43_AM.png?ex=69400564&is=693eb3e4&hm=b9c95afd2e8cb88158af73e707f8dbae744e4458be20369029dd92e8a8a467ab",
-    "Hill 400 Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444497579210707004/ChatGPT_Image_Nov_30_2025_01_15_52_AM.png?ex=69382174&is=6936cff4&hm=f9e16ba8d2b9f20dd799bd5970c11f38c1f427689585e2d139cfd1294888a612",
-    "St. Marie Du Mont Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444515451727253544/file_00000000e5f871f488f94dd458b30c09.png?ex=69383219&is=6936e099&hm=40998a104cbffc2fe0b37c515f6158c9722606b7c1ec5d33bdc03e5eb4341e2a",
-    "Juno Beach Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1512197512641904781/ChatGPT_Image_Jun_4_2026_09_52_06_PM.png?ex=6a23372e&is=6a21e5ae&hm=7670187d4fc6f2aa7a1266d02629cf185018407186d3556c1df59e62289d76b8",
-    "Utah Beach Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1449831598160740402/ChatGPT_Image_Dec_14_2025_06_32_36_PM.png?ex=69405465&is=693f02e5&hm=ec9dbcc1d930df308756a775714ce19d26bebf261a42f384d20af05dc0014004",
-    "St. Mere Eglise Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1447681599117463692/file_000000009b64720e96132fbd67f95f72.png?ex=6938820d&is=6937308d&hm=148aca7f2e9de99f00b1f2cb6c55660ae5ece263e62afa83fbece2f9193610ef",
-    "El Alamein Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1448462224795373588/file_00000000627c71f4bbc1994fb582be8c.png?ex=693ff651&is=693ea4d1&hm=e6096c26fb8a2c74e9347ebd8477d3b5956521829486e7b192e18f92cffe8830",
-    "Mortain Warfare (Dusk)": "https://cdn.discordapp.com/attachments/1098976074852999261/1448462040632004802/76807A80-FA7B-4965-9A21-0798CEA11042.png?ex=693ff625&is=693ea4a5&hm=3a05171a2a203ba1487a324a893829466e68342cebd2659215d53ab9bc93f4b4",
-    "Smolensk Warfare (Dusk)": "https://cdn.discordapp.com/attachments/1098976074852999261/1449390736989491363/file_0000000022f071f4a9771a3645023ed5.png?ex=69400b50&is=693eb9d0&hm=5d2d3dffc888d136aacd11c3525e1e3070907f147277785651ef3c79ee2dae7f&",
-    "Driel Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444671257730744360/file_00000000d254720eb1ce02f6506ae926.png?ex=69381a74&is=6936c8f4&hm=e2772de15b5aa855d3abad443e614d5b2280f7a4f529aaf759f515c70d3ca7cc&",
-    "Kursk Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1449501011214598214/Screenshot_20251213_221442_Discord.jpg?ex=693fc943&is=693e77c3&hm=a80dc5533d1f73573ea6d3b0bb1adfa1f51cbd936d81a3fefd5535a1fd3dce67",
-    "Carentan Warfare (Night)": "https://cdn.discordapp.com/attachments/1098976074852999261/1449390736410939574/file_0000000083ec72468f8a73042c9f9913.png?ex=69400b4f&is=693eb9cf&hm=48754f26b1b1d209ac351b795e906663f0e9c09d2cd21f6e470d8f72970b9005&",
-    "Hurtgen Forest Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444676650653450411/file_000000005384720e8f124201b4e379a9.png?ex=69381f7a&is=6936cdfa&hm=e2d5ea8302bfd2744a5be5a199388945c8eb60218216aae29a5b2ea71aa1e302",
-    "Remagen Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1449390736003960889/file_00000000aa3071f492f35b0111fed5e2.png?ex=69400b4f&is=693eb9cf&hm=d776d5f87f3d73a1b1fdcb782c3204a29a055677368edfbc1aac18e04f53bc94&",
-    "Omaha Beach Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1448106330052362301/ChatGPT_Image_Dec_10_2025_12_16_56_AM.png?ex=693a0d9d&is=6938bc1d&hm=6614c98b63a7c58eaea7638a718ef854e5c074796001808cb6faf0557b46ea2a",
-    "Kharkov Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1444687960845979780/file_0000000068b47208b053f27323047cda.png?ex=69382a02&is=6936d882&hm=5c7745f15e886825b5b26d3ed4b18a33808332cd2dbedc71e5dba0f8bd9bda8c&",
-    "Purple Heart Lane Warfare (Rain)": "https://cdn.discordapp.com/attachments/1098976074852999261/1442258185137295380/file_000000009ba871f4b7700cb80af3a3f3.png?ex=6937e4db&is=6936935b&hm=ffcf7d5e580476b6af6f2c5a1a1055ed656aa86034c14094d9434b0d2019f8cc&g",
-    "Tobruk Warfare (Dawn)": "https://cdn.discordapp.com/attachments/1098976074852999261/1449390737593602259/file_00000000735871f4bb2cbbbced7ffbf7.png?ex=69400b50&is=693eb9d0&hm=5ec261995e8bb89a059a686f41ef8da731a5cbdd44dddb4bc356ddec9f368309&",
-    "Stalingrad Warfare": "https://cdn.discordapp.com/attachments/1098976074852999261/1449396751206191364/file_00000000d4c871f4ac3d6d200f6a92ca_1.png?ex=694010e9&is=693ebf69&hm=1a90a0b6c9af30b6d400cc70d89d36ad778d88fb759d125abffc669b8511acf2&",
-}
+MAP_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".avif"}
 
 # ================== COG ==================
 
@@ -202,19 +181,21 @@ class QuickExit(commands.Cog):
         return avatar
 
     async def _load_background_image(self) -> tuple[Image.Image, str]:
-        map_items = list(MAP_CDN_IMAGES.items())
-        random.shuffle(map_items)
+        map_paths = [
+            path for path in MAP_IMAGES_DIR.iterdir()
+            if path.is_file() and path.suffix.lower() in MAP_IMAGE_SUFFIXES
+        ]
+        random.shuffle(map_paths)
 
-        for map_name, background_url in map_items:
+        for image_path in map_paths:
             try:
-                background_bytes = await self._fetch_bytes(background_url)
-                with Image.open(io.BytesIO(background_bytes)).convert("RGBA") as background_src:
+                with Image.open(image_path).convert("RGBA") as background_src:
                     background = ImageOps.fit(background_src, WELCOME_IMAGE_SIZE, Image.Resampling.LANCZOS)
-                return background, map_name
+                return background, image_path.stem
             except Exception:
-                continue
+                logger.warning("Failed to load welcome background image %s", image_path, exc_info=True)
 
-        logger.warning("All welcome background CDN URLs failed; using fallback background.")
+        logger.warning("No usable welcome background images found in %s; using fallback background.", MAP_IMAGES_DIR)
         return self._build_fallback_background(), "7DR Welcome"
 
     async def _build_welcome_image(self, member: discord.Member, detail_line: str) -> discord.File:
@@ -243,21 +224,21 @@ class QuickExit(commands.Cog):
 
         avatar = self._render_avatar(avatar_bytes, 220)
         avatar_x = (WELCOME_IMAGE_SIZE[0] - avatar.width) // 2
-        avatar_y = 90
+        avatar_y = 125
         background.alpha_composite(avatar, (avatar_x, avatar_y))
 
         title_bbox = draw.textbbox((0, 0), "WELCOME TO 7DR!", font=title_font)
-        draw.text(((WELCOME_IMAGE_SIZE[0] - (title_bbox[2] - title_bbox[0])) / 2, 26), "WELCOME TO 7DR!", font=title_font, fill=(248, 243, 233, 255))
+        draw.text(((WELCOME_IMAGE_SIZE[0] - (title_bbox[2] - title_bbox[0])) / 2, 8), "WELCOME TO 7DR!", font=title_font, fill=(248, 243, 233, 255))
 
         name_bbox = draw.textbbox((0, 0), member.display_name, font=name_font)
-        draw.text(((WELCOME_IMAGE_SIZE[0] - (name_bbox[2] - name_bbox[0])) / 2, 342), member.display_name, font=name_font, fill=(248, 243, 233, 255))
+        draw.text(((WELCOME_IMAGE_SIZE[0] - (name_bbox[2] - name_bbox[0])) / 2, 380), member.display_name, font=name_font, fill=(248, 243, 233, 255))
 
         subtitle_bbox = draw.textbbox((0, 0), detail_line, font=subtitle_font)
-        draw.text(((WELCOME_IMAGE_SIZE[0] - (subtitle_bbox[2] - subtitle_bbox[0])) / 2, 412), detail_line, font=subtitle_font, fill=(205, 213, 225, 255))
+        draw.text(((WELCOME_IMAGE_SIZE[0] - (subtitle_bbox[2] - subtitle_bbox[0])) / 2, 448), detail_line, font=subtitle_font, fill=(205, 213, 225, 255))
 
         member_text = f"Member #{member.guild.member_count or len(member.guild.members)}"
         member_bbox = draw.textbbox((0, 0), member_text, font=member_font)
-        draw.text(((WELCOME_IMAGE_SIZE[0] - (member_bbox[2] - member_bbox[0])) / 2, 458), member_text, font=member_font, fill=(157, 199, 255, 255))
+        draw.text(((WELCOME_IMAGE_SIZE[0] - (member_bbox[2] - member_bbox[0])) / 2, 492), member_text, font=member_font, fill=(157, 199, 255, 255))
 
         map_bbox = draw.textbbox((0, 0), map_name, font=map_font)
         draw.text((WELCOME_IMAGE_SIZE[0] - (map_bbox[2] - map_bbox[0]) - 120, 575), map_name, font=map_font, fill=(130, 162, 193, 255))
