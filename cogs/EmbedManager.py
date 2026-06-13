@@ -162,12 +162,20 @@ class EmbedManager(commands.Cog):
             value=(
             "- <#1098337552194351114> [B][D]\n"
             "- <#1296885095138852967> [B][D]\n"
-            "- <#1098525492631572564> [B][D]\n"
+            "- <#1098525492631572564> [B]\n"
             "- <#1098316982459314279> [B]\n"
             "- <#1099248200776421406> [B]\n"
             "- <#1441744889145720942> [B][D]\n"
             "- <#1441751747935735878> [B][D]\n"
             "- <#1332736267485708419> [D]"
+            ),
+            inline=False
+        )
+
+        embed3.add_field(
+            name=":handshake:Embassy",
+            value=(
+            "- <#1098153518709346304> [D]"
             ),
             inline=False
         )
@@ -183,9 +191,9 @@ class EmbedManager(commands.Cog):
         )
 
         embed3.add_field(
-            name=":speech_balloon:HLL Vietnam",
+            name=":palm_tree:｜HLL Vietnam",
             value=(
-            "- <#1495034963459051652> [B][D] via <#1099248200776421406>"
+            "- <#1495034963459051652> [B] via <#1099248200776421406>"
             ),
             inline=False
         )
