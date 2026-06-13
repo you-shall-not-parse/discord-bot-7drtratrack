@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 LEAVE_CHANNEL_ID = 1097913605539774484  # 👈 replace with your channel ID
 ENTREE_CHANNEL_ID = 1099806153170489485
+TESTJOIN_ROLE_ID = 1213495462632361994
 WELCOME_STATE_PATH = Path(data_path("quick_exit_welcome_state.json"))
 MAP_IMAGES_DIR = Path(data_path("map_images"))
 WELCOME_IMAGE_SIZE = (1200, 675)
@@ -374,7 +375,6 @@ class QuickExit(commands.Cog):
 
     @app_commands.guilds(TARGET_GUILD)
     @app_commands.guild_only()
-    @app_commands.default_permissions(administrator=True)
     @app_commands.command(name="testjoin", description="Post a fake join welcome card for preview/testing.")
     @app_commands.describe(name="Display name to use for the fake member", avatar_source="Optional member whose avatar should be used on the card")
     async def testjoin(
@@ -383,8 +383,8 @@ class QuickExit(commands.Cog):
         name: Optional[str] = None,
         avatar_source: Optional[discord.Member] = None,
     ) -> None:
-        if not isinstance(interaction.user, discord.Member) or not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("Administrator permission is required.", ephemeral=True)
+        if not isinstance(interaction.user, discord.Member) or not any(role.id == TESTJOIN_ROLE_ID for role in interaction.user.roles):
+            await interaction.response.send_message("You need the configured test-join role to use this command.", ephemeral=True)
             return
 
         channel = await self._get_entree_channel()
