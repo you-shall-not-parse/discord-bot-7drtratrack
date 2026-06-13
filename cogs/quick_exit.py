@@ -214,8 +214,7 @@ class QuickExit(commands.Cog):
 
         overlay = Image.new("RGBA", WELCOME_IMAGE_SIZE, (0, 0, 0, 0))
         overlay_draw = ImageDraw.Draw(overlay)
-        overlay_draw.rounded_rectangle((0, 46, 1200, 628), radius=30, fill=(5, 8, 14, 168))
-        overlay_draw.rectangle((0, 530, 1200, 628), fill=(3, 5, 10, 210))
+        overlay_draw.rectangle((0, 58, 1200, 616), fill=(5, 8, 14, 182))
         background.alpha_composite(overlay)
 
         draw = ImageDraw.Draw(background)
@@ -227,24 +226,24 @@ class QuickExit(commands.Cog):
 
         avatar = self._render_avatar(avatar_bytes, 220)
         avatar_x = (WELCOME_IMAGE_SIZE[0] - avatar.width) // 2
-        avatar_y = 155
+        avatar_y = 175
         background.alpha_composite(avatar, (avatar_x, avatar_y))
 
         title_bbox = draw.textbbox((0, 0), "WELCOME TO 7DR!", font=title_font)
-        draw.text(((WELCOME_IMAGE_SIZE[0] - (title_bbox[2] - title_bbox[0])) / 2, 28), "WELCOME TO 7DR!", font=title_font, fill=(248, 243, 233, 255))
+        draw.text(((WELCOME_IMAGE_SIZE[0] - (title_bbox[2] - title_bbox[0])) / 2, 46), "WELCOME TO 7DR!", font=title_font, fill=(248, 243, 233, 255))
 
         name_bbox = draw.textbbox((0, 0), display_name, font=name_font)
-        draw.text(((WELCOME_IMAGE_SIZE[0] - (name_bbox[2] - name_bbox[0])) / 2, 415), display_name, font=name_font, fill=(248, 243, 233, 255))
+        draw.text(((WELCOME_IMAGE_SIZE[0] - (name_bbox[2] - name_bbox[0])) / 2, 438), display_name, font=name_font, fill=(248, 243, 233, 255))
 
         subtitle_bbox = draw.textbbox((0, 0), detail_line, font=subtitle_font)
-        draw.text(((WELCOME_IMAGE_SIZE[0] - (subtitle_bbox[2] - subtitle_bbox[0])) / 2, 485), detail_line, font=subtitle_font, fill=(205, 213, 225, 255))
+        draw.text(((WELCOME_IMAGE_SIZE[0] - (subtitle_bbox[2] - subtitle_bbox[0])) / 2, 507), detail_line, font=subtitle_font, fill=(205, 213, 225, 255))
 
         member_text = f"Member #{member.guild.member_count or len(member.guild.members)}"
         member_bbox = draw.textbbox((0, 0), member_text, font=member_font)
-        draw.text(((WELCOME_IMAGE_SIZE[0] - (member_bbox[2] - member_bbox[0])) / 2, 532), member_text, font=member_font, fill=(157, 199, 255, 255))
+        draw.text(((WELCOME_IMAGE_SIZE[0] - (member_bbox[2] - member_bbox[0])) / 2, 554), member_text, font=member_font, fill=(157, 199, 255, 255))
 
         map_bbox = draw.textbbox((0, 0), map_name, font=map_font)
-        draw.text((WELCOME_IMAGE_SIZE[0] - (map_bbox[2] - map_bbox[0]) - 80, 575), map_name, font=map_font, fill=(130, 162, 193, 255))
+        draw.text((WELCOME_IMAGE_SIZE[0] - (map_bbox[2] - map_bbox[0]) - 80, 586), map_name, font=map_font, fill=(130, 162, 193, 255))
 
         output = io.BytesIO()
         background.save(output, format="PNG")
