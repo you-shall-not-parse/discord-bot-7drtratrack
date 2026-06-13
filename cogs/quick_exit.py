@@ -207,7 +207,7 @@ class QuickExit(commands.Cog):
             return None
 
     def _compose_welcome_copy(self, member: discord.Member) -> tuple[str, str]:
-        return (f"Hey {member.mention} **Welcome to 7DR!**", "just joined the server")
+        return (f"Hey {member.mention} **Welcome to 7DR!** check your DMs for an instructions message from our bot to get started!", "just joined the server")
 
     def _extract_welcome_target_id(self, content: str) -> Optional[int]:
         match = WELCOME_TARGET_RE.search(content)
