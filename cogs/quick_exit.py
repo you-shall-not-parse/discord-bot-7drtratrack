@@ -55,6 +55,7 @@ class QuickExit(commands.Cog):
         self._welcomed_member_ids: set[int] = set()
         self._pending_member_ids: set[int] = set()
         self._backfill_complete = False
+        self._last_wave_sticker_id_by_guild: dict[int, int] = {}
         self._wave_view = WelcomeWaveView(self)
         self.bot.add_view(self._wave_view)
         self._load_state()
@@ -231,7 +232,14 @@ class QuickExit(commands.Cog):
         if not stickers:
             return None
 
-        return random.choice(stickers)
+        last_sticker_id = self._last_wave_sticker_id_by_guild.get(guild.id)
+        available_stickers = [sticker for sticker in stickers if sticker.id != last_sticker_id]
+        if not available_stickers:
+            available_stickers = stickers
+
+        selected_sticker = random.choice(available_stickers)
+        self._last_wave_sticker_id_by_guild[guild.id] = selected_sticker.id
+        return selected_sticker
 
     async def _handle_wave_interaction(self, interaction: discord.Interaction) -> None:
         if interaction.guild is None or interaction.channel is None or interaction.message is None:
