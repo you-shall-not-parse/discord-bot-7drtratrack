@@ -113,6 +113,7 @@ async def main():
         await bot.load_extension("cogs.applyroletomessage")
         await bot.load_extension("cogs.hellorleaderboard")
         await bot.load_extension("cogs.docsync")
+        await bot.load_extension("cogs.supporters_embed")
         await bot.start(TOKEN)
 
 if __name__ == "__main__":
