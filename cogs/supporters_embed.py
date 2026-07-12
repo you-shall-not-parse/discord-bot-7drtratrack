@@ -13,7 +13,6 @@ DATA_FILE = data_path("supporters_embed.json")
 EMBED_TITLE = "Our Supporters"
 SUPPORTERS_CHANNEL_ID = 1525460056340955237
 RAT_PATRON_ROLE_ID = 1525871943973081319
-BOOSTER_RAT_ROLE_ID = 1098490376920244264
 
 
 def load_data() -> dict:
@@ -63,11 +62,6 @@ class SupportersEmbed(commands.Cog):
         embed.add_field(
             name="Rat Patron",
             value=self._role_lines(guild, RAT_PATRON_ROLE_ID),
-            inline=False,
-        )
-        embed.add_field(
-            name="Booster Rat",
-            value=self._role_lines(guild, BOOSTER_RAT_ROLE_ID),
             inline=False,
         )
         return embed
@@ -153,7 +147,7 @@ class SupportersEmbed(commands.Cog):
         return True
 
     def _member_can_affect_embed(self, member: discord.Member) -> bool:
-        tracked_role_ids = {RAT_PATRON_ROLE_ID, BOOSTER_RAT_ROLE_ID}
+        tracked_role_ids = {RAT_PATRON_ROLE_ID}
         return any(role.id in tracked_role_ids for role in member.roles)
 
     @commands.Cog.listener()
@@ -162,7 +156,7 @@ class SupportersEmbed(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
-        tracked_role_ids = {RAT_PATRON_ROLE_ID, BOOSTER_RAT_ROLE_ID}
+        tracked_role_ids = {RAT_PATRON_ROLE_ID}
         before_roles = {role.id for role in before.roles if role.id in tracked_role_ids}
         after_roles = {role.id for role in after.roles if role.id in tracked_role_ids}
 
