@@ -49,10 +49,6 @@ def get_hll_backend_default_server_name() -> str:
     return HLL_BACKEND_DEFAULT_SERVER
 
 
-def get_hll_backend_server_names() -> tuple[str, ...]:
-    return tuple(HLL_BACKEND_SERVERS)
-
-
 def get_hll_backend_status(server_name: str | None = None) -> dict[str, Any]:
     selected_name = (server_name or HLL_BACKEND_DEFAULT_SERVER).strip() or HLL_BACKEND_DEFAULT_SERVER
     server_config = get_hll_backend_server_config(selected_name)
