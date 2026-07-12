@@ -479,7 +479,7 @@ class BifrostBackendClient:
         query = (
             "query GuildSearchPlayer($input: GuildSearchPlayerInput!) {"
             " guildSearchPlayer(input: $input) {"
-            " player { playerName playerId }"
+            " player { playerId }"
             " }"
             "}"
         )
