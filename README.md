@@ -5,7 +5,7 @@ This bot runs from `main.py` and loads feature cogs from `cogs/`.
 This README is the short summary version and is suitable for a single Discord devguide forum thread called `Ratbot Guide`.
 For more detailed usage notes, see `COG_HOWTO.md`.
 
-This repo also contains `liberationapp/`, which is a separate HLL campaign web app stack and not part of the cog how-to guide.
+This repo also contains the reverse-proxy configuration for the separately hosted historic-stats site.
 
 ## Code Location
 
@@ -57,7 +57,7 @@ discord-bot-7drtratrack/
 │   ├── AlegreyaSC-Regular.ttf
 │   └── ...runtime state files
 └── liberationapp/
-	└── separate campaign web app code
+	└── historic-stats proxy configuration
 ```
 
 What each part is for:
@@ -69,7 +69,7 @@ What each part is for:
 - `data/`: state files, logs, mappings, fonts, and generated bot data
 - `README.md`: public-safe summary and structure overview
 - `COG_HOWTO.md`: longer user/staff guide for each cog
-- `liberationapp/`: a separate app in the same repo, not part of the Discord cog guide
+- `liberationapp/`: Caddy configuration and deployment notes for the historic-stats subdomain
 
 ## Hosting Model
 
@@ -139,118 +139,13 @@ python main.py
 
 ## Other Repo Content
 
-- `liberationapp/`: separate web app stack for Liberation/campaign work
+- `liberationapp/`: reverse-proxy configuration for the historic-stats subdomain
 - `cogs/`: Discord bot features loaded by `main.py`
 - `config/`: shared config files and shared constant definitions
 - `data/`: bot state, logs, fonts, and generated files
 
-## HLL Frontline Deployment
+## Historic Stats Deployment
 
-The `liberationapp/` stack is deployed separately from the Discord bot.
-
-- frontend container binds to `127.0.0.1:8081` and is intended to sit behind Caddy or another reverse proxy
-- liberation API binds to `127.0.0.1:8080` so the host machine and local bot can still reach it without exposing it publicly
-- a production Caddy example and deployment notes live in `liberationapp/Caddyfile.production` and `liberationapp/DEPLOYMENT.md`
-
-That keeps public traffic on `80/443` only while preserving host-local access to the app services.
-
-*** Add File: c:\Users\Benja\OneDrive\Documents\discord-bot-7drtratrack\liberationapp\Caddyfile.production
-www.hllfrontline.com {
-	redir https://hllfrontline.com{uri} permanent
-}
-
-hllfrontline.com {
-	encode zstd gzip
-
-	log {
-		output file /var/log/caddy/hllfrontline.access.log {
-			roll_size 10MiB
-			roll_keep 10
-			roll_keep_for 720h
-		}
-		format console
-	}
-
-	reverse_proxy 127.0.0.1:8081
-}
-
-*** Add File: c:\Users\Benja\OneDrive\Documents\discord-bot-7drtratrack\liberationapp\DEPLOYMENT.md
-# HLL Frontline Deployment
-
-This stack is intended to run behind Caddy on a VPS.
-
-## Compose Exposure
-
-- `frontend` binds to `127.0.0.1:8081`
-- `liberation-api` binds to `127.0.0.1:8080`
-
-That keeps both services off the public internet while still allowing:
-
-- Caddy on the host to proxy traffic into the frontend
-- the host machine or bot process to call the API on `127.0.0.1:8080`
-
-## Recommended Caddy Setup
-
-Use `Caddyfile.production` as the starting point.
-
-- `www.hllfrontline.com` redirects to `hllfrontline.com`
-- `hllfrontline.com` reverse proxies to `127.0.0.1:8081`
-- compression is enabled with `zstd` and `gzip`
-- access logs are written to `/var/log/caddy/hllfrontline.access.log`
-
-If `/var/log/caddy` does not exist, create it before reloading Caddy:
-
-```bash
-sudo mkdir -p /var/log/caddy
-sudo chown caddy:caddy /var/log/caddy
-```
-
-Then copy the config into place:
-
-```bash
-sudo cp liberationapp/Caddyfile.production /etc/caddy/Caddyfile
-sudo caddy validate --config /etc/caddy/Caddyfile
-sudo systemctl reload caddy
-```
-
-## Cloudflare
-
-Recommended DNS records:
-
-- `A` record: `hllfrontline.com -> 130.162.174.77`
-- `CNAME` record: `www -> hllfrontline.com`
-
-Once HTTPS works through Caddy, Cloudflare can be switched from `DNS only` to `Proxied`.
-
-Use `Full (strict)` in Cloudflare SSL/TLS mode.
-
-## Deploy or Refresh
-
-From `liberationapp/`:
-
-```bash
-docker compose -f docker-compose.liberation.yml up -d --build
-```
-
-## Verification
-
-Check the host-local services:
-
-```bash
-curl http://127.0.0.1:8081
-curl http://127.0.0.1:8080/health
-```
-
-Check the public domain:
-
-```bash
-curl -I http://hllfrontline.com
-curl -I https://hllfrontline.com
-curl -I https://www.hllfrontline.com
-```
-
-Expected result:
-
-- HTTP redirects to HTTPS
-- apex domain serves the app
-- `www` redirects to the apex domain
+The former HLL Frontline/Liberation website has been retired. Only
+`7drhistostats.hllfrontline.com` remains, proxied to its existing service on
+`127.0.0.1:7010`. See `liberationapp/DEPLOYMENT.md` for the retained setup.

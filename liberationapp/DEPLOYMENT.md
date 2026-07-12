@@ -1,36 +1,13 @@
-# HLL Frontline Deployment
+# Historic Stats Deployment
 
-This stack is intended to run behind Caddy on a VPS.
+The Liberation frontend, API, PostgreSQL, and Redis stack has been retired.
+Only the independently hosted historic-stats service remains.
 
-## Compose Exposure
+`Caddyfile.production` exposes `7drhistostats.hllfrontline.com` and proxies it
+to the existing service on `127.0.0.1:7010`. The `www` form redirects to the
+canonical subdomain.
 
-- `frontend` binds to `127.0.0.1:8081`
-- `liberation-api` binds to `127.0.0.1:8080`
-
-That keeps both services off the public internet while still allowing:
-
-- Caddy on the host to proxy traffic into the frontend
-- the host machine or bot process to call the API on `127.0.0.1:8080`
-
-## Recommended Caddy Setup
-
-Use `Caddyfile.production` as the starting point.
-
-- `www.hllfrontline.com` redirects to `hllfrontline.com`
-- `hllfrontline.com` reverse proxies to `127.0.0.1:8081`
-- `www.7drhistostats.hllfrontline.com` redirects to `7drhistostats.hllfrontline.com`
-- `7drhistostats.hllfrontline.com` reverse proxies to `127.0.0.1:7010`
-- compression is enabled with `zstd` and `gzip`
-- access logs are written to `/var/log/caddy/hllfrontline.access.log`
-
-If `/var/log/caddy` does not exist, create it before reloading Caddy:
-
-```bash
-sudo mkdir -p /var/log/caddy
-sudo chown caddy:caddy /var/log/caddy
-```
-
-Then copy the config into place:
+Install and validate the configuration on the host:
 
 ```bash
 sudo cp liberationapp/Caddyfile.production /etc/caddy/Caddyfile
@@ -38,63 +15,12 @@ sudo caddy validate --config /etc/caddy/Caddyfile
 sudo systemctl reload caddy
 ```
 
-## Cloudflare
-
-Recommended DNS records:
-
-- `A` record: `hllfrontline.com -> 130.162.174.77`
-- `CNAME` record: `www -> hllfrontline.com`
-- `A` record: `7drhistostats.hllfrontline.com -> 130.162.174.77`
-- `CNAME` record: `www.7drhistostats.hllfrontline.com -> 7drhistostats.hllfrontline.com`
-
-Once HTTPS works through Caddy, Cloudflare can be switched from `DNS only` to `Proxied`.
-
-Use `Full (strict)` in Cloudflare SSL/TLS mode.
-
-## OCI Firewall Hardening
-
-For an Oracle Cloud deployment, keep inbound access narrow.
-
-Recommended public ingress rules:
-
-- `TCP 80` from `0.0.0.0/0`
-- `TCP 443` from `0.0.0.0/0`
-- `TCP 22` only from your own static IP or a tightly controlled admin range
-
-Do not expose `8080` or `8081` publicly in OCI once Caddy is in front. The compose file binds those services to `127.0.0.1`, so OCI only needs to allow public web traffic to Caddy.
-
-If you use both a Security List and a Network Security Group, verify that both layers permit `80` and `443`.
-
-## Deploy Or Refresh
-
-From `liberationapp/`:
+Verify both the local service and public endpoint:
 
 ```bash
-docker compose -f docker-compose.liberation.yml up -d --build
-```
-
-## Verification
-
-Check the host-local services:
-
-```bash
-curl http://127.0.0.1:8081
-curl http://127.0.0.1:8080/health
-```
-
-Check the public domain:
-
-```bash
-curl -I http://hllfrontline.com
-curl -I https://hllfrontline.com
-curl -I https://www.hllfrontline.com
+curl -I http://127.0.0.1:7010
 curl -I https://7drhistostats.hllfrontline.com
-curl -I https://www.7drhistostats.hllfrontline.com
 ```
 
-Expected result:
-
-- HTTP redirects to HTTPS
-- apex domain serves the app
-- `www` redirects to the apex domain
-- `7drhistostats.hllfrontline.com` serves the archive site
+The apex `hllfrontline.com` and the former Liberation containers are
+intentionally not configured here.

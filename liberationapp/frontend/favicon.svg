@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="HLL Frontline favicon">
-  <rect width="256" height="256" rx="28" fill="#090908"/>
-  <g fill="#efe5c7">
-    <path d="M42 50h24v46h50V50h24v156h-24v-86H66v86H42z"/>
-    <path d="M162 50h24v156h-24z"/>
-    <path d="M186 50h50v20h-50z"/>
-    <path d="M186 116h42v20h-42z"/>
-  </g>
-</svg>

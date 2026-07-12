@@ -109,7 +109,6 @@ async def main():
         await bot.load_extension("cogs.wardiary")
         await bot.load_extension("cogs.t17lookup")
         await bot.load_extension("cogs.t17serveradmin")
-        await bot.load_extension("cogs.frontlines_admin")
         await bot.load_extension("cogs.applyroletomessage")
         await bot.load_extension("cogs.hellorleaderboard")
         await bot.load_extension("cogs.docsync")
