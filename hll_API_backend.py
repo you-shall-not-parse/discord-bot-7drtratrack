@@ -476,29 +476,12 @@ class BifrostBackendClient:
         return data
 
     async def resolve_player_id_by_name(self, player_name: str) -> str | None:
-        query = (
-            "query GuildSearchPlayer($input: GuildSearchPlayerInput!) {"
-            " guildSearchPlayer(input: $input) {"
-            " player { playerId }"
-            " }"
-            "}"
-        )
-        data = await self._graphql(
-            query,
-            {
-                "input": {
-                    "serverId": self.server_id,
-                    "searchTerm": player_name,
-                    "gameType": self.game_type,
-                }
-            },
-        )
-        payload = data.get("guildSearchPlayer") or {}
-        player = payload.get("player") if isinstance(payload, dict) else None
-        if not isinstance(player, dict):
-            return None
-
-        return str(player.get("playerId") or "").strip() or None
+        # Bifrost's guildSearchPlayer query accepts an existing playerId, not a
+        # player name. It therefore cannot be used to resolve a Discord name to
+        # a T17 ID. Returning no match prevents invalid requests from triggering
+        # Bifrost's high-error-rate lockout; callers use their shared ID mapping
+        # or a manual override instead.
+        return None
 
     async def get_mapvote_game_state(self) -> dict[str, Any] | None:
         query = (
