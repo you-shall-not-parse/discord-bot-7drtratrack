@@ -26,8 +26,8 @@ ADMIN_CAM_ROLE = "Spectator"
 STATE_FILE = data_path("t17_admin_cam_grants.json")
 REMOVAL_RETRY_SECONDS = 300
 ADMIN_CAM_SERVER_CHOICES = [
-    app_commands.Choice(name="Bifrost Server 1", value="main"),
-    app_commands.Choice(name="Bifrost Server 2", value="server_2"),
+    app_commands.Choice(name="Events", value="main"),
+    app_commands.Choice(name="Public", value="server_2"),
 ]
 
 

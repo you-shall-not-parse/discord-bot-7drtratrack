@@ -11,6 +11,7 @@ from typing import Any
 
 import discord
 
+from config.hll_API_config import get_hll_backend_default_server_name, get_hll_backend_server_names
 from data_paths import data_path
 from hll_API_backend import HLLBackendClient, get_hll_backend_client
 
@@ -226,6 +227,25 @@ class ClanT17Lookup:
             self.logger.warning("player_lookup_failed query=%r error=%s", normalized, exc)
             self._player_id_cache[key] = (None, now)
             return None, True
+
+        if player_id is None:
+            default_server = get_hll_backend_default_server_name()
+            for server_name in get_hll_backend_server_names():
+                if server_name == default_server:
+                    continue
+                try:
+                    player_id = await get_hll_backend_client(server_name).resolve_player_id_by_name(normalized)
+                except Exception as exc:
+                    self.logger.warning(
+                        "player_lookup_fallback_failed server=%s query=%r error=%s",
+                        server_name,
+                        normalized,
+                        exc,
+                    )
+                    continue
+                if player_id is not None:
+                    self.logger.debug("player_lookup_fallback_found server=%s query=%r", server_name, normalized)
+                    break
 
         self._player_id_cache[key] = (player_id, now)
         return player_id, True

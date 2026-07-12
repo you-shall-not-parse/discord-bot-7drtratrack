@@ -477,41 +477,28 @@ class BifrostBackendClient:
 
     async def resolve_player_id_by_name(self, player_name: str) -> str | None:
         query = (
-            "query GuildSearchPlayer($serverId: ID!, $searchTerm: String!, $gameType: String) {"
-            " guildSearchPlayer(serverId: $serverId, searchTerm: $searchTerm, gameType: $gameType) {"
-            " players { playerName playerId }"
+            "query GuildSearchPlayer($input: GuildSearchPlayerInput!) {"
+            " guildSearchPlayer(input: $input) {"
+            " player { playerName playerId }"
             " }"
             "}"
         )
         data = await self._graphql(
             query,
             {
-                "serverId": self.server_id,
-                "searchTerm": player_name,
-                "gameType": self.game_type,
+                "input": {
+                    "serverId": self.server_id,
+                    "searchTerm": player_name,
+                    "gameType": self.game_type,
+                }
             },
         )
         payload = data.get("guildSearchPlayer") or {}
-        players = payload.get("players") if isinstance(payload, dict) else None
-        if not isinstance(players, list) or not players:
+        player = payload.get("player") if isinstance(payload, dict) else None
+        if not isinstance(player, dict):
             return None
 
-        exact_match = None
-        first_match = None
-        for item in players:
-            if not isinstance(item, dict):
-                continue
-            player_id = str(item.get("playerId") or "").strip()
-            if not player_id:
-                continue
-            if first_match is None:
-                first_match = player_id
-            player_name_value = str(item.get("playerName") or "").strip()
-            if player_name_value.casefold() == player_name.casefold():
-                exact_match = player_id
-                break
-
-        return exact_match or first_match
+        return str(player.get("playerId") or "").strip() or None
 
     async def get_mapvote_game_state(self) -> dict[str, Any] | None:
         query = (
