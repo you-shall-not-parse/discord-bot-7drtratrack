@@ -15,6 +15,8 @@ SUPPORTERS_CHANNEL_ID = 1525460056340955237
 RAT_PATRON_ROLE_ID = 1525871943973081319
 LT_COL_CRUMP_USER_ID = 1109147750932676649
 WAR_DIARY_FORUM_CHANNEL_ID = 1489703502426018002
+SUPPORTERS_IMAGE_PATH = data_path("ChatGPT Image Jul 12, 2026, 04_37_09 PM.png")
+SUPPORTERS_IMAGE_FILENAME = "rat_patron.png"
 
 
 def load_data() -> dict:
@@ -73,15 +75,22 @@ class SupportersEmbed(commands.Cog):
                 "perks as we release them!\n\n"
                 "You must connect your discord account to your ko-fi account in order for it to give you the role! "
                 f"If you experience any issues ask <@{LT_COL_CRUMP_USER_ID}>\n\n"
-                "Link: [https://ko-fi.com/7tharmoureddivisonclan](https://ko-fi.com/7tharmoureddivisonclan)"
+                "Link: https://ko-fi.com/7tharmoureddivisonclan"
             ),
         )
+        if os.path.exists(SUPPORTERS_IMAGE_PATH):
+            embed.set_image(url=f"attachment://{SUPPORTERS_IMAGE_FILENAME}")
         embed.add_field(
             name="Current Rat Patrons",
             value=self._role_lines(guild, RAT_PATRON_ROLE_ID),
             inline=False,
         )
         return embed
+
+    def _image_file(self) -> discord.File | None:
+        if not os.path.exists(SUPPORTERS_IMAGE_PATH):
+            return None
+        return discord.File(SUPPORTERS_IMAGE_PATH, filename=SUPPORTERS_IMAGE_FILENAME)
 
     async def _get_target_channel(self) -> discord.TextChannel | None:
         channel = self.bot.get_channel(SUPPORTERS_CHANNEL_ID)
@@ -123,7 +132,15 @@ class SupportersEmbed(commands.Cog):
 
     async def _create_embed_message(self, channel: discord.TextChannel, embed: discord.Embed) -> discord.Message:
         await self._delete_previous_message_if_needed()
-        message = await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+        image_file = self._image_file()
+        if image_file is None:
+            message = await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+        else:
+            message = await channel.send(
+                embed=embed,
+                file=image_file,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
         self.data = {
             "channel_id": channel.id,
             "message_id": message.id,
@@ -160,7 +177,15 @@ class SupportersEmbed(commands.Cog):
         if message.embeds and message.embeds[0].to_dict() == embed.to_dict():
             return True
 
-        await message.edit(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+        image_file = self._image_file()
+        if image_file is None:
+            await message.edit(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+        else:
+            await message.edit(
+                embed=embed,
+                attachments=[image_file],
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
         return True
 
     def _member_can_affect_embed(self, member: discord.Member) -> bool:
