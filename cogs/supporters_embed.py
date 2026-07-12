@@ -13,6 +13,8 @@ DATA_FILE = data_path("supporters_embed.json")
 EMBED_TITLE = "Our Supporters"
 SUPPORTERS_CHANNEL_ID = 1525460056340955237
 RAT_PATRON_ROLE_ID = 1525871943973081319
+LT_COL_CRUMP_USER_ID = 1109147750932676649
+WAR_DIARY_FORUM_CHANNEL_ID = 1489703502426018002
 
 
 def load_data() -> dict:
@@ -56,11 +58,26 @@ class SupportersEmbed(commands.Cog):
             return None
 
         embed = discord.Embed(
-            title=EMBED_TITLE,
+            title="Support Our Clan",
             color=discord.Color.red(),
+            description=(
+                "If you would like to donate on a voluntary basis then you can click the Ko-Fi link below and choose "
+                "donate on a **one-off basis** or **subscribe** on a minimum £1 per month basis.\n\n"
+                "We ask that you do not commit to this if you cannot afford it and please do not donate too much, "
+                "whether it be £5 one off, £1 per month, £3 per month or £5 per month you will recieve the "
+                f"<@&{RAT_PATRON_ROLE_ID}> role.\n\n"
+                "All of your contributions will go towards the running costs of our clan such as server costs, "
+                "bot costs, Bifrost costs.\n\n"
+                f"By becoming a <@&{RAT_PATRON_ROLE_ID}> you will gain exclusive access to our War Diary channel "
+                f"<#{WAR_DIARY_FORUM_CHANNEL_ID}> which shows all of our clan match results and other exclusive "
+                "perks as we release them!\n\n"
+                "You must connect your discord account to your ko-fi account in order for it to give you the role! "
+                f"If you experience any issues ask <@{LT_COL_CRUMP_USER_ID}>\n\n"
+                "Link: [https://ko-fi.com/7tharmoureddivisonclan](https://ko-fi.com/7tharmoureddivisonclan)"
+            ),
         )
         embed.add_field(
-            name="Rat Patron",
+            name="Current Rat Patrons",
             value=self._role_lines(guild, RAT_PATRON_ROLE_ID),
             inline=False,
         )
@@ -106,7 +123,7 @@ class SupportersEmbed(commands.Cog):
 
     async def _create_embed_message(self, channel: discord.TextChannel, embed: discord.Embed) -> discord.Message:
         await self._delete_previous_message_if_needed()
-        message = await channel.send(embed=embed)
+        message = await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
         self.data = {
             "channel_id": channel.id,
             "message_id": message.id,
@@ -143,7 +160,7 @@ class SupportersEmbed(commands.Cog):
         if message.embeds and message.embeds[0].to_dict() == embed.to_dict():
             return True
 
-        await message.edit(embed=embed)
+        await message.edit(embed=embed, allowed_mentions=discord.AllowedMentions.none())
         return True
 
     def _member_can_affect_embed(self, member: discord.Member) -> bool:
