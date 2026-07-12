@@ -10,7 +10,9 @@ from config import MAIN_GUILD_ID
 from data_paths import data_path
 
 PRESET_FILE = data_path("role_presets.json")
-REQUIRED_ROLE_NAME = ("Infantry School Trainer")
+INFANTRY_TRAINER_ROLE = "Infantry School Trainer"
+TANK_TRAINER_ROLE = "Tank Trainer"
+TANK_TRAINER_ADMIN_ROLE = "7DR-SNCO"
 GUILD_ID = MAIN_GUILD_ID
 
 logging.basicConfig(level=logging.INFO)
@@ -36,6 +38,13 @@ def save_presets(presets):
 
 def role_dict(guild):
     return {role.name.lower(): role for role in guild.roles}
+
+
+def has_bulk_role_permission(member: discord.Member) -> bool:
+    has_infantry_trainer = get(member.roles, name=INFANTRY_TRAINER_ROLE) is not None
+    has_tank_trainer = get(member.roles, name=TANK_TRAINER_ROLE) is not None
+    has_tank_trainer_admin = get(member.roles, name=TANK_TRAINER_ADMIN_ROLE) is not None
+    return has_infantry_trainer or (has_tank_trainer and has_tank_trainer_admin)
 
 def parse_roles(guild, names):
     lookup = role_dict(guild)
@@ -80,11 +89,11 @@ class BulkRole(commands.Cog):
         if not member:
             await send_embed(message.channel, "Error", "❌ You must be a member of the server to use this command.", discord.Color.red())
             return
-        if not get(member.roles, name=REQUIRED_ROLE_NAME):
+        if not has_bulk_role_permission(member):
             await send_embed(
                 message.channel,
                 "Permission Denied",
-                f"❌ You need the `{REQUIRED_ROLE_NAME}` role to use this feature.",
+                "❌ You need `Infantry School Trainer`, or both `Tank Trainer` and `7DR-SNCO`, to use this feature.",
                 discord.Color.red()
             )
             return
@@ -201,8 +210,11 @@ class BulkRole(commands.Cog):
             await interaction.followup.send("❌ I lack the `Manage Roles` permission.", ephemeral=True)
             return
         user_member = guild.get_member(interaction.user.id)
-        if not user_member or not get(user_member.roles, name=REQUIRED_ROLE_NAME):
-            await interaction.followup.send(f"❌ You need the `{REQUIRED_ROLE_NAME}` role to use this command.", ephemeral=True)
+        if not user_member or not has_bulk_role_permission(user_member):
+            await interaction.followup.send(
+                "❌ You need `Infantry School Trainer`, or both `Tank Trainer` and `7DR-SNCO`, to use this command.",
+                ephemeral=True,
+            )
             return
         presets = load_presets()
         if preset not in presets:
