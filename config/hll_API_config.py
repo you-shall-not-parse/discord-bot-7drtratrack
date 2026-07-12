@@ -20,10 +20,16 @@ HLL_BACKEND_SERVERS: dict[str, dict[str, Any]] = {
             "api_key_env": "CRCON_API_KEY",
         },
         "bifrost": {
-            "server_id": os.getenv("BIFROST_SERVER_ID", "").strip(),
+            "server_id": os.getenv("BIFROST_SERVER_ID1", os.getenv("BIFROST_SERVER_ID", "")).strip(),
             "game_type": os.getenv("BIFROST_GAME_TYPE", "HLL").strip() or "HLL",
         },
-    }
+    },
+    "server_2": {
+        "bifrost": {
+            "server_id": os.getenv("BIFROST_SERVER_ID2", "").strip(),
+            "game_type": os.getenv("BIFROST_GAME_TYPE", "HLL").strip() or "HLL",
+        },
+    },
 }
 
 

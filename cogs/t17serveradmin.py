@@ -25,6 +25,10 @@ ADMIN_ROLE_IDS = {
 ADMIN_CAM_ROLE = "Spectator"
 STATE_FILE = data_path("t17_admin_cam_grants.json")
 REMOVAL_RETRY_SECONDS = 300
+ADMIN_CAM_SERVER_CHOICES = [
+    app_commands.Choice(name="Bifrost Server 1", value="main"),
+    app_commands.Choice(name="Bifrost Server 2", value="server_2"),
+]
 
 
 def _can_manage_t17_server_admin(interaction: discord.Interaction) -> bool:
@@ -48,8 +52,8 @@ class T17ServerAdmin(commands.Cog, name="[API] T17ServerAdmin"):
             task.cancel()
         self._removal_tasks.clear()
 
-    def _grant_key(self, guild_id: int, user_id: int) -> str:
-        return f"{guild_id}:{user_id}"
+    def _grant_key(self, guild_id: int, user_id: int, server_name: str = "main") -> str:
+        return f"{guild_id}:{user_id}:{server_name}"
 
     def _load_state(self) -> dict[str, Any]:
         try:
@@ -75,7 +79,13 @@ class T17ServerAdmin(commands.Cog, name="[API] T17ServerAdmin"):
 
     def _upsert_grant(self, grant: dict[str, Any]) -> None:
         state = self._load_state()
-        state.setdefault("grants", {})[self._grant_key(int(grant["guild_id"]), int(grant["user_id"]))] = grant
+        state.setdefault("grants", {})[
+            self._grant_key(
+                int(grant["guild_id"]),
+                int(grant["user_id"]),
+                str(grant.get("server_name") or "main"),
+            )
+        ] = grant
         self._save_state(state)
 
     def _remove_grant_record(self, grant_key: str) -> None:
@@ -141,15 +151,17 @@ class T17ServerAdmin(commands.Cog, name="[API] T17ServerAdmin"):
             if current is asyncio.current_task():
                 self._removal_tasks.pop(grant_key, None)
 
-    async def _add_admin_cam(self, player_id: str, description: str) -> None:
-        await self.backend.grant_admin_cam(player_id, description)
+    async def _add_admin_cam(self, server_name: str, player_id: str, description: str) -> None:
+        await get_hll_backend_client(server_name).grant_admin_cam(player_id, description)
 
     async def _remove_admin_cam(self, grant: dict[str, Any]) -> None:
         player_id = str(grant["player_id"])
-        await self.backend.revoke_admin_cam(player_id)
+        server_name = str(grant.get("server_name") or "main")
+        await get_hll_backend_client(server_name).revoke_admin_cam(player_id)
 
         self.logger.info(
-            "t17admincam_removed member=%s player_id=%s granted_by=%s",
+            "t17admincam_removed server=%s member=%s player_id=%s granted_by=%s",
+            server_name,
             grant.get("member_display_name"),
             player_id,
             grant.get("granted_by_name"),
@@ -206,11 +218,17 @@ class T17ServerAdmin(commands.Cog, name="[API] T17ServerAdmin"):
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.guild_only()
     @app_commands.check(_can_manage_t17_server_admin)
-    @app_commands.describe(member="Discord member to grant Spectator admin cam", duration_hours="How long to grant access for, in hours")
+    @app_commands.describe(
+        member="Discord member to grant Spectator admin cam",
+        server="Bifrost server to grant access on",
+        duration_hours="How long to grant access for, in hours",
+    )
+    @app_commands.choices(server=ADMIN_CAM_SERVER_CHOICES)
     async def t17admincam(
         self,
         interaction: discord.Interaction,
         member: discord.Member,
+        server: app_commands.Choice[str],
         duration_hours: app_commands.Range[int, 1, 168],
     ) -> None:
         if interaction.guild is None:
@@ -227,13 +245,15 @@ class T17ServerAdmin(commands.Cog, name="[API] T17ServerAdmin"):
             )
             return
 
+        selected_server = server.value
         description = self._description_for_member(member, queries)
 
         try:
-            await self._add_admin_cam(t17_id, description)
+            await self._add_admin_cam(selected_server, t17_id, description)
         except HLLBackendError as exc:
             self.logger.exception(
-                "t17admincam_add_failed member_id=%s t17_id=%s error=%s",
+                "t17admincam_add_failed server=%s member_id=%s t17_id=%s error=%s",
+                selected_server,
                 member.id,
                 t17_id,
                 exc,
@@ -242,7 +262,8 @@ class T17ServerAdmin(commands.Cog, name="[API] T17ServerAdmin"):
             return
         except Exception as exc:
             self.logger.exception(
-                "t17admincam_add_failed member_id=%s t17_id=%s error=%s",
+                "t17admincam_add_failed server=%s member_id=%s t17_id=%s error=%s",
+                selected_server,
                 member.id,
                 t17_id,
                 exc,
@@ -258,6 +279,8 @@ class T17ServerAdmin(commands.Cog, name="[API] T17ServerAdmin"):
             "player_id": t17_id,
             "role": ADMIN_CAM_ROLE,
             "description": description,
+            "server_name": selected_server,
+            "server_label": server.name,
             "source": source,
             "queries": queries,
             "duration_hours": int(duration_hours),
@@ -266,12 +289,13 @@ class T17ServerAdmin(commands.Cog, name="[API] T17ServerAdmin"):
             "granted_by_id": interaction.user.id,
             "granted_by_name": getattr(interaction.user, "display_name", str(interaction.user)),
         }
-        grant_key = self._grant_key(interaction.guild.id, member.id)
+        grant_key = self._grant_key(interaction.guild.id, member.id, selected_server)
         self._upsert_grant(grant)
         self._schedule_removal(grant_key)
 
         await interaction.followup.send(
             f"Granted {ADMIN_CAM_ROLE} admin cam to {member.mention}.\n"
+            f"Server: **{server.name}**\n"
             f"T17 ID: `{t17_id}`\n"
             f"Description sent to backend: `{description}`\n"
             f"Resolved via: `{source}`\n"
