@@ -23,9 +23,15 @@ LOGGER = logging.getLogger("Raid")
 STATE_PATH = Path(data_path("raid_posts.json"))
 PANEL_STATE_PATH = Path(data_path("raid_panel.json"))
 CLAN_LINKS_PATH = Path(data_path("raid_clan_links.json"))
+CONTROL_STATE_PATH = Path(data_path("raid_control.json"))
 RAID_CHANNEL_ID = 1528077898177839244
 CLAN_MEMBER_ROLE_NAME = "Basic Trained"
-MAX_VISIBLE_RAIDERS = 40
+RAID_INITIATOR_ROLE_NAMES = {"7DR-NCO", "7DR-SNCO"}
+GLOBAL_RAID_COOLDOWN_SECONDS = 5 * 60
+HOME_CLAN_NAME = "7DR"
+HOME_SERVER_STATS_URL = "https://frostbite.bifrostgaming.com/hll/leaderboards/servers/27f605bce0f7"
+HOME_SERVER_ANNOUNCEMENT = "7DR server is seeding! Hop in for VIP!"
+MAX_VISIBLE_RAIDERS = 28
 LIVE_REFRESH_SECONDS = 60
 LIVE_REFRESH_MAX_AGE_SECONDS = 8 * 60 * 60
 MAX_STATS_RESPONSE_BYTES = 2 * 1024 * 1024
@@ -42,6 +48,7 @@ def _safe_text(value: str, *, markdown: bool = False) -> str:
 def _valid_stats_url(value: str) -> bool:
     try:
         parsed = urlparse(value.strip())
+        parsed.port
     except ValueError:
         return False
     return (
@@ -82,6 +89,12 @@ class RaidModal(discord.ui.Modal, title="Initiate Raid"):
         if interaction.guild is None or interaction.channel is None:
             await interaction.response.send_message(
                 "Raid posts can only be created in a server channel.",
+                ephemeral=True,
+            )
+            return
+        if not self.cog.can_initiate_raid(interaction.user):
+            await interaction.response.send_message(
+                "Only members with the 7DR-NCO or 7DR-SNCO role can initiate a raid.",
                 ephemeral=True,
             )
             return
@@ -132,13 +145,49 @@ class InitiateRaidButton(discord.ui.Button):
         if not isinstance(cog, Raid):
             await interaction.response.send_message("The raid tool is unavailable.", ephemeral=True)
             return
+        if not cog.can_initiate_raid(interaction.user):
+            await interaction.response.send_message(
+                "Only members with the 7DR-NCO or 7DR-SNCO role can initiate a raid.",
+                ephemeral=True,
+            )
+            return
         await interaction.response.send_modal(RaidModal(cog))
+
+
+class Seed7DRButton(discord.ui.Button):
+    def __init__(self) -> None:
+        super().__init__(
+            label="Seed 7DR",
+            style=discord.ButtonStyle.primary,
+            emoji="🌱",
+            custom_id="raid:seed_7dr",
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        cog = interaction.client.get_cog("Raid")
+        if not isinstance(cog, Raid):
+            await interaction.response.send_message("The raid tool is unavailable.", ephemeral=True)
+            return
+        if not cog.can_initiate_raid(interaction.user):
+            await interaction.response.send_message(
+                "Only members with the 7DR-NCO or 7DR-SNCO role can initiate a raid.",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.defer(ephemeral=True)
+        await cog.create_post(
+            interaction,
+            clan_name=HOME_CLAN_NAME,
+            announcement=HOME_SERVER_ANNOUNCEMENT,
+            stats_url=HOME_SERVER_STATS_URL,
+        )
 
 
 class RaidLauncherView(discord.ui.View):
     def __init__(self) -> None:
         super().__init__(timeout=None)
         self.add_item(InitiateRaidButton())
+        self.add_item(Seed7DRButton())
 
 
 class RaidSignupView(discord.ui.View):
@@ -182,19 +231,52 @@ class RaidSignupView(discord.ui.View):
         if not isinstance(cog, Raid):
             await interaction.response.send_message("The raid tool is unavailable.", ephemeral=True)
             return
+        if not cog.can_initiate_raid(interaction.user):
+            await interaction.response.send_message(
+                "Only members with the 7DR-NCO or 7DR-SNCO role can initiate a raid.",
+                ephemeral=True,
+            )
+            return
         await interaction.response.send_modal(RaidModal(cog))
+
+    @discord.ui.button(
+        label="Seed 7DR",
+        style=discord.ButtonStyle.primary,
+        emoji="🌱",
+        custom_id="raid:seed_7dr_from_post",
+    )
+    async def seed_7dr(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        cog = interaction.client.get_cog("Raid")
+        if not isinstance(cog, Raid):
+            await interaction.response.send_message("The raid tool is unavailable.", ephemeral=True)
+            return
+        if not cog.can_initiate_raid(interaction.user):
+            await interaction.response.send_message(
+                "Only members with the 7DR-NCO or 7DR-SNCO role can initiate a raid.",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.defer(ephemeral=True)
+        await cog.create_post(
+            interaction,
+            clan_name=HOME_CLAN_NAME,
+            announcement=HOME_SERVER_ANNOUNCEMENT,
+            stats_url=HOME_SERVER_STATS_URL,
+        )
 
 
 class Raid(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self._lock = asyncio.Lock()
+        self._creation_lock = asyncio.Lock()
         self._bifrost_lock = asyncio.Lock()
         self._frostbite_token: str | None = None
         self._frostbite_token_expires_at = 0.0
         self._bifrost_server_ids: dict[str, str] = {}
         self._t17_lookup = ClanT17Lookup(logger=LOGGER)
         self._clan_links = self._load_clan_links()
+        self._control_state = self._load_control_state()
         self._posts = self._load_posts()
         bot.add_view(RaidLauncherView())
         bot.add_view(RaidSignupView())
@@ -222,6 +304,43 @@ class Raid(commands.Cog):
         with temporary_path.open("w", encoding="utf-8") as handle:
             json.dump(self._posts, handle, indent=2, ensure_ascii=False)
         temporary_path.replace(STATE_PATH)
+
+    def _load_control_state(self) -> dict[str, object]:
+        if not CONTROL_STATE_PATH.exists():
+            return {}
+        try:
+            with CONTROL_STATE_PATH.open("r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            return data if isinstance(data, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            LOGGER.exception("Could not load raid control state")
+            return {}
+
+    def _save_control_state(self) -> None:
+        CONTROL_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = CONTROL_STATE_PATH.with_suffix(".tmp")
+        with temporary_path.open("w", encoding="utf-8") as handle:
+            json.dump(self._control_state, handle, indent=2, ensure_ascii=False)
+        temporary_path.replace(CONTROL_STATE_PATH)
+
+    @staticmethod
+    def can_initiate_raid(user: discord.abc.User) -> bool:
+        return isinstance(user, discord.Member) and any(
+            role.name in RAID_INITIATOR_ROLE_NAMES for role in user.roles
+        )
+
+    @staticmethod
+    def _server_key(stats_url: str) -> str:
+        parsed = urlparse(stats_url)
+        hostname = (parsed.hostname or "").casefold()
+        bifrost_match = BIFROST_SERVER_PATTERN.search(parsed.path)
+        if hostname.endswith(".bifrostgaming.com") and bifrost_match:
+            return f"bifrost:{bifrost_match.group(1).casefold()}"
+        path = parsed.path or ""
+        api_index = path.casefold().find("/api/")
+        prefix = path[:api_index] if api_index >= 0 else ""
+        port = f":{parsed.port}" if parsed.port else ""
+        return f"crcon:{hostname}{port}{prefix.rstrip('/').casefold()}"
 
     @staticmethod
     def _clan_key(clan_name: str) -> str:
@@ -346,10 +465,15 @@ class Raid(commands.Cog):
             return None
 
     @staticmethod
-    def _player_ids_from_list(value: object) -> list[str]:
+    def _player_records_from_list(
+        value: object,
+        *,
+        allied_faction: object | None = None,
+        axis_faction: object | None = None,
+    ) -> list[dict[str, str]]:
         if not isinstance(value, list):
             return []
-        player_ids: list[str] = []
+        player_records: list[dict[str, str]] = []
         seen: set[str] = set()
         for player in value:
             if not isinstance(player, dict):
@@ -363,20 +487,59 @@ class Raid(commands.Cog):
             normalized = player_id.casefold()
             if player_id and normalized not in seen:
                 seen.add(normalized)
-                player_ids.append(player_id)
-        return player_ids
+                raw_side = None
+                for key in (
+                    "team",
+                    "side",
+                    "faction",
+                    "player.team",
+                    "player_team",
+                    "game.hll.player.team.index",
+                ):
+                    if player.get(key) not in (None, ""):
+                        raw_side = player[key]
+                        break
 
-    def _mapped_clan_members(self, guild_id: int | None, player_ids: list[str]) -> list[int]:
-        if guild_id is None or not player_ids:
-            return []
+                side = ""
+                side_text = str(raw_side or "").strip()
+                side_key = side_text.casefold()
+                if allied_faction is not None and side_text == str(allied_faction):
+                    side = "Allies"
+                elif axis_faction is not None and side_text == str(axis_faction):
+                    side = "Axis"
+                elif "allies" in side_key or "allied" in side_key:
+                    side = "Allies"
+                elif "axis" in side_key:
+                    side = "Axis"
+                elif allied_faction is None and axis_faction is None:
+                    # HLL RCON v2 uses 1 for Axis and 2 for Allies.
+                    if side_text == "1":
+                        side = "Axis"
+                    elif side_text == "2":
+                        side = "Allies"
+
+                player_records.append({"player_id": player_id, "side": side})
+        return player_records
+
+    def _mapped_clan_members(
+        self,
+        guild_id: int | None,
+        player_records: list[dict[str, str]],
+    ) -> dict[int, str]:
+        if guild_id is None or not player_records:
+            return {}
         guild = self.bot.get_guild(guild_id)
         if guild is None:
-            return []
+            return {}
         role = discord.utils.get(guild.roles, name=CLAN_MEMBER_ROLE_NAME)
         if role is None:
-            return []
+            return {}
 
-        online_ids = {player_id.casefold() for player_id in player_ids}
+        online_players = {
+            record["player_id"].casefold(): record.get("side", "")
+            for record in player_records
+            if record.get("player_id")
+        }
         mapped_entries = self._t17_lookup.resolved_members_for_role(guild.id, CLAN_MEMBER_ROLE_NAME)
         t17_by_member: dict[int, str] = {}
         for entry in mapped_entries:
@@ -388,11 +551,11 @@ class Raid(commands.Cog):
             if t17_id:
                 t17_by_member[member_id] = t17_id.casefold()
 
-        return [
-            member.id
+        return {
+            member.id: online_players[t17_by_member[member.id]]
             for member in role.members
-            if t17_by_member.get(member.id) in online_ids
-        ]
+            if t17_by_member.get(member.id) in online_players
+        }
 
     @staticmethod
     async def _url_resolves_publicly(url: str) -> bool:
@@ -493,7 +656,7 @@ class Raid(commands.Cog):
             if scoreboard_data is not None
             else None
         )
-        player_ids = self._player_ids_from_list(player_list)
+        player_records = self._player_records_from_list(player_list)
 
         max_players = self._integer(
             self._first_nested_value(
@@ -509,7 +672,7 @@ class Raid(commands.Cog):
             "map": map_name or "Unknown",
             "players": players,
             "max_players": max_players,
-            "player_ids": player_ids,
+            "player_records": player_records,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -659,8 +822,10 @@ class Raid(commands.Cog):
         )
         if player_count is None:
             player_count = self._integer(payload.get("server.players.total"))
-        player_ids = self._player_ids_from_list(
-            players_result.get("players") if isinstance(players_result, dict) else None
+        player_records = self._player_records_from_list(
+            players_result.get("players") if isinstance(players_result, dict) else None,
+            allied_faction=payload.get("game.hll.alliedfaction.index"),
+            axis_faction=payload.get("game.hll.axisfaction.index"),
         )
 
         matches_result = data.get("serverMatches")
@@ -680,7 +845,7 @@ class Raid(commands.Cog):
             "map": map_name or "Unknown",
             "players": player_count,
             "max_players": self._integer(payload.get("server.players.max")),
-            "player_ids": player_ids,
+            "player_records": player_records,
             "updated_at": updated_at,
         }
 
@@ -695,8 +860,16 @@ class Raid(commands.Cog):
                 "available": False,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
-        player_ids = [str(player_id) for player_id in state.pop("player_ids", [])]
-        state["clan_member_ids"] = self._mapped_clan_members(guild_id, player_ids)
+        player_records = [
+            record
+            for record in state.pop("player_records", [])
+            if isinstance(record, dict)
+        ]
+        clan_member_sides = self._mapped_clan_members(guild_id, player_records)
+        state["clan_member_ids"] = list(clan_member_sides)
+        state["clan_member_sides"] = {
+            str(member_id): side for member_id, side in clan_member_sides.items()
+        }
         return state
 
     async def _refresh_post_message(self, message_id: int, post: dict[str, object]) -> None:
@@ -848,19 +1021,6 @@ class Raid(commands.Cog):
                 value=str(live_state.get("source") or "Server stats"),
                 inline=True,
             )
-            clan_member_ids = [
-                int(member_id)
-                for member_id in live_state.get("clan_member_ids", [])
-            ]
-            visible_clan_members = clan_member_ids[:35]
-            clan_member_text = "\n".join(f"<@{member_id}>" for member_id in visible_clan_members)
-            if len(clan_member_ids) > len(visible_clan_members):
-                clan_member_text += f"\n…and {len(clan_member_ids) - len(visible_clan_members)} more"
-            embed.add_field(
-                name=f"7DR Members In Server ({len(clan_member_ids)})",
-                value=clan_member_text or "None detected.",
-                inline=False,
-            )
         elif isinstance(live_state, dict):
             embed.add_field(
                 name="Live Server Data",
@@ -872,11 +1032,22 @@ class Raid(commands.Cog):
             int(member_id)
             for member_id in live_state.get("clan_member_ids", [])
         } if isinstance(live_state, dict) else set()
+        clan_member_sides = (
+            live_state.get("clan_member_sides", {})
+            if isinstance(live_state, dict)
+            else {}
+        )
+        if not isinstance(clan_member_sides, dict):
+            clan_member_sides = {}
         visible = participant_ids[:MAX_VISIBLE_RAIDERS]
-        raider_lines = [
-            f"{'⚔️ ' if user_id in detected_clan_members else ''}<@{user_id}>"
-            for user_id in visible
-        ]
+        raider_lines: list[str] = []
+        for user_id in visible:
+            if user_id not in detected_clan_members:
+                raider_lines.append(f"<@{user_id}>")
+                continue
+            side = str(clan_member_sides.get(str(user_id)) or "").strip()
+            side_suffix = f" - {side}" if side else ""
+            raider_lines.append(f"🗡️ <@{user_id}>{side_suffix}")
         hidden_count = len(participant_ids) - len(visible)
         if hidden_count:
             raider_lines.append(f"…and {hidden_count} more")
@@ -888,6 +1059,59 @@ class Raid(commands.Cog):
         embed.set_footer(text="Click Join Raid to add your name.")
         return embed
 
+    async def _ongoing_raid_exists(self, stats_url: str) -> bool:
+        server_key = self._server_key(stats_url)
+        stale_message_ids: list[str] = []
+        for message_id, post in list(self._posts.items()):
+            post_url = str(post.get("stats_url") or "")
+            if not post_url or self._server_key(post_url) != server_key:
+                continue
+            channel_id = self._integer(post.get("channel_id"))
+            if channel_id is None:
+                stale_message_ids.append(message_id)
+                continue
+            channel = self.bot.get_channel(channel_id)
+            if channel is None:
+                try:
+                    channel = await self.bot.fetch_channel(channel_id)
+                except discord.NotFound:
+                    stale_message_ids.append(message_id)
+                    continue
+                except (discord.Forbidden, discord.HTTPException):
+                    return True
+            if not isinstance(channel, (discord.TextChannel, discord.Thread)):
+                stale_message_ids.append(message_id)
+                continue
+            try:
+                await channel.fetch_message(int(message_id))
+                return True
+            except discord.NotFound:
+                stale_message_ids.append(message_id)
+            except (discord.Forbidden, discord.HTTPException):
+                return True
+
+        if stale_message_ids:
+            async with self._lock:
+                changed = False
+                for message_id in stale_message_ids:
+                    changed = self._posts.pop(message_id, None) is not None or changed
+                if changed:
+                    self._save_posts()
+        return False
+
+    def _cooldown_remaining(self) -> int:
+        raw_timestamp = str(self._control_state.get("last_raid_created_at") or "")
+        if not raw_timestamp:
+            return 0
+        try:
+            created_at = datetime.fromisoformat(raw_timestamp)
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return 0
+        elapsed = (datetime.now(timezone.utc) - created_at).total_seconds()
+        return max(0, int(GLOBAL_RAID_COOLDOWN_SECONDS - elapsed + 0.999))
+
     async def create_post(
         self,
         interaction: discord.Interaction,
@@ -896,6 +1120,44 @@ class Raid(commands.Cog):
         announcement: str,
         stats_url: str,
     ) -> None:
+        if not self.can_initiate_raid(interaction.user):
+            await interaction.followup.send(
+                "Only members with the 7DR-NCO or 7DR-SNCO role can initiate a raid.",
+                ephemeral=True,
+            )
+            return
+
+        async with self._creation_lock:
+            if await self._ongoing_raid_exists(stats_url):
+                await interaction.followup.send("Ongoing raid already called", ephemeral=True)
+                return
+            cooldown_remaining = self._cooldown_remaining()
+            if cooldown_remaining:
+                minutes, seconds = divmod(cooldown_remaining, 60)
+                await interaction.followup.send(
+                    f"Raid calls have a global 5-minute cooldown. Try again in {minutes}:{seconds:02d}.",
+                    ephemeral=True,
+                )
+                return
+
+            await self._create_post_unchecked(
+                interaction,
+                clan_name=clan_name,
+                announcement=announcement,
+                stats_url=stats_url,
+            )
+            self._control_state["last_raid_created_at"] = datetime.now(timezone.utc).isoformat()
+            self._save_control_state()
+
+    async def _create_post_unchecked(
+        self,
+        interaction: discord.Interaction,
+        *,
+        clan_name: str,
+        announcement: str,
+        stats_url: str,
+    ) -> None:
+        self.resolve_clan_stats_url(clan_name, stats_url)
         created_at = datetime.now(timezone.utc).isoformat()
         post: dict[str, object] = {
             "guild_id": interaction.guild_id,
