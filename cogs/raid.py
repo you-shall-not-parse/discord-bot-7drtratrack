@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import socket
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -15,7 +16,6 @@ import requests
 from discord.ext import commands
 
 from data_paths import data_path
-from hll_API_backend import BifrostBackendClient, HLLBackendError
 
 
 LOGGER = logging.getLogger("Raid")
@@ -27,6 +27,8 @@ LIVE_REFRESH_SECONDS = 60
 LIVE_REFRESH_MAX_AGE_SECONDS = 8 * 60 * 60
 MAX_STATS_RESPONSE_BYTES = 2 * 1024 * 1024
 BIFROST_SERVER_PATTERN = re.compile(r"/servers/([A-Za-z0-9-]+)", re.IGNORECASE)
+FROSTBITE_TOKEN_URL = "https://frostbite.bifrostgaming.com/api/keycloak/token"
+FROSTBITE_GRAPHQL_URL = "https://api.dev.bifrostgaming.com/graphql"
 
 
 def _safe_text(value: str, *, markdown: bool = False) -> str:
@@ -178,7 +180,9 @@ class Raid(commands.Cog):
         self.bot = bot
         self._lock = asyncio.Lock()
         self._bifrost_lock = asyncio.Lock()
-        self._bifrost_client: BifrostBackendClient | None = None
+        self._frostbite_token: str | None = None
+        self._frostbite_token_expires_at = 0.0
+        self._bifrost_server_ids: dict[str, str] = {}
         self._posts = self._load_posts()
         bot.add_view(RaidLauncherView())
         bot.add_view(RaidSignupView())
@@ -420,50 +424,154 @@ class Raid(commands.Cog):
         scoreboard_payload = await self._fetch_public_json(scoreboard_url)
         return self._parse_crcon_live_state(game_payload, scoreboard_payload)
 
+    async def _get_frostbite_service_token(self) -> str:
+        now = time.time()
+        if self._frostbite_token and now < self._frostbite_token_expires_at - 30:
+            return self._frostbite_token
+
+        def request_token() -> tuple[str, int]:
+            response = requests.post(
+                FROSTBITE_TOKEN_URL,
+                headers={"Accept": "application/json", "User-Agent": "7DR-RaidBot/1.0"},
+                timeout=12,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            token = str(payload.get("access_token") or "").strip()
+            if not token:
+                raise ValueError("Frostbite did not return a service token")
+            return token, int(payload.get("expires_in") or 300)
+
+        token, expires_in = await asyncio.to_thread(request_token)
+        self._frostbite_token = token
+        self._frostbite_token_expires_at = time.time() + max(60, expires_in)
+        return token
+
+    async def _frostbite_graphql(
+        self,
+        query: str,
+        variables: dict[str, object],
+        *,
+        retry_auth: bool = True,
+    ) -> dict[str, object]:
+        token = await self._get_frostbite_service_token()
+
+        def request() -> tuple[int, dict[str, object]]:
+            response = requests.post(
+                FROSTBITE_GRAPHQL_URL,
+                headers={
+                    "Accept": "application/json",
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                    "User-Agent": "7DR-RaidBot/1.0",
+                },
+                json={"query": query, "variables": variables},
+                timeout=15,
+            )
+            payload = response.json()
+            return response.status_code, payload if isinstance(payload, dict) else {}
+
+        status, payload = await asyncio.to_thread(request)
+        errors = payload.get("errors")
+        error_messages = [
+            str(error.get("message") or "Bifrost GraphQL error")
+            for error in errors
+            if isinstance(error, dict)
+        ] if isinstance(errors, list) else []
+        unauthenticated = status == 401 or any("authenticated" in message.lower() for message in error_messages)
+        if unauthenticated and retry_auth:
+            self._frostbite_token = None
+            self._frostbite_token_expires_at = 0.0
+            return await self._frostbite_graphql(query, variables, retry_auth=False)
+        if status >= 400 or error_messages:
+            raise RuntimeError("; ".join(error_messages) or f"Bifrost HTTP {status}")
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise RuntimeError("Bifrost returned no GraphQL data")
+        return data
+
     async def _fetch_bifrost_live_state(self, stats_url: str) -> dict[str, object] | None:
         match = BIFROST_SERVER_PATTERN.search(urlparse(stats_url).path)
         if match is None:
             return None
-        server_id = match.group(1)
+        public_server_id = match.group(1)
+
         try:
             async with self._bifrost_lock:
-                if self._bifrost_client is None:
-                    self._bifrost_client = BifrostBackendClient(
-                        {"bifrost": {"server_id": server_id, "game_type": "HLL"}}
-                    )
-                else:
-                    self._bifrost_client.server_id = server_id
-                data = await self._bifrost_client.get_mapvote_game_state()
-        except HLLBackendError:
-            LOGGER.info("Bifrost live state is unavailable for server %s", server_id)
-            return None
-        if not isinstance(data, dict):
+                api_server_id = self._bifrost_server_ids.get(public_server_id)
+                if api_server_id is None:
+                    if re.fullmatch(
+                        r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+                        public_server_id,
+                        re.IGNORECASE,
+                    ):
+                        api_server_id = public_server_id
+                    else:
+                        resolve_data = await self._frostbite_graphql(
+                            """
+                            query ServerIdFromShortId($gameType: String!, $shortId: String!) {
+                              serverIdFromShortId(gameType: $gameType, shortId: $shortId)
+                            }
+                            """,
+                            {"gameType": "HLL", "shortId": public_server_id},
+                        )
+                        api_server_id = str(resolve_data.get("serverIdFromShortId") or "").strip()
+                    if not api_server_id:
+                        raise RuntimeError("Bifrost could not resolve the public server ID")
+                    self._bifrost_server_ids[public_server_id] = api_server_id
+
+                data = await self._frostbite_graphql(
+                    """
+                    query RaidLive($serverId: ID!, $publicServerId: String!, $gameType: String!) {
+                      getGameState(serverId: $serverId, gameType: $gameType) { data timestamp }
+                      getPlayers(serverId: $serverId, gameType: $gameType) { totalCount timestamp }
+                      serverMatches(gameType: $gameType, serverId: $publicServerId, limit: 0) {
+                        activeMatch { mapName gamemode }
+                      }
+                    }
+                    """,
+                    {
+                        "serverId": api_server_id,
+                        "publicServerId": public_server_id,
+                        "gameType": "HLL",
+                    },
+                )
+        except (requests.RequestException, json.JSONDecodeError, ValueError, RuntimeError) as exc:
+            LOGGER.warning(
+                "Bifrost live state is unavailable for public server %s: %s",
+                public_server_id,
+                exc,
+            )
             return None
 
-        raw_payload = data.get("data")
-        if isinstance(raw_payload, str):
-            try:
-                raw_payload = json.loads(raw_payload)
-            except json.JSONDecodeError:
-                raw_payload = {}
-        payload = raw_payload if isinstance(raw_payload, dict) else {}
-        team1 = data.get("team1") if isinstance(data.get("team1"), dict) else {}
-        team2 = data.get("team2") if isinstance(data.get("team2"), dict) else {}
-        player_count = self._integer(payload.get("playerCount"))
-        if player_count is None:
-            player_count = (self._integer(team1.get("playerCount")) or 0) + (
-                self._integer(team2.get("playerCount")) or 0
-            )
-        map_name = self._map_name(
-            payload.get("currentMap") or payload.get("current_map") or payload.get("map")
+        game_state_result = data.get("getGameState")
+        game_state = game_state_result.get("data") if isinstance(game_state_result, dict) else {}
+        payload = game_state if isinstance(game_state, dict) else {}
+        players_result = data.get("getPlayers")
+        player_count = self._integer(
+            players_result.get("totalCount") if isinstance(players_result, dict) else None
         )
+        if player_count is None:
+            player_count = self._integer(payload.get("server.players.total"))
+
+        matches_result = data.get("serverMatches")
+        active_match = matches_result.get("activeMatch") if isinstance(matches_result, dict) else {}
+        map_name = self._map_name(
+            active_match.get("mapName") if isinstance(active_match, dict) else None
+        ) or self._map_name(payload.get("server.map.name") or payload.get("mapId"))
+        updated_at = (
+            str(game_state_result.get("timestamp") or datetime.now(timezone.utc).isoformat())
+            if isinstance(game_state_result, dict)
+            else datetime.now(timezone.utc).isoformat()
+        )
+
         return {
             "available": True,
             "source": "Bifrost",
             "map": map_name or "Unknown",
             "players": player_count,
-            "max_players": self._integer(payload.get("maxPlayers")),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "max_players": self._integer(payload.get("server.players.max")),
+            "updated_at": updated_at,
         }
 
     async def _fetch_live_state(self, stats_url: str) -> dict[str, object]:
