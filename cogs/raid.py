@@ -545,6 +545,32 @@ class Raid(commands.Cog):
             return None
 
     @staticmethod
+    def _duration_seconds(value: object) -> int | None:
+        seconds = Raid._integer(value)
+        if seconds is not None:
+            return max(0, seconds)
+        if not isinstance(value, str):
+            return None
+        parts = value.strip().split(":")
+        if len(parts) not in (2, 3):
+            return None
+        try:
+            numbers = [int(part) for part in parts]
+        except ValueError:
+            return None
+        if len(numbers) == 2:
+            minutes, seconds = numbers
+            return max(0, minutes * 60 + seconds)
+        hours, minutes, seconds = numbers
+        return max(0, hours * 3600 + minutes * 60 + seconds)
+
+    @staticmethod
+    def _format_duration(seconds: int) -> str:
+        hours, remainder = divmod(max(0, seconds), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        return f"{hours}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes}:{seconds:02d}"
+
+    @staticmethod
     def _player_records_from_list(
         value: object,
         *,
@@ -737,6 +763,19 @@ class Raid(commands.Cog):
             else None
         )
         player_records = self._player_records_from_list(player_list)
+        time_remaining_seconds = self._duration_seconds(
+            self._first_nested_value(
+                game_data,
+                (
+                    "remaining_seconds",
+                    "remainingSeconds",
+                    "time_remaining",
+                    "timeRemaining",
+                    "remaining_time",
+                    "map_time_remaining",
+                ),
+            )
+        )
 
         max_players = self._integer(
             self._first_nested_value(
@@ -752,7 +791,9 @@ class Raid(commands.Cog):
             "map": map_name or "Unknown",
             "players": players,
             "max_players": max_players,
+            "time_remaining_seconds": time_remaining_seconds,
             "player_records": player_records,
+            "player_detection_available": isinstance(player_list, list),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -902,8 +943,9 @@ class Raid(commands.Cog):
         )
         if player_count is None:
             player_count = self._integer(payload.get("server.players.total"))
+        player_list = players_result.get("players") if isinstance(players_result, dict) else None
         player_records = self._player_records_from_list(
-            players_result.get("players") if isinstance(players_result, dict) else None,
+            player_list,
             allied_faction=payload.get("game.hll.alliedfaction.index"),
             axis_faction=payload.get("game.hll.axisfaction.index"),
         )
@@ -925,7 +967,11 @@ class Raid(commands.Cog):
             "map": map_name or "Unknown",
             "players": player_count,
             "max_players": self._integer(payload.get("server.players.max")),
+            "time_remaining_seconds": self._duration_seconds(
+                payload.get("server.map.timeremaining")
+            ),
             "player_records": player_records,
+            "player_detection_available": isinstance(player_list, list),
             "updated_at": updated_at,
         }
 
@@ -1040,12 +1086,34 @@ class Raid(commands.Cog):
                         current = self._posts.get(message_id)
                         if current is None:
                             continue
-                        current["live_state"] = live_state
                         participants = [int(user_id) for user_id in current.get("participants", [])]
-                        for member_id in live_state.get("clan_member_ids", []):
-                            detected_member_id = int(member_id)
-                            if detected_member_id not in participants:
-                                participants.append(detected_member_id)
+                        if live_state.get("player_detection_available"):
+                            previous_detected = {
+                                int(member_id)
+                                for member_id in current.get(
+                                    "detected_member_ids",
+                                    (
+                                        current.get("live_state", {}).get("clan_member_ids", [])
+                                        if isinstance(current.get("live_state"), dict)
+                                        else []
+                                    ),
+                                )
+                            }
+                            currently_detected = {
+                                int(member_id)
+                                for member_id in live_state.get("clan_member_ids", [])
+                            }
+                            dropped_members = previous_detected - currently_detected
+                            participants = [
+                                user_id
+                                for user_id in participants
+                                if user_id not in dropped_members
+                            ]
+                            for detected_member_id in currently_detected:
+                                if detected_member_id not in participants:
+                                    participants.append(detected_member_id)
+                            current["detected_member_ids"] = list(currently_detected)
+                        current["live_state"] = live_state
                         current["participants"] = participants
                         self._save_posts()
                         refreshed_post = dict(current)
@@ -1137,6 +1205,13 @@ class Raid(commands.Cog):
             if players is not None:
                 player_text = str(players) if max_players is None else f"{players}/{max_players}"
                 embed.add_field(name="Players", value=player_text, inline=True)
+            time_remaining = self._duration_seconds(live_state.get("time_remaining_seconds"))
+            if time_remaining is not None:
+                embed.add_field(
+                    name="Match Time Remaining",
+                    value=self._format_duration(time_remaining),
+                    inline=True,
+                )
 
         detected_clan_members = {
             int(member_id)
@@ -1314,6 +1389,11 @@ class Raid(commands.Cog):
             detected_member_id = int(member_id)
             if detected_member_id not in participants:
                 participants.append(detected_member_id)
+        if post["live_state"].get("player_detection_available"):
+            post["detected_member_ids"] = [
+                int(member_id)
+                for member_id in post["live_state"].get("clan_member_ids", [])
+            ]
         post["participants"] = participants
         if interaction.channel is None:
             raise RuntimeError("Raid channel is unavailable")
