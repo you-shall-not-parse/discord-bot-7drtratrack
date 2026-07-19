@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import ipaddress
 import json
 import logging
 import random
 import re
 import socket
-import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,7 +28,6 @@ PANEL_STATE_PATH = Path(data_path("raid_panel.json"))
 CLAN_LINKS_PATH = Path(data_path("raid_clan_links.json"))
 CONTROL_STATE_PATH = Path(data_path("raid_control.json"))
 RAID_CONTENT_DIR = Path(data_path("raid_content", ensure_dir=False))
-RAID_CONTENT_CACHE_DIR = Path(data_path("raid_content_cache", ensure_dir=False))
 RAID_CHANNEL_ID = 1528077898177839244
 CLAN_MEMBER_ROLE_NAME = "Basic Trained"
 RAID_INITIATOR_ROLE_NAMES = {"7DR-NCO", "7DR-SNCO"}
@@ -43,7 +40,7 @@ MAX_VISIBLE_RAIDERS = 28
 LIVE_REFRESH_SECONDS = 60
 LIVE_REFRESH_MAX_AGE_SECONDS = 8 * 60 * 60
 RAID_PURGE_SECONDS = 12 * 60 * 60
-RAID_MEDIA_EXTENSIONS = {".gif", ".png", ".mp4"}
+RAID_MEDIA_EXTENSIONS = {".gif", ".png"}
 RAID_EMBED_IMAGE_EXTENSIONS = {".gif", ".png"}
 MAX_STATS_RESPONSE_BYTES = 2 * 1024 * 1024
 BIFROST_SERVER_PATTERN = re.compile(r"/servers/([A-Za-z0-9-]+)", re.IGNORECASE)
@@ -283,7 +280,6 @@ class Raid(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         RAID_CONTENT_DIR.mkdir(parents=True, exist_ok=True)
-        RAID_CONTENT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         self._lock = asyncio.Lock()
         self._creation_lock = asyncio.Lock()
         self._bifrost_lock = asyncio.Lock()
@@ -356,77 +352,19 @@ class Raid(commands.Cog):
         return value if isinstance(value, bool) else True
 
     @staticmethod
-    def _convert_mp4_to_gif(source_path: Path) -> Path | None:
-        try:
-            import imageio_ffmpeg
-
-            source_stat = source_path.stat()
-            fingerprint = hashlib.sha256(
-                f"{source_path.name}:{source_stat.st_size}:{source_stat.st_mtime_ns}".encode()
-            ).hexdigest()[:16]
-            output_path = RAID_CONTENT_CACHE_DIR / f"{source_path.stem}-{fingerprint}.gif"
-            if output_path.is_file() and output_path.stat().st_size > 0:
-                return output_path
-
-            temporary_path = output_path.with_name(f"{output_path.stem}.tmp.gif")
-            command = [
-                imageio_ffmpeg.get_ffmpeg_exe(),
-                "-y",
-                "-i",
-                str(source_path),
-                "-t",
-                "12",
-                "-vf",
-                (
-                    "fps=8,scale=480:-2:flags=lanczos:force_original_aspect_ratio=decrease,"
-                    "split[s0][s1];[s0]palettegen=max_colors=96[p];"
-                    "[s1][p]paletteuse=dither=bayer"
-                ),
-                "-an",
-                "-loop",
-                "0",
-                str(temporary_path),
-            ]
-            subprocess.run(
-                command,
-                check=True,
-                capture_output=True,
-                timeout=180,
-            )
-            temporary_path.replace(output_path)
-            return output_path
-        except (ImportError, OSError, subprocess.SubprocessError) as exc:
-            LOGGER.warning("Could not convert raid MP4 %s to GIF: %s", source_path, exc)
-            return None
-
-    async def _choose_raid_media(self, max_upload_bytes: int) -> Path | None:
+    def _choose_raid_media(max_upload_bytes: int) -> Path | None:
         try:
             candidates = [
                 path
                 for path in RAID_CONTENT_DIR.iterdir()
                 if path.is_file()
                 and path.suffix.casefold() in RAID_MEDIA_EXTENSIONS
-                and path.stat().st_size > 0
+                and 0 < path.stat().st_size <= max_upload_bytes
             ]
         except OSError:
             LOGGER.exception("Could not inspect raid content directory %s", RAID_CONTENT_DIR)
             return None
-        random.shuffle(candidates)
-        for candidate in candidates:
-            prepared_path = candidate
-            if candidate.suffix.casefold() == ".mp4":
-                prepared_path = await asyncio.to_thread(
-                    self._convert_mp4_to_gif,
-                    candidate,
-                )
-                if prepared_path is None:
-                    continue
-            try:
-                if prepared_path.stat().st_size <= max_upload_bytes:
-                    return prepared_path
-            except OSError:
-                continue
-        return None
+        return random.choice(candidates) if candidates else None
 
     @staticmethod
     def _raid_media_file(post: dict[str, object]) -> discord.File | None:
@@ -434,12 +372,7 @@ class Raid(commands.Cog):
         attachment_name = str(post.get("media_attachment_name") or "").strip()
         if not stored_name or not attachment_name:
             return None
-        media_directory = (
-            RAID_CONTENT_CACHE_DIR
-            if post.get("media_location") == "cache"
-            else RAID_CONTENT_DIR
-        )
-        media_path = media_directory / stored_name
+        media_path = RAID_CONTENT_DIR / stored_name
         if media_path.suffix.casefold() not in RAID_MEDIA_EXTENSIONS or not media_path.is_file():
             return None
         try:
@@ -1351,15 +1284,12 @@ class Raid(commands.Cog):
             if interaction.guild is not None
             else 8 * 1024 * 1024
         )
-        media_path = await self._choose_raid_media(max_upload_bytes)
+        media_path = self._choose_raid_media(max_upload_bytes)
         if media_path is not None:
             media_extension = media_path.suffix.casefold()
             post["media_filename"] = media_path.name
             post["media_extension"] = media_extension
             post["media_attachment_name"] = f"raid_media{media_extension}"
-            post["media_location"] = (
-                "cache" if media_path.parent == RAID_CONTENT_CACHE_DIR else "content"
-            )
         if stats_url:
             post["live_state"] = await self._fetch_live_state(stats_url, interaction.guild_id)
         else:
@@ -1391,7 +1321,6 @@ class Raid(commands.Cog):
             post.pop("media_filename", None)
             post.pop("media_extension", None)
             post.pop("media_attachment_name", None)
-            post.pop("media_location", None)
             send_kwargs["embed"] = self.build_post_embed(post)
         try:
             message = await interaction.channel.send(**send_kwargs)
@@ -1405,7 +1334,6 @@ class Raid(commands.Cog):
             post.pop("media_filename", None)
             post.pop("media_extension", None)
             post.pop("media_attachment_name", None)
-            post.pop("media_location", None)
             send_kwargs.pop("file", None)
             send_kwargs["embed"] = self.build_post_embed(post)
             message = await interaction.channel.send(**send_kwargs)

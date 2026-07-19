@@ -4,7 +4,6 @@ python-dateutil
 pillow
 beautifulsoup4
 requests
-imageio-ffmpeg
 openai
 apscheduler
 aiofiles
