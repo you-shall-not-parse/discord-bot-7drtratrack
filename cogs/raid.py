@@ -1163,20 +1163,10 @@ class Raid(commands.Cog):
         embed.set_footer(text="Use the button to create a new signup post.")
         return embed
 
-    def _member_display_name(self, guild_id: int | None, user_id: int) -> str:
-        guild = self.bot.get_guild(guild_id) if guild_id is not None else None
-        member = guild.get_member(user_id) if guild is not None else None
-        if member is None:
-            return f"<@{user_id}>"
-        display_name = discord.utils.escape_mentions(member.display_name)
-        display_name = discord.utils.escape_markdown(display_name)
-        return f"@{display_name}"
-
     def build_post_embed(self, post: dict[str, object]) -> discord.Embed:
         clan_name = _safe_text(str(post.get("clan_name", "Unknown clan")), markdown=True)
         announcement = _safe_text(str(post.get("announcement", "")))
         stats_url = str(post.get("stats_url", ""))
-        guild_id = self._integer(post.get("guild_id"))
         initiator_id = int(post.get("initiator_id", 0))
         participant_ids = [int(user_id) for user_id in post.get("participants", [])]
         description = announcement
@@ -1191,7 +1181,7 @@ class Raid(commands.Cog):
         )
         embed.add_field(
             name="Initiated by",
-            value=self._member_display_name(guild_id, initiator_id),
+            value=f"<@{initiator_id}>",
             inline=True,
         )
 
@@ -1228,12 +1218,11 @@ class Raid(commands.Cog):
         raider_lines: list[str] = []
         for user_id in visible:
             if user_id not in detected_clan_members:
-                raider_lines.append(self._member_display_name(guild_id, user_id))
+                raider_lines.append(f"<@{user_id}>")
                 continue
             side = str(clan_member_sides.get(str(user_id)) or "").strip()
             side_suffix = f" - {side}" if side else ""
-            member_name = self._member_display_name(guild_id, user_id)
-            raider_lines.append(f"🗡️ {member_name}{side_suffix}")
+            raider_lines.append(f"🗡️ <@{user_id}>{side_suffix}")
         hidden_count = len(participant_ids) - len(visible)
         if hidden_count:
             raider_lines.append(f"…and {hidden_count} more")
