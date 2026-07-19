@@ -29,6 +29,7 @@ CONTROL_STATE_PATH = Path(data_path("raid_control.json"))
 RAID_CHANNEL_ID = 1528077898177839244
 CLAN_MEMBER_ROLE_NAME = "Basic Trained"
 RAID_INITIATOR_ROLE_NAMES = {"7DR-NCO", "7DR-SNCO"}
+RAID_COOLDOWN_BYPASS_ROLE_NAME = "Administration"
 GLOBAL_RAID_COOLDOWN_SECONDS = 5 * 60
 HOME_CLAN_NAME = "7DR"
 HOME_SERVER_STATS_URL = "https://frostbite.bifrostgaming.com/hll/leaderboards/servers/27f605bce0f7"
@@ -333,6 +334,12 @@ class Raid(commands.Cog):
     def can_initiate_raid(user: discord.abc.User) -> bool:
         return isinstance(user, discord.Member) and any(
             role.name in RAID_INITIATOR_ROLE_NAMES for role in user.roles
+        )
+
+    @staticmethod
+    def can_bypass_raid_cooldown(user: discord.abc.User) -> bool:
+        return isinstance(user, discord.Member) and any(
+            role.name == RAID_COOLDOWN_BYPASS_ROLE_NAME for role in user.roles
         )
 
     def everyone_ping_enabled(self) -> bool:
@@ -1190,7 +1197,11 @@ class Raid(commands.Cog):
             if await self._ongoing_raid_exists(stats_url, clan_name):
                 await interaction.followup.send("Ongoing raid already called", ephemeral=True)
                 return
-            cooldown_remaining = self._cooldown_remaining()
+            cooldown_remaining = (
+                0
+                if self.can_bypass_raid_cooldown(interaction.user)
+                else self._cooldown_remaining()
+            )
             if cooldown_remaining:
                 minutes, seconds = divmod(cooldown_remaining, 60)
                 await interaction.followup.send(
