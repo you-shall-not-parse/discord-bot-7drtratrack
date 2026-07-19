@@ -4,6 +4,7 @@ import asyncio
 import ipaddress
 import json
 import logging
+import random
 import re
 import socket
 import time
@@ -26,6 +27,7 @@ STATE_PATH = Path(data_path("raid_posts.json"))
 PANEL_STATE_PATH = Path(data_path("raid_panel.json"))
 CLAN_LINKS_PATH = Path(data_path("raid_clan_links.json"))
 CONTROL_STATE_PATH = Path(data_path("raid_control.json"))
+RAID_CONTENT_DIR = Path(data_path("raid_content", ensure_dir=False))
 RAID_CHANNEL_ID = 1528077898177839244
 CLAN_MEMBER_ROLE_NAME = "Basic Trained"
 RAID_INITIATOR_ROLE_NAMES = {"7DR-NCO", "7DR-SNCO"}
@@ -38,6 +40,8 @@ MAX_VISIBLE_RAIDERS = 28
 LIVE_REFRESH_SECONDS = 60
 LIVE_REFRESH_MAX_AGE_SECONDS = 8 * 60 * 60
 RAID_PURGE_SECONDS = 12 * 60 * 60
+RAID_MEDIA_EXTENSIONS = {".gif", ".png", ".mp4"}
+RAID_EMBED_IMAGE_EXTENSIONS = {".gif", ".png"}
 MAX_STATS_RESPONSE_BYTES = 2 * 1024 * 1024
 BIFROST_SERVER_PATTERN = re.compile(r"/servers/([A-Za-z0-9-]+)", re.IGNORECASE)
 FROSTBITE_TOKEN_URL = "https://frostbite.bifrostgaming.com/api/keycloak/token"
@@ -275,6 +279,7 @@ class Raid(commands.Cog):
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
+        RAID_CONTENT_DIR.mkdir(parents=True, exist_ok=True)
         self._lock = asyncio.Lock()
         self._creation_lock = asyncio.Lock()
         self._bifrost_lock = asyncio.Lock()
@@ -345,6 +350,36 @@ class Raid(commands.Cog):
     def everyone_ping_enabled(self) -> bool:
         value = self._control_state.get("everyone_ping_enabled", True)
         return value if isinstance(value, bool) else True
+
+    @staticmethod
+    def _choose_raid_media(max_upload_bytes: int) -> Path | None:
+        try:
+            candidates = [
+                path
+                for path in RAID_CONTENT_DIR.iterdir()
+                if path.is_file()
+                and path.suffix.casefold() in RAID_MEDIA_EXTENSIONS
+                and 0 < path.stat().st_size <= max_upload_bytes
+            ]
+        except OSError:
+            LOGGER.exception("Could not inspect raid content directory %s", RAID_CONTENT_DIR)
+            return None
+        return random.choice(candidates) if candidates else None
+
+    @staticmethod
+    def _raid_media_file(post: dict[str, object]) -> discord.File | None:
+        stored_name = Path(str(post.get("media_filename") or "")).name
+        attachment_name = str(post.get("media_attachment_name") or "").strip()
+        if not stored_name or not attachment_name:
+            return None
+        media_path = RAID_CONTENT_DIR / stored_name
+        if media_path.suffix.casefold() not in RAID_MEDIA_EXTENSIONS or not media_path.is_file():
+            return None
+        try:
+            return discord.File(media_path, filename=attachment_name)
+        except OSError:
+            LOGGER.exception("Could not open raid media file %s", media_path)
+            return None
 
     async def _set_everyone_ping(
         self,
@@ -1117,6 +1152,10 @@ class Raid(commands.Cog):
             value="\n".join(raider_lines) or "No one has joined yet.",
             inline=False,
         )
+        media_extension = str(post.get("media_extension") or "").casefold()
+        media_attachment_name = str(post.get("media_attachment_name") or "").strip()
+        if media_extension in RAID_EMBED_IMAGE_EXTENSIONS and media_attachment_name:
+            embed.set_image(url=f"attachment://{media_attachment_name}")
         embed.set_footer(text="Click Join Raid to add your name.")
         return embed
 
@@ -1240,6 +1279,17 @@ class Raid(commands.Cog):
             "participants": [interaction.user.id],
             "created_at": created_at,
         }
+        max_upload_bytes = (
+            interaction.guild.filesize_limit
+            if interaction.guild is not None
+            else 8 * 1024 * 1024
+        )
+        media_path = self._choose_raid_media(max_upload_bytes)
+        if media_path is not None:
+            media_extension = media_path.suffix.casefold()
+            post["media_filename"] = media_path.name
+            post["media_extension"] = media_extension
+            post["media_attachment_name"] = f"raid_media{media_extension}"
         if stats_url:
             post["live_state"] = await self._fetch_live_state(stats_url, interaction.guild_id)
         else:
@@ -1253,17 +1303,40 @@ class Raid(commands.Cog):
         if interaction.channel is None:
             raise RuntimeError("Raid channel is unavailable")
         ping_everyone = self.everyone_ping_enabled()
-        message = await interaction.channel.send(
-            content="@everyone" if ping_everyone else None,
-            embed=self.build_post_embed(post),
-            view=RaidSignupView(),
-            allowed_mentions=discord.AllowedMentions(
+        send_kwargs: dict[str, object] = {
+            "content": "@everyone" if ping_everyone else None,
+            "embed": self.build_post_embed(post),
+            "view": RaidSignupView(),
+            "allowed_mentions": discord.AllowedMentions(
                 everyone=ping_everyone,
                 users=False,
                 roles=False,
                 replied_user=False,
             ),
-        )
+        }
+        media_file = self._raid_media_file(post)
+        if media_file is not None:
+            send_kwargs["file"] = media_file
+        elif post.get("media_filename"):
+            post.pop("media_filename", None)
+            post.pop("media_extension", None)
+            post.pop("media_attachment_name", None)
+            send_kwargs["embed"] = self.build_post_embed(post)
+        try:
+            message = await interaction.channel.send(**send_kwargs)
+        except discord.Forbidden:
+            raise
+        except discord.HTTPException as exc:
+            if media_file is None:
+                raise
+            media_file.close()
+            LOGGER.warning("Could not upload raid media; creating raid without it: %s", exc)
+            post.pop("media_filename", None)
+            post.pop("media_extension", None)
+            post.pop("media_attachment_name", None)
+            send_kwargs.pop("file", None)
+            send_kwargs["embed"] = self.build_post_embed(post)
+            message = await interaction.channel.send(**send_kwargs)
         post["message_id"] = message.id
         async with self._lock:
             self._posts[str(message.id)] = post
