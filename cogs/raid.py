@@ -13,9 +13,11 @@ from urllib.parse import urlparse
 
 import discord
 import requests
+from discord import app_commands
 from discord.ext import commands
 
 from clan_t17_lookup import ClanT17Lookup
+from config import MAIN_GUILD_ID
 from data_paths import data_path
 
 
@@ -34,6 +36,7 @@ HOME_SERVER_ANNOUNCEMENT = "7DR server is seeding! Hop in for VIP!"
 MAX_VISIBLE_RAIDERS = 28
 LIVE_REFRESH_SECONDS = 60
 LIVE_REFRESH_MAX_AGE_SECONDS = 8 * 60 * 60
+RAID_PURGE_SECONDS = 12 * 60 * 60
 MAX_STATS_RESPONSE_BYTES = 2 * 1024 * 1024
 BIFROST_SERVER_PATTERN = re.compile(r"/servers/([A-Za-z0-9-]+)", re.IGNORECASE)
 FROSTBITE_TOKEN_URL = "https://frostbite.bifrostgaming.com/api/keycloak/token"
@@ -75,8 +78,8 @@ class RaidModal(discord.ui.Modal, title="Initiate Raid"):
         max_length=500,
     )
     stats_link = discord.ui.TextInput(
-        label="Stats link (blank to use saved clan)",
-        placeholder="https://... or leave blank for a saved clan",
+        label="Stats link (optional)",
+        placeholder="https://... or leave blank",
         required=False,
         max_length=400,
     )
@@ -106,13 +109,10 @@ class RaidModal(discord.ui.Modal, title="Initiate Raid"):
                 ephemeral=True,
             )
             return
-        stats_url = self.cog.resolve_clan_stats_url(self.clan_name.value, supplied_stats_url)
-        if stats_url is None:
-            await interaction.response.send_message(
-                "I do not have a saved stats link for that clan yet. Enter the link this time and I will remember it.",
-                ephemeral=True,
-            )
-            return
+        stats_url = self.cog.resolve_clan_stats_url(
+            self.clan_name.value,
+            supplied_stats_url,
+        ) or ""
 
         await interaction.response.defer(ephemeral=True)
         await self.cog.create_post(
@@ -266,6 +266,12 @@ class RaidSignupView(discord.ui.View):
 
 
 class Raid(commands.Cog):
+    raideveryone_group = app_commands.Group(
+        name="raideveryone",
+        description="Control @everyone pings for new raid calls.",
+        guild_ids=[MAIN_GUILD_ID],
+    )
+
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self._lock = asyncio.Lock()
@@ -328,6 +334,38 @@ class Raid(commands.Cog):
         return isinstance(user, discord.Member) and any(
             role.name in RAID_INITIATOR_ROLE_NAMES for role in user.roles
         )
+
+    def everyone_ping_enabled(self) -> bool:
+        value = self._control_state.get("everyone_ping_enabled", True)
+        return value if isinstance(value, bool) else True
+
+    async def _set_everyone_ping(
+        self,
+        interaction: discord.Interaction,
+        *,
+        enabled: bool,
+    ) -> None:
+        if not self.can_initiate_raid(interaction.user):
+            await interaction.response.send_message(
+                "Only members with the 7DR-NCO or 7DR-SNCO role can change raid pings.",
+                ephemeral=True,
+            )
+            return
+        self._control_state["everyone_ping_enabled"] = enabled
+        self._save_control_state()
+        status = "on" if enabled else "off"
+        await interaction.response.send_message(
+            f"Raid @everyone pings are now {status}.",
+            ephemeral=True,
+        )
+
+    @raideveryone_group.command(name="on", description="Enable @everyone pings for new raids.")
+    async def raideveryone_on(self, interaction: discord.Interaction) -> None:
+        await self._set_everyone_ping(interaction, enabled=True)
+
+    @raideveryone_group.command(name="off", description="Disable @everyone pings for new raids.")
+    async def raideveryone_off(self, interaction: discord.Interaction) -> None:
+        await self._set_everyone_ping(interaction, enabled=False)
 
     @staticmethod
     def _server_key(stats_url: str) -> str:
@@ -942,7 +980,11 @@ class Raid(commands.Cog):
                         created_at = created_at.replace(tzinfo=timezone.utc)
                 except ValueError:
                     continue
-                if (now - created_at).total_seconds() > LIVE_REFRESH_MAX_AGE_SECONDS:
+                age_seconds = (now - created_at).total_seconds()
+                if age_seconds >= RAID_PURGE_SECONDS:
+                    await self._purge_raid_message(int(message_id), post)
+                    continue
+                if age_seconds > LIVE_REFRESH_MAX_AGE_SECONDS:
                     continue
                 stats_url = str(post.get("stats_url") or "")
                 if not stats_url:
@@ -971,12 +1013,39 @@ class Raid(commands.Cog):
                 except Exception:
                     LOGGER.exception("Unexpected error refreshing raid message %s", message_id)
 
+    async def _purge_raid_message(self, message_id: int, post: dict[str, object]) -> None:
+        channel_id = self._integer(post.get("channel_id"))
+        if channel_id is not None:
+            channel = self.bot.get_channel(channel_id)
+            if channel is None:
+                try:
+                    channel = await self.bot.fetch_channel(channel_id)
+                except discord.NotFound:
+                    channel = None
+                except (discord.Forbidden, discord.HTTPException) as exc:
+                    LOGGER.warning("Could not access channel to purge raid %s: %s", message_id, exc)
+                    return
+            if isinstance(channel, (discord.TextChannel, discord.Thread)):
+                try:
+                    message = await channel.fetch_message(message_id)
+                    await message.delete()
+                except discord.NotFound:
+                    pass
+                except (discord.Forbidden, discord.HTTPException) as exc:
+                    LOGGER.warning("Could not purge raid message %s: %s", message_id, exc)
+                    return
+
+        async with self._lock:
+            if self._posts.pop(str(message_id), None) is not None:
+                self._save_posts()
+        LOGGER.info("Purged raid message %s after 12 hours", message_id)
+
     def build_launcher_embed(self) -> discord.Embed:
         embed = discord.Embed(
             title="Server Raiding",
             description=(
                 "Start a new server raid call below. You will be asked for the clan, "
-                "an announcement, and the CRCON or Bifrost server stats link. "
+                "an announcement, and an optional CRCON or Bifrost server stats link. "
                 "Once a clan link is saved, you can leave the link blank next time."
             ),
             colour=discord.Colour.red(),
@@ -990,43 +1059,28 @@ class Raid(commands.Cog):
         stats_url = str(post.get("stats_url", ""))
         initiator_id = int(post.get("initiator_id", 0))
         participant_ids = [int(user_id) for user_id in post.get("participants", [])]
+        description = announcement
+        if stats_url:
+            description = f"{description}\n\n[Server stats]({stats_url})"
 
         embed = discord.Embed(
             title=f"⚔️ {clan_name} Raid Call",
-            description=announcement,
+            description=description,
             colour=discord.Colour.orange(),
             timestamp=datetime.fromisoformat(str(post["created_at"])),
         )
         embed.add_field(name="Initiated by", value=f"<@{initiator_id}>", inline=True)
-        embed.add_field(name="Server stats", value=f"[Open CRCON / Bifrost]({stats_url})", inline=True)
 
         live_state = post.get("live_state")
         if isinstance(live_state, dict) and live_state.get("available"):
-            embed.add_field(
-                name="Current Map",
-                value=str(live_state.get("map") or "Unknown"),
-                inline=True,
-            )
+            map_name = str(live_state.get("map") or "").strip()
+            if map_name and map_name.casefold() != "unknown":
+                embed.add_field(name="Current Map", value=map_name, inline=True)
             players = live_state.get("players")
             max_players = live_state.get("max_players")
-            if players is None:
-                player_text = "Unknown"
-            elif max_players is None:
-                player_text = str(players)
-            else:
-                player_text = f"{players}/{max_players}"
-            embed.add_field(name="Players", value=player_text, inline=True)
-            embed.add_field(
-                name="Live Data Source",
-                value=str(live_state.get("source") or "Server stats"),
-                inline=True,
-            )
-        elif isinstance(live_state, dict):
-            embed.add_field(
-                name="Live Server Data",
-                value="Unavailable from this stats provider.",
-                inline=False,
-            )
+            if players is not None:
+                player_text = str(players) if max_players is None else f"{players}/{max_players}"
+                embed.add_field(name="Players", value=player_text, inline=True)
 
         detected_clan_members = {
             int(member_id)
@@ -1059,12 +1113,17 @@ class Raid(commands.Cog):
         embed.set_footer(text="Click Join Raid to add your name.")
         return embed
 
-    async def _ongoing_raid_exists(self, stats_url: str) -> bool:
-        server_key = self._server_key(stats_url)
+    async def _ongoing_raid_exists(self, stats_url: str, clan_name: str) -> bool:
+        server_key = self._server_key(stats_url) if stats_url else ""
+        clan_key = self._clan_key(clan_name)
         stale_message_ids: list[str] = []
         for message_id, post in list(self._posts.items()):
             post_url = str(post.get("stats_url") or "")
-            if not post_url or self._server_key(post_url) != server_key:
+            same_server = bool(
+                server_key and post_url and self._server_key(post_url) == server_key
+            )
+            same_clan = self._clan_key(str(post.get("clan_name") or "")) == clan_key
+            if not same_server and not same_clan:
                 continue
             channel_id = self._integer(post.get("channel_id"))
             if channel_id is None:
@@ -1128,7 +1187,7 @@ class Raid(commands.Cog):
             return
 
         async with self._creation_lock:
-            if await self._ongoing_raid_exists(stats_url):
+            if await self._ongoing_raid_exists(stats_url, clan_name):
                 await interaction.followup.send("Ongoing raid already called", ephemeral=True)
                 return
             cooldown_remaining = self._cooldown_remaining()
@@ -1157,7 +1216,8 @@ class Raid(commands.Cog):
         announcement: str,
         stats_url: str,
     ) -> None:
-        self.resolve_clan_stats_url(clan_name, stats_url)
+        if stats_url:
+            self.resolve_clan_stats_url(clan_name, stats_url)
         created_at = datetime.now(timezone.utc).isoformat()
         post: dict[str, object] = {
             "guild_id": interaction.guild_id,
@@ -1169,7 +1229,10 @@ class Raid(commands.Cog):
             "participants": [interaction.user.id],
             "created_at": created_at,
         }
-        post["live_state"] = await self._fetch_live_state(stats_url, interaction.guild_id)
+        if stats_url:
+            post["live_state"] = await self._fetch_live_state(stats_url, interaction.guild_id)
+        else:
+            post["live_state"] = {}
         participants = [int(user_id) for user_id in post["participants"]]
         for member_id in post["live_state"].get("clan_member_ids", []):
             detected_member_id = int(member_id)
@@ -1178,10 +1241,17 @@ class Raid(commands.Cog):
         post["participants"] = participants
         if interaction.channel is None:
             raise RuntimeError("Raid channel is unavailable")
+        ping_everyone = self.everyone_ping_enabled()
         message = await interaction.channel.send(
+            content="@everyone" if ping_everyone else None,
             embed=self.build_post_embed(post),
             view=RaidSignupView(),
-            allowed_mentions=discord.AllowedMentions.none(),
+            allowed_mentions=discord.AllowedMentions(
+                everyone=ping_everyone,
+                users=False,
+                roles=False,
+                replied_user=False,
+            ),
         )
         post["message_id"] = message.id
         async with self._lock:
