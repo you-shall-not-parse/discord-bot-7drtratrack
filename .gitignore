@@ -14,9 +14,6 @@ DEPLOYMENT.md
 # C extensions
 *.so
 
-# env
-echo ".env" >> .gitignore
-
 # Distribution / packaging
 .Python
 build/
@@ -183,4 +180,3 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
-README.md

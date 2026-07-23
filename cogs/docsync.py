@@ -14,6 +14,7 @@ from discord.ext import commands, tasks
 
 from config import DOCS_FORUM_CHANNEL_ID, DOCS_FORUM_TAG_NAME, MAIN_GUILD_ID
 from data_paths import data_path
+from state_io import atomic_json_dump
 
 
 GUILD_ID = MAIN_GUILD_ID
@@ -80,10 +81,7 @@ class DocSync(commands.Cog):
             return {}
 
     def _save_state(self) -> None:
-        tmp_path = STATE_FILE + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(self._state, f, indent=2)
-        os.replace(tmp_path, STATE_FILE)
+        atomic_json_dump(STATE_FILE, self._state)
 
     def _read_text(self, path: str) -> str:
         with open(path, "r", encoding="utf-8") as f:

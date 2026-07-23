@@ -1,6 +1,7 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
+from state_io import atomic_json_dump
 import json
 import os
 from typing import Optional, Dict, List, Union
@@ -51,8 +52,7 @@ def ensure_file_exists(path, default_data):
         os.makedirs(DATA_FOLDER)
         
     if not os.path.isfile(path):
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(default_data, f, indent=4)
+        atomic_json_dump(path, default_data, indent=4)
         
         if path == CONFIG_FILE:
             CONFIG_CACHE = default_data
@@ -65,8 +65,7 @@ def ensure_file_exists(path, default_data):
                 CONFIG_CACHE = data
             return data
     except (json.JSONDecodeError, FileNotFoundError):
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(default_data, f, indent=4)
+        atomic_json_dump(path, default_data, indent=4)
         
         if path == CONFIG_FILE:
             CONFIG_CACHE = default_data
@@ -112,8 +111,7 @@ def save_all_posts():
     if not POST_CACHE:
         return  # Nothing to save
     
-    with open(POSTS_FILE, "w", encoding="utf-8") as f:
-        json.dump(POST_CACHE, f, indent=4)
+    atomic_json_dump(POSTS_FILE, POST_CACHE, indent=4)
 
 def is_role_based(post: dict) -> bool:
     return post.get("role_based", False) or (

@@ -5,6 +5,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands, Embed
 from discord.utils import get
+from state_io import atomic_json_dump
 
 from config import MAIN_GUILD_ID
 from data_paths import data_path
@@ -18,8 +19,7 @@ GUILD_ID = MAIN_GUILD_ID
 logging.basicConfig(level=logging.INFO)
 
 if not os.path.exists(PRESET_FILE):
-    with open(PRESET_FILE, "w") as f:
-        json.dump({}, f)
+    atomic_json_dump(PRESET_FILE, {})
 
 def load_presets():
     try:
@@ -31,8 +31,7 @@ def load_presets():
 
 def save_presets(presets):
     try:
-        with open(PRESET_FILE, "w") as f:
-            json.dump(presets, f, indent=2)
+        atomic_json_dump(PRESET_FILE, presets)
     except Exception as e:
         logging.error(f"Error saving presets: {e}")
 
@@ -180,15 +179,6 @@ class BulkRole(commands.Cog):
                 else:
                     await send_embed(message.channel, "Confirm", "Please type `confirm` to save, or `cancel` to abort.", discord.Color.orange())
                 return
-
-    @commands.Cog.listener()
-    async def on_ready(self):
-        await self.bot.wait_until_ready()
-        try:
-            synced = await self.bot.tree.sync()
-            logging.info(f"Synced {len(synced)} commands")
-        except Exception as e:
-            logging.error(f"Failed to sync commands: {e}")
 
     async def preset_autocomplete(self, interaction: discord.Interaction, current: str):
         presets = load_presets()

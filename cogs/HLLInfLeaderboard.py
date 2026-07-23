@@ -78,7 +78,6 @@ async def init_db():
 class HLLInfLeaderboard(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self._synced = False       # ensure we sync app commands once
         self._db_initialized = False
         self._view_registered = False  # persistent view registered once
         self._cleanup_started = False  # start proof cleanup loop once
@@ -270,14 +269,6 @@ class HLLInfLeaderboard(commands.Cog):
                 self._view_registered = True
             except Exception as e:
                 print(f"HLLInfLeaderboard: Failed to register persistent view: {e}")
-
-        # Sync slash commands for this guild (do once)
-        if not self._synced:
-            try:
-                await self.bot.tree.sync(guild=discord.Object(id=GUILD_ID))
-                self._synced = True
-            except Exception as e:
-                print(f"HLLInfLeaderboard: Command sync failed: {e}")
 
         # Start cleanup loop
         if not self._cleanup_started:

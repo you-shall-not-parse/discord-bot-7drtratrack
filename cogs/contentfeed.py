@@ -10,6 +10,7 @@ from datetime import datetime, time, timezone
 from xml.etree import ElementTree
 
 from config import MAIN_GUILD_ID
+from state_io import atomic_json_dump
 
 # ================== CONFIG ==================
 
@@ -73,9 +74,7 @@ def load_json(path, default):
 
 
 def save_json(path, data):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    atomic_json_dump(path, data)
 
 
 class YouTubeFeed(commands.Cog, name="YouTubeFeed"):

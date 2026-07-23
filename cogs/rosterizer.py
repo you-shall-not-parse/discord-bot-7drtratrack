@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 import discord
 from discord import app_commands
 from discord.ext import commands
+from state_io import atomic_json_dump
 
 from clan_t17_lookup import ClanT17Lookup, DEFAULT_RANK_ORDER
 from config import MAIN_GUILD_ID
@@ -71,9 +72,7 @@ class Rosterizer(commands.Cog):
             return {}
 
     def _save_state(self) -> None:
-        os.makedirs(os.path.dirname(STATE_FILE) or ".", exist_ok=True)
-        with open(STATE_FILE, "w", encoding="utf-8") as handle:
-            json.dump(self._state, handle, indent=2)
+        atomic_json_dump(STATE_FILE, self._state)
 
     def _guild_state(self, guild_id: int) -> dict:
         return self._state.setdefault(str(guild_id), {}).setdefault("rosters", {})

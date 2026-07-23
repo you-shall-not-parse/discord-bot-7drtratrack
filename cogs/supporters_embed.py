@@ -3,6 +3,7 @@ import os
 
 import discord
 from discord.ext import commands
+from state_io import atomic_json_dump
 
 from config import MAIN_GUILD_ID
 from data_paths import data_path
@@ -27,8 +28,7 @@ def load_data() -> dict:
 
 
 def save_data(data: dict) -> None:
-    with open(DATA_FILE, "w", encoding="utf-8") as file_handle:
-        json.dump(data, file_handle, indent=4)
+    atomic_json_dump(DATA_FILE, data, indent=4)
 
 
 class SupportersEmbed(commands.Cog):

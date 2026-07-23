@@ -9,6 +9,7 @@ from typing import Any, Optional
 
 import discord
 from discord.ext import commands
+from state_io import atomic_json_dump
 
 from config.common import CLAN_NAMES_PATH, SCOREBOARD_FONT_PATH
 from data_paths import data_path
@@ -542,11 +543,7 @@ class WarDiaryCog(commands.Cog):
 	def _save_state(self) -> None:
 		try:
 			self._state["updated_at"] = _utcnow().isoformat()
-			os.makedirs(os.path.dirname(STATE_PATH) or ".", exist_ok=True)
-			tmp_path = f"{STATE_PATH}.tmp"
-			with open(tmp_path, "w", encoding="utf-8") as handle:
-				json.dump(self._state, handle, indent=2)
-			os.replace(tmp_path, STATE_PATH)
+			atomic_json_dump(STATE_PATH, self._state)
 		except Exception:
 			log.warning("Failed to save war diary state.", exc_info=True)
 

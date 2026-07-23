@@ -7,9 +7,75 @@ from dotenv import load_dotenv
 import asyncio
 
 from config import BOT_LOG_PATH, MAIN_GUILD_ID
+from config.hll_API_config import get_hll_backend_status
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+
+EXTENSIONS = (
+    "cogs.quick_exit",
+    "cogs.bulkrole",
+    "cogs.certify",
+    "cogs.recruitform",
+    "cogs.EmbedManager",
+    "cogs.SquadUp",
+    "cogs.eventscalendar",
+    "cogs.BirthdayCog",
+    "cogs.contentfeed",
+    "cogs.discordgreeting",
+    "cogs.echo",
+    "cogs.HLLInfLeaderboard",
+    "cogs.HLLArmLeaderboard",
+    "cogs.GameMonCog",
+    "cogs.multi_trainee_tracker",
+    "cogs.t17_role_index",
+    "cogs.rollcall",
+    "cogs.nameshame",
+    "cogs.outofoffice",
+    "cogs.wardiary",
+    "cogs.t17lookup",
+    "cogs.t17serveradmin",
+    "cogs.applyroletomessage",
+    "cogs.hellorleaderboard",
+    "cogs.docsync",
+    "cogs.supporters_embed",
+    "cogs.raid",
+)
+
+DISABLED_EXTENSIONS = (
+    "cogs.rosterizer",
+    "cogs.mapvote",
+)
+
+
+def validate_runtime_configuration() -> None:
+    if not TOKEN:
+        raise RuntimeError("DISCORD_BOT_TOKEN is not set in your environment or .env file!")
+
+    status = get_hll_backend_status()
+    provider = str(status.get("provider") or "").lower()
+    missing: list[str] = []
+
+    if provider == "bifrost":
+        if not status.get("client_id_present"):
+            missing.append(str(status.get("client_id_env") or "BIFROST_CLIENT_ID"))
+        if not status.get("client_secret_present"):
+            missing.append(str(status.get("client_secret_env") or "BIFROST_CLIENT_SECRET"))
+        if not status.get("server_id"):
+            missing.append("BIFROST_SERVER_ID")
+    elif provider == "crcon":
+        if not status.get("panel_url"):
+            missing.append("CRCON_PANEL_URL")
+        if not status.get("api_key_present"):
+            missing.append(str(status.get("api_key_env") or "CRCON_API_KEY"))
+    else:
+        missing.append(f"supported HLL backend provider (got {provider or 'empty'})")
+
+    if missing:
+        logging.warning(
+            "Optional HLL features may be unavailable; missing configuration: %s",
+            ", ".join(missing),
+        )
 
 # Setup logging (console + file)
 logger = logging.getLogger()
@@ -37,25 +103,50 @@ intents.message_content = True  # Needed for on_message and message content in D
 intents.presences = True  # This is critical for tracking game activity
 intents.reactions = True  # Needed for raw reaction events
 intents.guild_scheduled_events = True  # Needed for scheduled event create/update/delete listeners
-# Command prefix (won't affect slash commands)
-bot = commands.Bot(command_prefix="!", intents=intents)
+
+
+class RatBot(commands.Bot):
+    async def setup_hook(self) -> None:
+        loaded_extensions: list[str] = []
+        for extension in EXTENSIONS:
+            try:
+                await self.load_extension(extension)
+            except Exception:
+                logging.exception("Failed to load optional extension %s", extension)
+            else:
+                loaded_extensions.append(extension)
+                logging.info("Loaded extension %s", extension)
+
+        if not loaded_extensions:
+            raise RuntimeError("No bot extensions loaded successfully")
+
+        logging.info(
+            "Loaded %d/%d extensions; disabled extensions: %s",
+            len(loaded_extensions),
+            len(EXTENSIONS),
+            ", ".join(DISABLED_EXTENSIONS) or "none",
+        )
+
+        try:
+            synced = await self.tree.sync()
+            logging.info("Synced %d global command(s)", len(synced))
+        except Exception:
+            logging.exception("Failed to sync global commands")
+
+        main_guild = discord.Object(id=MAIN_GUILD_ID)
+        try:
+            guild_synced = await self.tree.sync(guild=main_guild)
+            logging.info("Synced %d guild command(s) to %s", len(guild_synced), main_guild.id)
+        except Exception:
+            logging.exception("Failed to sync commands to guild %s", main_guild.id)
+
+
+# Command prefix does not affect slash commands.
+bot = RatBot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
     logging.info(f"Logged in as {bot.user} (ID: {bot.user.id})")
-    try:
-        synced = await bot.tree.sync()
-        logging.info(f"Synced {len(synced)} command(s)")
-
-        # Also sync guild-scoped commands (they won't show up from global sync alone).
-        try:
-            main_guild = discord.Object(id=MAIN_GUILD_ID)
-            guild_synced = await bot.tree.sync(guild=main_guild)
-            logging.info(f"Synced {len(guild_synced)} guild command(s) to {main_guild.id}")
-        except Exception as e:
-            logging.error(f"Failed to sync guild commands: {e}")
-    except Exception as e:
-        logging.error(f"Failed to sync commands: {e}")
     logging.info("------")
     print(f"Bot is ready! Logged in as {bot.user} (ID: {bot.user.id})")
 
@@ -82,38 +173,8 @@ async def on_command_error(ctx, error):
         logging.error(f"Error in command {ctx.command}: {error}", exc_info=error)
 
 async def main():
-    if not TOKEN:
-        raise RuntimeError("DISCORD_BOT_TOKEN is not set in your environment or .env file!")
+    validate_runtime_configuration()
     async with bot:
-        #await bot.load_extension("cogs.rosterizer")
-        await bot.load_extension("cogs.quick_exit")
-        await bot.load_extension("cogs.bulkrole")
-        await bot.load_extension("cogs.certify")
-        await bot.load_extension("cogs.recruitform")
-        await bot.load_extension("cogs.EmbedManager")
-        await bot.load_extension("cogs.SquadUp")
-        await bot.load_extension("cogs.eventscalendar")
-        await bot.load_extension("cogs.BirthdayCog")
-        await bot.load_extension("cogs.contentfeed")
-        await bot.load_extension("cogs.discordgreeting")
-        await bot.load_extension("cogs.echo")
-        #await bot.load_extension("cogs.mapvote")
-        await bot.load_extension("cogs.HLLInfLeaderboard")
-        await bot.load_extension("cogs.HLLArmLeaderboard")
-        await bot.load_extension("cogs.GameMonCog")
-        await bot.load_extension("cogs.multi_trainee_tracker")
-        await bot.load_extension("cogs.t17_role_index")
-        await bot.load_extension("cogs.rollcall")
-        await bot.load_extension("cogs.nameshame")
-        await bot.load_extension("cogs.outofoffice")
-        await bot.load_extension("cogs.wardiary")
-        await bot.load_extension("cogs.t17lookup")
-        await bot.load_extension("cogs.t17serveradmin")
-        await bot.load_extension("cogs.applyroletomessage")
-        await bot.load_extension("cogs.hellorleaderboard")
-        await bot.load_extension("cogs.docsync")
-        await bot.load_extension("cogs.supporters_embed")
-        await bot.load_extension("cogs.raid")
         await bot.start(TOKEN)
 
 if __name__ == "__main__":

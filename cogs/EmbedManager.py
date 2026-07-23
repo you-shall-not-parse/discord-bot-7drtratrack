@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands
+from state_io import atomic_json_dump
 import json
 import os
 
@@ -19,8 +20,7 @@ def load_data():
 
 
 def save_data(data):
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=4)
+    atomic_json_dump(DATA_FILE, data, indent=4)
 
 
 class EmbedManager(commands.Cog):

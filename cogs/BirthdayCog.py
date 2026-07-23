@@ -3,6 +3,7 @@ from discord.ext import commands, tasks
 from discord import app_commands
 import sqlite3
 from datetime import datetime, time
+from zoneinfo import ZoneInfo
 import pytz
 import random
 
@@ -24,15 +25,15 @@ BIRTHDAY_GIF_URLS = [
     "https://media.tenor.com/GzGo7jQeLB0AAAAd/happy-birthday-bon-anniversaire.gif",
     "https://media.tenor.com/9pu-un8ImGUAAAAC/action-drama.gif",
     "https://media.tenor.com/fHAJclG404oAAAAC/birthday-parks-and-rec.gif",
-    "https://media.tenor.com/z2xPe5mCygcAAAAC/birthday-self-worth.gif"
+    "https://media.tenor.com/z2xPe5mCygcAAAAC/birthday-self-worth.gif",
     "https://media.tenor.com/CSMv9A3-HkoAAAAC/shocked-happy.gif",
 ]
+TASK_TIMEZONE = ZoneInfo(TIMEZONE)
 # ----------------------------------------
 
 class BirthdayCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.guild = discord.Object(id=GUILD_ID)
 
         # Database setup
         self.conn = sqlite3.connect(DB_FILE)
@@ -97,6 +98,7 @@ class BirthdayCog(commands.Cog):
 
     # ---------------- Slash Commands ----------------
     @app_commands.command(name="setbirthday", description="Set your birthday")
+    @app_commands.guild_only()
     @app_commands.describe(
         day="Day of your birthday",
         month="Month of your birthday",
@@ -139,11 +141,13 @@ class BirthdayCog(commands.Cog):
         )
 
     @app_commands.command(name="removebirthday", description="Remove your birthday")
+    @app_commands.guild_only()
     async def removebirthday(self, interaction: discord.Interaction):
         self.remove_birthday(interaction.guild.id, interaction.user.id)
         await interaction.response.send_message("❌ Your birthday has been removed.", ephemeral=True)
 
     @app_commands.command(name="birthdaysplease", description="Show this month's birthdays")
+    @app_commands.guild_only()
     async def birthdaysplease(self, interaction: discord.Interaction):
         now = datetime.now(pytz.timezone(TIMEZONE))
         month_birthdays = self.get_month_birthdays(interaction.guild.id, now.month)
@@ -171,7 +175,7 @@ class BirthdayCog(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
     # ---------------- Tasks ----------------
-    @tasks.loop(time=time(hour=9, minute=0))
+    @tasks.loop(time=time(hour=9, minute=0, tzinfo=TASK_TIMEZONE))
     async def check_birthdays(self):
         tz = pytz.timezone(TIMEZONE)
         today = datetime.now(tz).date()
@@ -205,7 +209,7 @@ class BirthdayCog(commands.Cog):
                 content = f"{msg}\n{gif_url}" if gif_url else msg
                 await channel.send(content)
 
-    @tasks.loop(time=time(hour=9, minute=5))
+    @tasks.loop(time=time(hour=9, minute=5, tzinfo=TASK_TIMEZONE))
     async def post_monthly_summary(self):
         tz = pytz.timezone(TIMEZONE)
         now = datetime.now(tz)
@@ -279,7 +283,5 @@ class BirthdayCog(commands.Cog):
             self.post_monthly_summary.start()
 
         await self.ensure_embed_posted()
-        await self.bot.tree.sync(guild=self.guild)
-
 async def setup(bot: commands.Bot):
     await bot.add_cog(BirthdayCog(bot))

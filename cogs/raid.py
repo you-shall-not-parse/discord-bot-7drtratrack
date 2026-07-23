@@ -20,6 +20,7 @@ from discord.ext import commands
 from clan_t17_lookup import ClanT17Lookup
 from config import MAIN_GUILD_ID
 from data_paths import data_path
+from state_io import atomic_json_dump
 
 
 LOGGER = logging.getLogger("Raid")
@@ -311,11 +312,7 @@ class Raid(commands.Cog):
             return {}
 
     def _save_posts(self) -> None:
-        STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        temporary_path = STATE_PATH.with_suffix(".tmp")
-        with temporary_path.open("w", encoding="utf-8") as handle:
-            json.dump(self._posts, handle, indent=2, ensure_ascii=False)
-        temporary_path.replace(STATE_PATH)
+        atomic_json_dump(STATE_PATH, self._posts, ensure_ascii=False)
 
     def _load_control_state(self) -> dict[str, object]:
         if not CONTROL_STATE_PATH.exists():
@@ -329,11 +326,7 @@ class Raid(commands.Cog):
             return {}
 
     def _save_control_state(self) -> None:
-        CONTROL_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        temporary_path = CONTROL_STATE_PATH.with_suffix(".tmp")
-        with temporary_path.open("w", encoding="utf-8") as handle:
-            json.dump(self._control_state, handle, indent=2, ensure_ascii=False)
-        temporary_path.replace(CONTROL_STATE_PATH)
+        atomic_json_dump(CONTROL_STATE_PATH, self._control_state, ensure_ascii=False)
 
     @staticmethod
     def can_initiate_raid(user: discord.abc.User) -> bool:
@@ -438,11 +431,12 @@ class Raid(commands.Cog):
             return {}
 
     def _save_clan_links(self) -> None:
-        CLAN_LINKS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        temporary_path = CLAN_LINKS_PATH.with_suffix(".tmp")
-        with temporary_path.open("w", encoding="utf-8") as handle:
-            json.dump(self._clan_links, handle, indent=2, ensure_ascii=False, sort_keys=True)
-        temporary_path.replace(CLAN_LINKS_PATH)
+        atomic_json_dump(
+            CLAN_LINKS_PATH,
+            self._clan_links,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
 
     def resolve_clan_stats_url(self, clan_name: str, supplied_url: str) -> str | None:
         key = self._clan_key(clan_name)
@@ -472,11 +466,10 @@ class Raid(commands.Cog):
             return None
 
     def _save_panel_message_id(self, message_id: int) -> None:
-        PANEL_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        temporary_path = PANEL_STATE_PATH.with_suffix(".tmp")
-        with temporary_path.open("w", encoding="utf-8") as handle:
-            json.dump({"channel_id": RAID_CHANNEL_ID, "message_id": message_id}, handle, indent=2)
-        temporary_path.replace(PANEL_STATE_PATH)
+        atomic_json_dump(
+            PANEL_STATE_PATH,
+            {"channel_id": RAID_CHANNEL_ID, "message_id": message_id},
+        )
 
     async def _ensure_panel(self) -> None:
         await self.bot.wait_until_ready()

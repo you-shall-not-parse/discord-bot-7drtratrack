@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 import discord
 from discord.ext import commands
+from state_io import atomic_json_dump
 
 from config import MAIN_GUILD_ID
 from data_paths import data_path
@@ -85,8 +86,7 @@ def _load_state() -> dict:
 
 def _save_state(state: dict) -> None:
 	try:
-		with open(NAMESHAME_STATE_FILE, "w", encoding="utf-8") as f:
-			json.dump(state, f, indent=2)
+		atomic_json_dump(NAMESHAME_STATE_FILE, state)
 	except Exception as e:
 		print(f"[NameShame] Failed to save state: {e}")
 

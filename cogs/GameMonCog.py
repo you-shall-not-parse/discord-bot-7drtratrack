@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
+from state_io import atomic_json_dump
 import json
 import os
 import asyncio
@@ -646,8 +647,7 @@ class GameMonCog(commands.Cog, name="GameMonCog"):
         """Save JSON with error handling and file locking"""
         async with self.file_lock:
             try:
-                with open(filename, "w") as f:
-                    json.dump(data, f, indent=4)
+                atomic_json_dump(filename, data, indent=4)
                 return True
             except Exception as e:
                 logger.error(f"Error saving {filename}: {e}")

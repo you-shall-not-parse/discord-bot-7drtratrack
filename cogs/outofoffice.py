@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
+from state_io import atomic_json_dump
 
 from config import MAIN_GUILD_ID
 from data_paths import data_path
@@ -155,7 +156,6 @@ class OutOfOffice(commands.Cog):
         self.state = self._load_state()
         self.dm_sessions: dict[int, dict] = {}
         self.reply_cooldowns: dict[str, str] = {}
-        self._guild_sync_done = False
         self.reconcile_roles.start()
 
     def cog_unload(self) -> None:
@@ -178,10 +178,7 @@ class OutOfOffice(commands.Cog):
 
     def _save_state(self) -> None:
         self.state["updated_at"] = utc_now().isoformat()
-        tmp_path = f"{STATE_FILE}.tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(self.state, f, indent=2, ensure_ascii=False)
-        os.replace(tmp_path, STATE_FILE)
+        atomic_json_dump(STATE_FILE, self.state, ensure_ascii=False)
 
     def _user_entries(self, user_id: int) -> list[dict]:
         return self.state.setdefault("users", {}).setdefault(str(user_id), [])
@@ -730,17 +727,6 @@ class OutOfOffice(commands.Cog):
     @reconcile_roles.before_loop
     async def before_reconcile_roles(self) -> None:
         await self.bot.wait_until_ready()
-
-    @commands.Cog.listener()
-    async def on_ready(self) -> None:
-        if self._guild_sync_done:
-            return
-
-        try:
-            await self.bot.tree.sync(guild=discord.Object(id=GUILD_ID))
-            self._guild_sync_done = True
-        except Exception:
-            pass
 
     @commands.Cog.listener()
     async def on_presence_update(self, before: discord.Member, after: discord.Member) -> None:

@@ -7,6 +7,7 @@ import json
 import random
 import logging
 from dotenv import load_dotenv
+from state_io import atomic_json_dump
 from datetime import datetime, timezone, timedelta
 
 from config import MAIN_GUILD_ID
@@ -355,8 +356,7 @@ def load_persistent_state() -> dict:
 
 def save_persistent_state(data: dict):
     try:
-        with open(MAPVOTE_STATE_FILE, "w") as f:
-            json.dump(data, f, indent=4)
+        atomic_json_dump(MAPVOTE_STATE_FILE, data, indent=4)
     except Exception as e:
         print("[MapVote] Failed to save state file:", e)
 
@@ -880,13 +880,6 @@ class MapVote(commands.Cog, name="[API] MapVote"):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        # Sync commands once per startup
-        try:
-            await self.bot.tree.sync(guild=discord.Object(id=GUILD_ID))
-            print("[MapVote] Commands synced.")
-        except Exception as e:
-            print("[MapVote] Sync error:", e)
-
         # If we have an old message saved, delete it and clear state
         try:
             if self.saved_channel_id and self.saved_message_id:

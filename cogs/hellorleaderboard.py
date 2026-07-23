@@ -22,6 +22,7 @@ from clan_t17_lookup import ClanT17Lookup, DEFAULT_RANK_ORDER
 from config import MAIN_GUILD_ID, data_log_path
 from data_paths import data_path
 from hll_API_backend import get_hll_backend_client
+from state_io import atomic_json_dump
 
 GUILD_ID = MAIN_GUILD_ID
 POST_CHANNEL_ID = 1500946848779862218  # channel or thread for the leaderboard message
@@ -120,7 +121,6 @@ class HellorLeaderboard(commands.Cog, name="HellorLeaderboard"):
         self.bot = bot
         self.session = make_session()
         self._update_lock = asyncio.Lock()
-        self._synced = False
         self._initial_posted = False
         self.logger = self._build_logger()
         self.lookup = ClanT17Lookup(get_hll_backend_client(), logger=self.logger)
@@ -158,10 +158,7 @@ class HellorLeaderboard(commands.Cog, name="HellorLeaderboard"):
             return {}
 
     def _save_json_file(self, path: str, data: dict[str, Any]) -> None:
-        tmp_path = f"{path}.tmp"
-        with open(tmp_path, "w", encoding="utf-8") as handle:
-            json.dump(data, handle, indent=2, sort_keys=True)
-        os.replace(tmp_path, path)
+        atomic_json_dump(path, data, sort_keys=True)
 
     def _load_state(self) -> dict[str, Any]:
         return self._load_json_file(STATE_FILE)
@@ -660,13 +657,6 @@ class HellorLeaderboard(commands.Cog, name="HellorLeaderboard"):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        if not self._synced:
-            try:
-                await self.bot.tree.sync(guild=discord.Object(id=GUILD_ID))
-                self._synced = True
-            except Exception as exc:
-                self.logger.exception("command_sync_failed error=%s", exc)
-
         if not self._initial_posted:
             try:
                 await self.update_or_post_leaderboard()

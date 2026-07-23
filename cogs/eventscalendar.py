@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 import aiohttp
 import discord
 from discord.ext import commands, tasks
+from state_io import atomic_json_dump
 
 from config.common import SCOREBOARD_FONT_PATH
 from data_paths import data_path
@@ -187,8 +188,7 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
     def _save_thread_state(self) -> None:
         try:
             self._thread_state["updated_at"] = datetime.utcnow().isoformat()
-            with open(EVENTS_THREAD_STATE_PATH, "w", encoding="utf-8") as f:
-                json.dump(self._thread_state, f, indent=2, ensure_ascii=False)
+            atomic_json_dump(EVENTS_THREAD_STATE_PATH, self._thread_state, ensure_ascii=False)
         except Exception:
             logger.warning("Failed to persist events thread state.", exc_info=True)
 
@@ -923,8 +923,7 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
                 "message_id": self.display_message_id,
                 "updated_at": datetime.utcnow().isoformat(),
             }
-            with open(EVENTS_DISPLAY_STATE_PATH, "w", encoding="utf-8") as f:
-                json.dump(state, f, indent=2, ensure_ascii=False)
+            atomic_json_dump(EVENTS_DISPLAY_STATE_PATH, state, ensure_ascii=False)
         except Exception:
             logger.warning("Failed to persist events display state.", exc_info=True)
 
@@ -1196,8 +1195,7 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
                 existing_data[str(event.id)] = event_data
             
             # Save to file
-            with open(EVENTS_JSON_PATH, 'w', encoding='utf-8') as f:
-                json.dump(existing_data, f, indent=2, ensure_ascii=False)
+            atomic_json_dump(EVENTS_JSON_PATH, existing_data, ensure_ascii=False)
             
             logger.debug(f"Saved {len(events)} events to JSON")
             

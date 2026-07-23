@@ -10,6 +10,7 @@ from typing import Any
 import discord
 from discord import app_commands
 from discord.ext import commands
+from state_io import atomic_json_dump
 
 from clan_t17_lookup import ClanT17Lookup
 from config import MAIN_GUILD_ID
@@ -72,10 +73,7 @@ class T17ServerAdmin(commands.Cog, name="[API] T17ServerAdmin"):
         return {"grants": grants}
 
     def _save_state(self, state: dict[str, Any]) -> None:
-        tmp_path = f"{STATE_FILE}.tmp"
-        with open(tmp_path, "w", encoding="utf-8") as handle:
-            json.dump(state, handle, indent=2, sort_keys=True)
-        os.replace(tmp_path, STATE_FILE)
+        atomic_json_dump(STATE_FILE, state, sort_keys=True)
 
     def _upsert_grant(self, grant: dict[str, Any]) -> None:
         state = self._load_state()

@@ -16,6 +16,7 @@ from discord.ext import commands
 
 from config.common import CERTIFICATE_BOLD_FONT_PATH, CERTIFICATE_REGULAR_FONT_PATH, MAIN_GUILD_ID
 from data_paths import data_path
+from state_io import atomic_json_dump
 
 # ================== CONFIG ==================
 
@@ -73,7 +74,7 @@ class QuickExit(commands.Cog):
         }
 
         if not WELCOME_STATE_PATH.exists():
-            WELCOME_STATE_PATH.write_text(json.dumps(default_state, indent=2), encoding="utf-8")
+            atomic_json_dump(WELCOME_STATE_PATH, default_state)
             return
 
         try:
@@ -109,7 +110,7 @@ class QuickExit(commands.Cog):
             "welcomed_member_ids": sorted(self._welcomed_member_ids),
             "pending_member_ids": sorted(self._pending_member_ids),
         }
-        WELCOME_STATE_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        atomic_json_dump(WELCOME_STATE_PATH, state)
 
     async def _queue_welcome(self, member_id: int) -> None:
         async with self._state_lock:

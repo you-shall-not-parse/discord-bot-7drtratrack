@@ -15,6 +15,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from discord.ext import commands
 from openpyxl import Workbook, load_workbook
+from state_io import atomic_json_dump
 
 from config import MAIN_GUILD_ID
 from data_paths import data_path
@@ -217,11 +218,7 @@ class RollCallCog(commands.Cog):
 	def _save_state(self) -> None:
 		try:
 			self._state["updated_at"] = datetime.utcnow().isoformat()
-			os.makedirs(os.path.dirname(STATE_PATH) or ".", exist_ok=True)
-			tmp_path = f"{STATE_PATH}.tmp"
-			with open(tmp_path, "w", encoding="utf-8") as f:
-				json.dump(self._state, f, indent=2, ensure_ascii=False)
-			os.replace(tmp_path, STATE_PATH)
+			atomic_json_dump(STATE_PATH, self._state, ensure_ascii=False)
 		except Exception:
 			logger.warning("Failed to save rollcall state.", exc_info=True)
 

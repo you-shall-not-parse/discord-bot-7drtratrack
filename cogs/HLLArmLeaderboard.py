@@ -165,7 +165,6 @@ async def migrate_life_stat_to_seconds():
 class HLLArmLeaderboard(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self._synced = False
         self._db_initialized = False
         self._view_registered = False
         self._cleanup_started = False
@@ -360,13 +359,6 @@ class HLLArmLeaderboard(commands.Cog):
                 self._view_registered = True
             except Exception as e:
                 print(f"HLLArmLeaderboard: Failed to register persistent view: {e}")
-
-        if not self._synced:
-            try:
-                await self.bot.tree.sync(guild=discord.Object(id=GUILD_ID))
-                self._synced = True
-            except Exception as e:
-                print(f"HLLArmLeaderboard: Command sync failed: {e}")
 
         if not self._cleanup_started:
             try:

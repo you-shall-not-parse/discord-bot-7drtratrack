@@ -39,14 +39,16 @@ discord-bot-7drtratrack/
 ├── README.md
 ├── COG_HOWTO.md
 ├── data_paths.py
+├── state_io.py
+├── requirements.txt
 ├── config/
 │   ├── common.py
 │   ├── clannames.json
 │   ├── presets.json
 │   └── squadup_config.json
 ├── cogs/
-│   ├── botadmin.py
-│   ├── rosterizer.py
+│   ├── quick_exit.py
+│   ├── raid.py
 │   ├── outofoffice.py
 │   ├── hellorleaderboard.py
 │   ├── applyroletomessage.py
@@ -87,11 +89,16 @@ That keeps the bot process persistent without exposing secrets in the repository
 
 ## Run
 
-Start the bot with your normal Python environment after setting `DISCORD_BOT_TOKEN`.
+Use Python 3.14, install the pinned dependencies, and set `DISCORD_BOT_TOKEN`.
 
 ```powershell
+python -m pip install -r requirements.txt
 python main.py
 ```
+
+The extension list in `main.py` is the source of truth. Extensions are loaded
+independently, so a failed optional feature is logged without preventing healthy
+features from starting. Slash commands are synchronized once during startup.
 
 ## Logs
 
@@ -110,8 +117,6 @@ python main.py
 
 `main.py` currently loads the following:
 
-- `botadmin`
-- `rosterizer`
 - `quick_exit`
 - `bulkrole`
 - `certify`
@@ -123,19 +128,27 @@ python main.py
 - `contentfeed`
 - `discordgreeting`
 - `echo`
-- `mapvote`
 - `HLLInfLeaderboard`
 - `HLLArmLeaderboard`
-- `gohamm`
 - `GameMonCog`
 - `multi_trainee_tracker`
+- `t17_role_index`
 - `rollcall`
 - `nameshame`
 - `outofoffice`
 - `wardiary`
 - `t17lookup`
+- `t17serveradmin`
 - `applyroletomessage`
 - `hellorleaderboard`
+- `docsync`
+- `supporters_embed`
+- `raid`
+
+Currently disabled in `main.py`:
+
+- `rosterizer`
+- `mapvote`
 
 ## Other Repo Content
 
@@ -143,6 +156,8 @@ python main.py
 - `cogs/`: Discord bot features loaded by `main.py`
 - `config/`: shared config files and shared constant definitions
 - `data/`: bot state, logs, fonts, and generated files
+- `state_io.py`: shared atomic JSON persistence for runtime state
+- `requirements.txt`: pinned Python dependencies
 
 ## Historic Stats Deployment
 

@@ -134,16 +134,6 @@ class Echo(commands.Cog):
 	async def seven_drechoembed_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
 		await self.seven_drecho_error(interaction, error)
 
-	@commands.Cog.listener()
-	async def on_ready(self):
-		# Ensure the guild-scoped command is registered quickly.
-		try:
-			await self.bot.tree.sync(guild=TARGET_GUILD)
-			print(f"[Echo] Commands synced to guild {ECHO_GUILD_ID}.")
-		except Exception as e:
-			print(f"[Echo] Sync error: {e}")
-
-
 async def setup(bot: commands.Bot):
 	await bot.add_cog(Echo(bot))
 

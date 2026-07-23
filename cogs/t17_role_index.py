@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 import discord
 from discord.ext import commands
+from state_io import atomic_json_dump
 
 from clan_t17_lookup import ClanT17Lookup
 from config import MAIN_GUILD_ID
@@ -51,9 +52,7 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
             return {}
 
     def _save_state(self) -> None:
-        os.makedirs(os.path.dirname(STATE_FILE) or ".", exist_ok=True)
-        with open(STATE_FILE, "w", encoding="utf-8") as handle:
-            json.dump(self._state, handle, indent=2)
+        atomic_json_dump(STATE_FILE, self._state)
 
     def _set_state(self, *, thread_id: int | None, message_ids: list[int]) -> None:
         self._state["thread_id"] = thread_id
