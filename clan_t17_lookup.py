@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import time
 from datetime import datetime, timezone
@@ -13,6 +12,7 @@ import discord
 
 from data_paths import data_path
 from hll_API_backend import HLLBackendClient, get_hll_backend_client
+from state_io import atomic_json_dump
 
 CLAN_T17_MAP_FILE = data_path("clan_t17_map.json")
 T17_LOG_FILE = data_path("t17_lookup.log")
@@ -74,11 +74,17 @@ def get_t17_logger() -> logging.Logger:
 class ClanT17Lookup:
     def __init__(self, backend: HLLBackendClient | None = None, *, logger: logging.Logger | None = None):
         self.logger = logger or get_t17_logger()
-        self.backend = backend or get_hll_backend_client()
+        self._backend = backend
         self._player_id_cache: dict[str, tuple[str | None, float]] = {}
 
+    @property
+    def backend(self) -> HLLBackendClient:
+        if self._backend is None:
+            self._backend = get_hll_backend_client()
+        return self._backend
+
     def backend_source_name(self) -> str:
-        provider = getattr(self.backend, "provider", "backend")
+        provider = getattr(self._backend, "provider", "backend")
         value = str(provider).strip().lower()
         return value or "backend"
 
@@ -91,10 +97,7 @@ class ClanT17Lookup:
             return {}
 
     def _save_json_file(self, path: str, data: dict[str, Any]) -> None:
-        tmp_path = f"{path}.tmp"
-        with open(tmp_path, "w", encoding="utf-8") as handle:
-            json.dump(data, handle, indent=2, sort_keys=True)
-        os.replace(tmp_path, path)
+        atomic_json_dump(path, data, sort_keys=True)
 
     def empty_mapping(self) -> dict[str, Any]:
         return {
