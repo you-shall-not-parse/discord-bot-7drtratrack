@@ -16,6 +16,7 @@ from hll_API_backend import HLLBackendError
 
 GUILD_ID = MAIN_GUILD_ID
 FORUM_CHANNEL_ID = 1388644379211862096
+SYNC_NOTIFICATION_CHANNEL_ID = 1239548993751482438
 STATE_FILE = data_path("t17_role_index_state.json")
 THREAD_NAME = "T17 Member Index"
 THREAD_INTRO = "Auto-updated index of tracked members, Discord names, nicknames, and T17 IDs."
@@ -37,6 +38,7 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
         self._started = False
         self._state = self._load_state()
         self._membership_sync_warned = False
+        self._pending_role_changes: dict[int, dict[str, str]] = {}
 
     def cog_unload(self) -> None:
         if self._sync_task and not self._sync_task.done():
@@ -374,46 +376,81 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
         active_member_ids: set[int],
         *,
         reason: str,
-    ) -> None:
+    ) -> dict[int, tuple[bool, str]]:
+        del reason
+
+        previous_members = self._synced_members_state()
+        next_state = dict(previous_members)
+        results: dict[int, tuple[bool, str]] = {}
+        members_to_upsert: list[tuple[int, dict[str, str], dict[str, str] | None]] = []
+        members_to_remove: list[tuple[int, dict[str, str]]] = []
+
+        for member_id in active_member_ids:
+            current_entry = current_members.get(member_id)
+            previous_entry = previous_members.get(member_id)
+            if current_entry is None:
+                results[member_id] = (False, "No T17 ID could be resolved.")
+                continue
+            if (
+                previous_entry is not None
+                and previous_entry.get("t17_id") == current_entry.get("t17_id")
+                and previous_entry.get("player_name") == current_entry.get("player_name")
+            ):
+                results[member_id] = (
+                    True,
+                    f"Already synchronized as T17 `{current_entry['t17_id']}`.",
+                )
+                continue
+            members_to_upsert.append((member_id, current_entry, previous_entry))
+
+        for member_id, previous_entry in previous_members.items():
+            if member_id not in active_member_ids:
+                members_to_remove.append((member_id, previous_entry))
+
+        if not members_to_upsert and not members_to_remove:
+            return results
+
         try:
             backend = self.lookup.backend
         except HLLBackendError as exc:
             if not self._membership_sync_warned:
                 self.logger.warning("Skipping T17 guild member sync: %s", exc)
                 self._membership_sync_warned = True
-            return
+            detail = f"Bifrost synchronization unavailable: {exc}"
+            for member_id, _entry, _previous in members_to_upsert:
+                results[member_id] = (False, detail)
+            for member_id, _entry in members_to_remove:
+                results[member_id] = (False, detail)
+            return results
 
         if getattr(backend, "provider", "") != "bifrost":
             if not self._membership_sync_warned:
                 self.logger.info("Skipping T17 guild member sync because the active backend is not Bifrost")
                 self._membership_sync_warned = True
-            return
+            detail = "Bifrost synchronization unavailable because the active backend is not Bifrost."
+            for member_id, _entry, _previous in members_to_upsert:
+                results[member_id] = (False, detail)
+            for member_id, _entry in members_to_remove:
+                results[member_id] = (False, detail)
+            return results
 
         if self._membership_sync_is_cooling_down():
             self.logger.warning("Skipping T17 guild member sync because Bifrost is in a temporary error-rate cooldown")
-            return
+            detail = "Bifrost synchronization is temporarily cooling down after an API error."
+            for member_id, _entry, _previous in members_to_upsert:
+                results[member_id] = (False, detail)
+            for member_id, _entry in members_to_remove:
+                results[member_id] = (False, detail)
+            return results
 
         self._clear_membership_sync_cooldown()
 
-        previous_members = self._synced_members_state()
-        confirmed_members: dict[int, dict[str, str]] = {}
-
-        for index, (member_id, entry) in enumerate(current_members.items()):
-            previous_entry = previous_members.get(member_id)
-            if (
-                reason == "ready"
-                and previous_entry is not None
-                and previous_entry.get("t17_id") == entry.get("t17_id")
-            ):
-                confirmed_members[member_id] = {
-                    "t17_id": entry["t17_id"],
-                    "player_name": entry["player_name"],
-                }
-                continue
-
+        for index, (member_id, entry, previous_entry) in enumerate(members_to_upsert):
             if index > 0:
                 await asyncio.sleep(MEMBERSHIP_ADD_PACING_SECONDS)
             try:
+                if previous_entry is not None and previous_entry.get("t17_id") != entry.get("t17_id"):
+                    await backend.remove_guild_member(previous_entry["t17_id"])
                 await backend.add_guild_member(
                     entry["t17_id"],
                     entry["player_name"],
@@ -425,14 +462,19 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
                     entry["t17_id"],
                     entry["player_name"],
                 )
-                confirmed_members[member_id] = entry
-            except HLLBackendError as exc:
+                next_state[member_id] = entry
+                results[member_id] = (
+                    True,
+                    f"Synchronized with Bifrost as T17 `{entry['t17_id']}`.",
+                )
+            except Exception as exc:
                 self.logger.warning(
                     "t17_role_index_member_add_failed member_id=%s player_id=%s error=%s",
                     member_id,
                     entry["t17_id"],
                     exc,
                 )
+                results[member_id] = (False, f"Bifrost add/update failed: {exc}")
                 retry_after = getattr(exc, "retry_after", None)
                 if retry_after is not None:
                     self._trigger_membership_sync_cooldown(retry_after)
@@ -449,9 +491,7 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
                     )
                     break
 
-        for member_id, entry in previous_members.items():
-            if member_id in active_member_ids:
-                continue
+        for member_id, entry in members_to_remove:
             try:
                 await backend.remove_guild_member(entry["t17_id"])
                 self.logger.info(
@@ -459,25 +499,89 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
                     member_id,
                     entry["t17_id"],
                 )
-            except HLLBackendError as exc:
+                next_state.pop(member_id, None)
+                results[member_id] = (
+                    True,
+                    f"Removed T17 `{entry['t17_id']}` from Bifrost membership.",
+                )
+            except Exception as exc:
                 self.logger.warning(
                     "t17_role_index_member_remove_failed member_id=%s player_id=%s error=%s",
                     member_id,
                     entry["t17_id"],
                     exc,
                 )
+                results[member_id] = (False, f"Bifrost removal failed: {exc}")
 
-        next_state: dict[int, dict[str, str]] = {}
-        for member_id in active_member_ids:
-            confirmed_entry = confirmed_members.get(member_id)
-            if confirmed_entry is not None:
-                next_state[member_id] = confirmed_entry
-                continue
-            previous_entry = previous_members.get(member_id)
-            if previous_entry is not None:
-                next_state[member_id] = previous_entry
+        for member_id, _entry, _previous in members_to_upsert:
+            results.setdefault(
+                member_id,
+                (False, "Bifrost synchronization was not attempted because an earlier request failed."),
+            )
+        for member_id, _entry in members_to_remove:
+            results.setdefault(
+                member_id,
+                (False, "Bifrost synchronization was not attempted because an earlier request failed."),
+            )
 
         self._save_synced_members_state(next_state)
+        return results
+
+    async def _post_role_change_results(
+        self,
+        changes: dict[int, dict[str, str]],
+        results: dict[int, tuple[bool, str]],
+    ) -> None:
+        if not changes:
+            return
+
+        channel = self.bot.get_channel(SYNC_NOTIFICATION_CHANNEL_ID)
+        if channel is None:
+            try:
+                channel = await self.bot.fetch_channel(SYNC_NOTIFICATION_CHANNEL_ID)
+            except Exception:
+                self.logger.exception(
+                    "Failed to fetch T17 sync notification channel %s",
+                    SYNC_NOTIFICATION_CHANNEL_ID,
+                )
+                return
+        if not hasattr(channel, "send"):
+            self.logger.warning(
+                "T17 sync notification channel %s is not messageable",
+                SYNC_NOTIFICATION_CHANNEL_ID,
+            )
+            return
+
+        for member_id, change in changes.items():
+            action = change.get("action") or "changed"
+            display_name = discord.utils.escape_markdown(change.get("display_name") or str(member_id))
+            success, detail = results.get(
+                member_id,
+                (
+                    action == "removed",
+                    "Role removal indexed; no synchronized Bifrost membership was recorded."
+                    if action == "removed"
+                    else "The role change was indexed, but no synchronization result was produced.",
+                ),
+            )
+            marker = "✅ SUCCESS" if success else "❌ FAIL"
+            action_label = "added to" if action == "added" else "removed from"
+            message = (
+                f"{marker} — **Basic Trained {action}**\n"
+                f"**{display_name}** (`{member_id}`) was {action_label} the Basic Trained role.\n"
+                f"{detail}"
+            )
+            try:
+                await channel.send(
+                    message,
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
+            except Exception:
+                self.logger.exception(
+                    "Failed to post T17 sync result for member %s to channel %s",
+                    member_id,
+                    SYNC_NOTIFICATION_CHANNEL_ID,
+                )
 
     async def _sync_index(self, *, reason: str) -> None:
         await self.bot.wait_until_ready()
@@ -488,8 +592,27 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
 
         async with self._sync_lock:
             self.logger.info("t17_role_index_sync_start reason=%s", reason)
-            batches, current_members, active_member_ids = await self._build_embed_batches(guild)
-            await self._sync_guild_membership(current_members, active_member_ids, reason=reason)
+            pending_changes = dict(self._pending_role_changes)
+            self._pending_role_changes.clear()
+            try:
+                batches, current_members, active_member_ids = await self._build_embed_batches(guild)
+                sync_results = await self._sync_guild_membership(
+                    current_members,
+                    active_member_ids,
+                    reason=reason,
+                )
+            except asyncio.CancelledError:
+                self._pending_role_changes = pending_changes | self._pending_role_changes
+                raise
+            except Exception as exc:
+                failure_results = {
+                    member_id: (False, f"T17 index synchronization failed: {exc}")
+                    for member_id in pending_changes
+                }
+                await self._post_role_change_results(pending_changes, failure_results)
+                raise
+
+            await self._post_role_change_results(pending_changes, sync_results)
 
             forum = await self._get_forum_channel()
             if forum is None:
@@ -557,6 +680,16 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
         )
 
         if before_roles != after_roles:
+            if "Basic Trained" in after_roles - before_roles:
+                self._pending_role_changes[after.id] = {
+                    "action": "added",
+                    "display_name": after.display_name,
+                }
+            elif "Basic Trained" in before_roles - after_roles:
+                self._pending_role_changes[after.id] = {
+                    "action": "removed",
+                    "display_name": after.display_name,
+                }
             self._schedule_sync(reason="tracked_role_change")
             return
 
