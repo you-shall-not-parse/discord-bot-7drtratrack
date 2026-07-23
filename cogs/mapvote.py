@@ -178,9 +178,12 @@ DISABLED_CDN_IMAGE = "https://cdn.discordapp.com/attachments/1098976074852999261
 
 # Back-compat: older constants removed in favor of BROADCAST_SCHEDULE above.
 
-MAPVOTE_BACKEND = get_hll_backend_client()
 MAPVOTE_LOGGER = logging.getLogger("MapVote")
 MAPVOTE_LAST_GAMESTATE_ERROR: str | None = None
+
+
+def _get_mapvote_backend():
+    return get_hll_backend_client()
 
 
 def _set_last_gamestate_error(message: str | None) -> None:
@@ -285,7 +288,7 @@ def _normalize_bifrost_current_map_id(raw_state: dict[str, object]) -> str | Non
 
 async def rcon_set_rotation(map_ids: list[str]):
     try:
-        return await MAPVOTE_BACKEND.set_mapvote_rotation(map_ids)
+        return await _get_mapvote_backend().set_mapvote_rotation(map_ids)
     except HLLBackendError as e:
         print(f"[MapVote] set rotation failed: {e}")
         return {"error": str(e), "failed": True}
@@ -293,7 +296,7 @@ async def rcon_set_rotation(map_ids: list[str]):
 
 async def rcon_set_next_map(map_id: str):
     try:
-        return await MAPVOTE_BACKEND.set_mapvote_next_map(map_id)
+        return await _get_mapvote_backend().set_mapvote_next_map(map_id)
     except HLLBackendError as e:
         print(f"[MapVote] set next map failed: {e}")
         return {"error": str(e), "failed": True}
@@ -301,7 +304,7 @@ async def rcon_set_next_map(map_id: str):
 
 async def rcon_get_recent_logs(filter_actions: list[str], limit: int = 100):
     try:
-        logs = await MAPVOTE_BACKEND.get_mapvote_logs()
+        logs = await _get_mapvote_backend().get_mapvote_logs()
     except HLLBackendError as e:
         print(f"[MapVote] recent logs failed: {e}")
         return {"error": str(e), "failed": True}
@@ -363,7 +366,7 @@ def save_persistent_state(data: dict):
 
 async def fetch_gamestate():
     try:
-        data = await MAPVOTE_BACKEND.get_mapvote_game_state()
+        data = await _get_mapvote_backend().get_mapvote_game_state()
     except HLLBackendError as e:
         _set_last_gamestate_error(str(e))
         MAPVOTE_LOGGER.warning("Mapvote gamestate read failed: %s", e)
@@ -374,7 +377,7 @@ async def fetch_gamestate():
         MAPVOTE_LOGGER.warning("Mapvote gamestate read failed: empty response")
         return None
 
-    if getattr(MAPVOTE_BACKEND, "provider", "") == "bifrost":
+    if getattr(_get_mapvote_backend(), "provider", "") == "bifrost":
         payload = _coerce_bifrost_gamestate_payload(data.get("data"))
         score_payload = payload.get("score") if isinstance(payload.get("score"), dict) else {}
         team1 = data.get("team1") if isinstance(data.get("team1"), dict) else {}
@@ -933,7 +936,7 @@ class MapVote(commands.Cog, name="[API] MapVote"):
             return
 
         try:
-            resp = await MAPVOTE_BACKEND.send_mapvote_message_to_all(message)
+            resp = await _get_mapvote_backend().send_mapvote_message_to_all(message)
         except HLLBackendError as e:
             print(f"[MapVote] message_all_players failed: {e}")
             return

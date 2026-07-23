@@ -41,8 +41,7 @@ class T17ServerAdmin(commands.Cog, name="[API] T17ServerAdmin"):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self.logger = logging.getLogger("T17ServerAdmin")
-        self.backend = get_hll_backend_client()
-        self.lookup = ClanT17Lookup(self.backend, logger=self.logger)
+        self.lookup = ClanT17Lookup(logger=self.logger)
         self._removal_tasks: dict[str, asyncio.Task[None]] = {}
 
     async def cog_load(self) -> None:

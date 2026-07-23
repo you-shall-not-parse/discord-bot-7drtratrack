@@ -21,7 +21,6 @@ from urllib3.util.retry import Retry
 from clan_t17_lookup import ClanT17Lookup, DEFAULT_RANK_ORDER
 from config import MAIN_GUILD_ID, data_log_path
 from data_paths import data_path
-from hll_API_backend import get_hll_backend_client
 from state_io import atomic_json_dump
 
 GUILD_ID = MAIN_GUILD_ID
@@ -123,7 +122,7 @@ class HellorLeaderboard(commands.Cog, name="HellorLeaderboard"):
         self._update_lock = asyncio.Lock()
         self._initial_posted = False
         self.logger = self._build_logger()
-        self.lookup = ClanT17Lookup(get_hll_backend_client(), logger=self.logger)
+        self.lookup = ClanT17Lookup(logger=self.logger)
         self.leaderboard_message_id = self._load_leaderboard_message_id()
 
     def cog_unload(self):

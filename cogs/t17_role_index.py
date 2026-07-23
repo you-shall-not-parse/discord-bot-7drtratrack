@@ -12,7 +12,7 @@ from state_io import atomic_json_dump
 from clan_t17_lookup import ClanT17Lookup
 from config import MAIN_GUILD_ID
 from data_paths import data_path
-from hll_API_backend import HLLBackendError, get_hll_backend_client
+from hll_API_backend import HLLBackendError
 
 GUILD_ID = MAIN_GUILD_ID
 FORUM_CHANNEL_ID = 1388644379211862096
@@ -31,8 +31,7 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.logger = logging.getLogger(__name__)
-        self.backend = get_hll_backend_client()
-        self.lookup = ClanT17Lookup(self.backend, logger=self.logger)
+        self.lookup = ClanT17Lookup(logger=self.logger)
         self._sync_lock = asyncio.Lock()
         self._sync_task: asyncio.Task | None = None
         self._started = False
@@ -376,7 +375,15 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
         *,
         reason: str,
     ) -> None:
-        if getattr(self.backend, "provider", "") != "bifrost":
+        try:
+            backend = self.lookup.backend
+        except HLLBackendError as exc:
+            if not self._membership_sync_warned:
+                self.logger.warning("Skipping T17 guild member sync: %s", exc)
+                self._membership_sync_warned = True
+            return
+
+        if getattr(backend, "provider", "") != "bifrost":
             if not self._membership_sync_warned:
                 self.logger.info("Skipping T17 guild member sync because the active backend is not Bifrost")
                 self._membership_sync_warned = True
@@ -407,7 +414,7 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
             if index > 0:
                 await asyncio.sleep(MEMBERSHIP_ADD_PACING_SECONDS)
             try:
-                await self.backend.add_guild_member(
+                await backend.add_guild_member(
                     entry["t17_id"],
                     entry["player_name"],
                     platform="Xbox",
@@ -446,7 +453,7 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
             if member_id in active_member_ids:
                 continue
             try:
-                await self.backend.remove_guild_member(entry["t17_id"])
+                await backend.remove_guild_member(entry["t17_id"])
                 self.logger.info(
                     "t17_role_index_member_removed member_id=%s player_id=%s",
                     member_id,

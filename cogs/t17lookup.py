@@ -4,7 +4,6 @@ from discord.ext import commands
 
 from clan_t17_lookup import ClanT17Lookup, get_t17_logger
 from config import MAIN_GUILD_ID
-from hll_API_backend import get_hll_backend_client
 
 GUILD_ID = MAIN_GUILD_ID
 T17_ADMIN_ROLE_ID = 1213495462632361994
@@ -19,7 +18,7 @@ class T17Lookup(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.logger = get_t17_logger()
-        self.lookup = ClanT17Lookup(get_hll_backend_client(), logger=self.logger)
+        self.lookup = ClanT17Lookup(logger=self.logger)
 
     @app_commands.command(name="t17_overwrite", description="Override a member's shared clan T17 ID")
     @app_commands.guilds(discord.Object(id=GUILD_ID))

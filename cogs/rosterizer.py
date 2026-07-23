@@ -14,7 +14,6 @@ from state_io import atomic_json_dump
 from clan_t17_lookup import ClanT17Lookup, DEFAULT_RANK_ORDER
 from config import MAIN_GUILD_ID
 from data_paths import data_path
-from hll_API_backend import get_hll_backend_client
 
 GUILD_ID = MAIN_GUILD_ID
 OUTPUT_CHANNEL_ID = 1459904650831724806
@@ -56,7 +55,7 @@ class Rosterizer(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.logger = logging.getLogger(__name__)
-        self.lookup = ClanT17Lookup(get_hll_backend_client(), logger=self.logger)
+        self.lookup = ClanT17Lookup(logger=self.logger)
         self._ran_once = False
         self._update_task: asyncio.Task | None = None
         self._update_lock = asyncio.Lock()
