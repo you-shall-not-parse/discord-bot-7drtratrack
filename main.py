@@ -6,10 +6,11 @@ from discord.ext import commands
 from dotenv import load_dotenv
 import asyncio
 
+load_dotenv()
+
 from config import BOT_LOG_PATH, MAIN_GUILD_ID
 from config.hll_API_config import get_hll_backend_status
 
-load_dotenv()
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
 EXTENSIONS = (
