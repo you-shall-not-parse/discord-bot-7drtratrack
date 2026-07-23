@@ -645,6 +645,13 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
             self._sync_task.cancel()
         self._sync_task = asyncio.create_task(self._delayed_sync(reason=reason, delay=delay))
 
+    async def refresh_member_override(self, member: discord.Member) -> None:
+        if member.guild.id != GUILD_ID:
+            return
+        if "Basic Trained" not in self._member_tracked_roles(member):
+            return
+        await self._sync_index(reason="manual_override")
+
     @commands.Cog.listener()
     async def on_ready(self) -> None:
         if self._started:

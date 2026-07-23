@@ -54,6 +54,14 @@ class T17Lookup(commands.Cog):
                 self.logger.exception("t17_overwrite_roster_refresh_failed member_id=%s error=%s", member.id, exc)
                 refresh_failures.append(f"rosterizer: {exc}")
 
+        role_index_cog = self.bot.get_cog("[API] T17RoleIndex") or self.bot.get_cog("T17RoleIndex")
+        if role_index_cog is not None and hasattr(role_index_cog, "refresh_member_override"):
+            try:
+                await role_index_cog.refresh_member_override(member)
+            except Exception as exc:
+                self.logger.exception("t17_overwrite_role_index_refresh_failed member_id=%s error=%s", member.id, exc)
+                refresh_failures.append(f"T17 role index: {exc}")
+
         if refresh_failures:
             await interaction.followup.send(
                 "Stored the shared T17 override, but some dependent refreshes failed:\n" + "\n".join(refresh_failures),
