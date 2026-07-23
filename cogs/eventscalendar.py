@@ -6,12 +6,14 @@ import asyncio
 import io
 import random
 import calendar
+from time import monotonic
 from urllib.parse import urlencode
 from typing import Awaitable, Callable, Optional, TypeVar
 from datetime import datetime, timedelta, timezone
 
 import aiohttp
 import discord
+from discord.http import Route
 from discord.ext import commands, tasks
 from state_io import atomic_json_dump
 
@@ -113,6 +115,8 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
         self._thread_state = self._load_thread_state()
         self._background_cache: dict[str, bytes] = {}
         self._missing_background_sources: set[str] = set()
+        self._raw_events_cache: dict[int, dict] = {}
+        self._raw_events_cache_time = 0.0
         self.update_events_display.start()
         logger.info("EventDisplayCog initialized")
 
@@ -301,20 +305,27 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
             logger.warning("Failed to create event thread.", exc_info=True)
 
     async def _fetch_raw_scheduled_events(self, guild: discord.Guild) -> dict[int, dict]:
-        token = getattr(getattr(self.bot, "http", None), "token", None)
-        if not token:
-            return {}
-
-        headers = {"Authorization": f"Bot {token}"}
-        url = f"https://discord.com/api/v10/guilds/{guild.id}/scheduled-events?with_user_count=true"
+        now = monotonic()
+        if now - self._raw_events_cache_time < 15:
+            return self._raw_events_cache.copy()
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers) as response:
-                    if response.status != 200:
-                        logger.warning("Failed to fetch raw scheduled events for guild %s (status %s)", guild.id, response.status)
-                        return {}
-                    payload = await response.json()
+            route = Route(
+                "GET",
+                "/guilds/{guild_id}/scheduled-events",
+                guild_id=guild.id,
+            )
+            payload = await self.bot.http.request(
+                route,
+                params={"with_user_count": "true"},
+            )
+        except discord.HTTPException as exc:
+            logger.warning(
+                "Failed to fetch raw scheduled events for guild %s (status %s)",
+                guild.id,
+                exc.status,
+            )
+            return {}
         except Exception:
             logger.warning("Failed to fetch raw scheduled events for guild %s", guild.id, exc_info=True)
             return {}
@@ -325,7 +336,9 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
                 result[int(item["id"])] = item
             except Exception:
                 continue
-        return result
+        self._raw_events_cache = result
+        self._raw_events_cache_time = now
+        return result.copy()
 
     def _parse_iso_datetime(self, value: Optional[str]) -> Optional[datetime]:
         if not value:
