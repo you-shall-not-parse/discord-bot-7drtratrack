@@ -11,7 +11,7 @@ from typing import Any
 import discord
 
 from data_paths import data_path
-from hll_API_backend import HLLBackendClient, get_hll_backend_client
+from hll_API_backend import HLLBackendClient, HLLBackendConfigError, get_hll_backend_client
 from state_io import atomic_json_dump
 
 CLAN_T17_MAP_FILE = data_path("clan_t17_map.json")
@@ -75,13 +75,29 @@ class ClanT17Lookup:
     def __init__(self, backend: HLLBackendClient | None = None, *, logger: logging.Logger | None = None):
         self.logger = logger or get_t17_logger()
         self._backend = backend
+        self._backend_config_error: str | None = None
+        self._backend_unavailable_logged = False
         self._player_id_cache: dict[str, tuple[str | None, float]] = {}
+
+    def backend_if_configured(self) -> HLLBackendClient | None:
+        if self._backend is not None:
+            return self._backend
+        if self._backend_config_error is not None:
+            return None
+
+        try:
+            self._backend = get_hll_backend_client()
+        except HLLBackendConfigError as exc:
+            self._backend_config_error = str(exc)
+            return None
+        return self._backend
 
     @property
     def backend(self) -> HLLBackendClient:
-        if self._backend is None:
-            self._backend = get_hll_backend_client()
-        return self._backend
+        backend = self.backend_if_configured()
+        if backend is None:
+            raise HLLBackendConfigError(self._backend_config_error or "HLL backend is not configured")
+        return backend
 
     def backend_source_name(self) -> str:
         provider = getattr(self._backend, "provider", "backend")
@@ -223,8 +239,12 @@ class ClanT17Lookup:
             if now - cached_ts <= ttl:
                 return cached_id, False
 
+        backend = self.backend_if_configured()
+        if backend is None:
+            return None, False
+
         try:
-            player_id = await self.backend.resolve_player_id_by_name(normalized)
+            player_id = await backend.resolve_player_id_by_name(normalized)
         except Exception as exc:
             self.logger.warning("player_lookup_failed query=%r error=%s", normalized, exc)
             self._player_id_cache[key] = (None, now)
@@ -360,6 +380,23 @@ class ClanT17Lookup:
                 )
                 self.logger.debug("resolve_name_cache_hit member_id=%s query=%r t17_id=%s", member.id, query, cached_t17)
                 return cached_t17, "name_cache", queries
+
+        if self.backend_if_configured() is None:
+            if not self._backend_unavailable_logged:
+                self.logger.warning(
+                    "Live player lookup disabled because the HLL backend is not configured: %s",
+                    self._backend_config_error,
+                )
+                self._backend_unavailable_logged = True
+            self.store_resolved_member(
+                mapping,
+                member,
+                role_name=role_name,
+                t17_id=None,
+                source="backend_unavailable",
+                queries=queries,
+            )
+            return None, "backend_unavailable", queries
 
         for query in queries:
             self.logger.debug("resolve_backend_try member_id=%s backend=%s query=%r", member.id, backend_source, query)
