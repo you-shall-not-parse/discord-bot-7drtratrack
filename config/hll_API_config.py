@@ -34,6 +34,8 @@ HLL_BACKEND_SERVERS: dict[str, dict[str, Any]] = {
         "bifrost": {
             "server_id": "d688d156-773e-47ed-94cf-94c407b41ea3",
             "game_type": os.getenv("BIFROST_GAME_TYPE", "HLL").strip() or "HLL",
+            "oauth_url": "https://api.dev.bifrostgaming.com/v1/oauth/token",
+            "graphql_url": "https://api.dev.bifrostgaming.com/v1/graphql",
         },
     },
 }

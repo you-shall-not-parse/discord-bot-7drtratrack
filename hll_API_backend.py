@@ -342,8 +342,8 @@ class BifrostBackendClient:
         bifrost_server = server_config.get("bifrost") or {}
         self.server_id = str(bifrost_server.get("server_id") or "").strip()
         self.game_type = str(bifrost_server.get("game_type") or "HLL").strip() or "HLL"
-        self.oauth_url = BIFROST_OAUTH_URL
-        self.graphql_url = BIFROST_GRAPHQL_URL
+        self.oauth_url = str(bifrost_server.get("oauth_url") or BIFROST_OAUTH_URL).strip()
+        self.graphql_url = str(bifrost_server.get("graphql_url") or BIFROST_GRAPHQL_URL).strip()
         self.client_id_env = BIFROST_CLIENT_ID_ENV
         self.client_secret_env = BIFROST_CLIENT_SECRET_ENV
         self._access_token: str | None = None
