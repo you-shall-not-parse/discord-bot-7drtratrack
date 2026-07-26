@@ -56,6 +56,12 @@ class HLLBackendClient(Protocol):
     async def send_mapvote_message_to_all(self, message: str) -> dict[str, Any]:
         ...
 
+    async def get_available_maps(self) -> list[dict[str, Any]]:
+        ...
+
+    async def change_map(self, map_rcon_name: str) -> dict[str, Any]:
+        ...
+
     async def add_guild_member(
         self,
         player_id: str,
@@ -290,6 +296,12 @@ class CRCONBackendClient:
             response_payload.setdefault("_provider", self.provider)
             return response_payload
         return {"success": True, "result": response_payload, "_http_status": status, "_provider": self.provider}
+
+    async def get_available_maps(self) -> list[dict[str, Any]]:
+        raise HLLBackendConfigError("Map catalogue requests are only supported by the Bifrost backend")
+
+    async def change_map(self, map_rcon_name: str) -> dict[str, Any]:
+        raise HLLBackendConfigError("Immediate map changes are only supported by the Bifrost backend")
 
     async def add_guild_member(
         self,
@@ -611,6 +623,51 @@ class BifrostBackendClient:
             },
         )
         payload = data.get("guildSendMessageToAll") or {}
+        if not isinstance(payload, dict) or not payload.get("success"):
+            raise HLLBackendError(_extract_error_message(payload))
+        payload.setdefault("_provider", self.provider)
+        return payload
+
+    async def get_available_maps(self) -> list[dict[str, Any]]:
+        query = (
+            "query GuildGetAllMaps($gameType: String!) {"
+            " guildGetAllMaps(gameType: $gameType) {"
+            " success totalCount gameType error timestamp"
+            " maps {"
+            " mapFriendlyName mapRconName gameMode timeOfDay"
+            " faction1 faction2 mapImageUrl"
+            " }"
+            " }"
+            "}"
+        )
+        data = await self._graphql(query, {"gameType": self.game_type})
+        payload = data.get("guildGetAllMaps") or {}
+        if not isinstance(payload, dict) or not payload.get("success"):
+            raise HLLBackendError(_extract_error_message(payload))
+        maps = payload.get("maps")
+        if not isinstance(maps, list):
+            raise HLLBackendError("Bifrost returned an invalid map catalogue")
+        return [item for item in maps if isinstance(item, dict)]
+
+    async def change_map(self, map_rcon_name: str) -> dict[str, Any]:
+        normalized_name = str(map_rcon_name or "").strip()
+        if not normalized_name:
+            raise HLLBackendError("A map RCON name is required")
+        query = (
+            "mutation GuildChangeMap($input: GuildChangeMapInput!) {"
+            " guildChangeMap(input: $input) { success message error timestamp }"
+            "}"
+        )
+        data = await self._graphql(
+            query,
+            {
+                "input": {
+                    "serverId": self.server_id,
+                    "mapRconName": normalized_name,
+                }
+            },
+        )
+        payload = data.get("guildChangeMap") or {}
         if not isinstance(payload, dict) or not payload.get("success"):
             raise HLLBackendError(_extract_error_message(payload))
         payload.setdefault("_provider", self.provider)

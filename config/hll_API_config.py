@@ -30,6 +30,15 @@ HLL_BACKEND_SERVERS: dict[str, dict[str, Any]] = {
             "game_type": os.getenv("BIFROST_GAME_TYPE", "HLL").strip() or "HLL",
         },
     },
+    "events": {
+        "bifrost": {
+            "server_id": os.getenv(
+                "BIFROST_EVENTS_SERVER_ID",
+                os.getenv("BIFROST_SERVER_ID2", ""),
+            ).strip(),
+            "game_type": os.getenv("BIFROST_GAME_TYPE", "HLL").strip() or "HLL",
+        },
+    },
 }
 
 

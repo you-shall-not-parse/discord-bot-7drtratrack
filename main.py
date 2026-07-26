@@ -21,6 +21,7 @@ EXTENSIONS = (
     "cogs.EmbedManager",
     "cogs.SquadUp",
     "cogs.eventscalendar",
+    "cogs.event_map_requests",
     "cogs.BirthdayCog",
     "cogs.contentfeed",
     "cogs.discordgreeting",

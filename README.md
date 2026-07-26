@@ -96,6 +96,11 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
+Features that manage HLL servers through Bifrost also require
+`BIFROST_CLIENT_ID` and `BIFROST_CLIENT_SECRET`. The events-server map request
+workflow uses `BIFROST_EVENTS_SERVER_ID`; for compatibility it falls back to
+`BIFROST_SERVER_ID2` when the dedicated variable is not set.
+
 The extension list in `main.py` is the source of truth. Extensions are loaded
 independently, so a failed optional feature is logged without preventing healthy
 features from starting. Slash commands are synchronized once during startup.
@@ -124,6 +129,7 @@ features from starting. Slash commands are synchronized once during startup.
 - `EmbedManager`
 - `SquadUp`
 - `eventscalendar`
+- `event_map_requests`
 - `BirthdayCog`
 - `contentfeed`
 - `discordgreeting`

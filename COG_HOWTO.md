@@ -97,6 +97,16 @@ How to use: Members read it as the current event board. Staff keep scheduled eve
 
 Rules and notes: Treat it as the public source for upcoming events. If event titles or times are wrong in Discord scheduled events, this display will mirror that.
 
+## `event_map_requests.py`
+
+Overview: Lets members request an immediate map change on the HLL events server through a staff approval workflow.
+
+Slash commands: none.
+
+How to use: Members use the persistent panel in the configured request channel, choose a base map, then choose its exact mode and time-of-day variant. Staff review the resulting request in the approval channel and press **Approve & Change Map** or **Deny**.
+
+Rules and notes: Approval immediately calls Bifrost's `guildChangeMap` mutation, so staff should confirm the requested variant before approving. Approvers must be administrators, have Manage Server, or hold the configured map-admin role. The events server is configured with `BIFROST_EVENTS_SERVER_ID`, falling back to `BIFROST_SERVER_ID2`. The map catalogue is sourced from Bifrost and cached for at least four hours to respect its rate limit.
+
 ## `BirthdayCog.py`
 
 Overview: Lets members store birthdays and shows birthday lists.
