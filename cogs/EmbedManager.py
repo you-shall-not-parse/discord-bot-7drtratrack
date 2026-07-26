@@ -167,7 +167,8 @@ class EmbedManager(commands.Cog):
             "- <#1099248200776421406> [B]\n"
             "- <#1441744889145720942> [B][D]\n"
             "- <#1441751747935735878> [B][D]\n"
-            "- <#1332736267485708419> [D]"
+            "- <#1332736267485708419> [D]\n"
+            "- <#1520108151083372636> [B]" 
             ),
             inline=False
         )
@@ -193,7 +194,7 @@ class EmbedManager(commands.Cog):
         embed3.add_field(
             name=":palm_tree:｜HLL Vietnam",
             value=(
-            "- <#1495034963459051652> [B] via <#1099248200776421406>"
+            "- <#1511085797695160501> [B]"
             ),
             inline=False
         )
