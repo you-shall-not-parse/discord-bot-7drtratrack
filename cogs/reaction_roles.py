@@ -148,10 +148,10 @@ class ReactionRoles(commands.Cog):
             ),
         )
         embed.add_field(
-            name="HLL Rank",
+            name="HLL1 (WW2) Rank",
             value=(
                 "Choose the bracket matching your current HLL in-game rank. This is a custom role tag only "
-                "and has no bearing on your milsim rank within the clan Discord.\n\n"
+                "and has no bearing on your milsim rank within the clan Discord. A HLLV rank selection will be release once the game has been released.\n\n"
                 + "\n".join(
                     f"{emoji} <@&{role_id}>"
                     for label, role_id, emoji in RANK_ROLES.values()
@@ -162,7 +162,7 @@ class ReactionRoles(commands.Cog):
         embed.add_field(
             name="Play Style",
             value=(
-                "For 7DR infantry: choose whether you prefer to defend, attack, or stay fluid in the "
+                "For infantry, choose whether you prefer to defend, attack, or stay fluid in the "
                 "meatgrind. This preference does not prevent you from playing any other role.\n\n"
                 + "\n".join(
                     f"{emoji} <@&{role_id}>"
