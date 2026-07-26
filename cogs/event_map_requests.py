@@ -29,7 +29,7 @@ ADMIN_CAM_SERVER_OPTIONS = {
 T17_ROLE_NAME = "131st Infantry Brigade"
 MAP_CACHE_MAX_AGE = timedelta(hours=4)
 SELECT_PAGE_SIZE = 25
-PANEL_HISTORY_LIMIT = 5
+PANEL_HISTORY_LIMIT = 3
 
 PANEL_STATE_PATH = Path(data_path("event_map_request_panel.json"))
 REQUEST_STATE_PATH = Path(data_path("event_map_requests.json"))
@@ -577,7 +577,7 @@ class EventMapRequests(commands.Cog):
         )
         decision_lines = self._recent_decision_lines()
         embed.add_field(
-            name="Last 5 approvals/rejections",
+            name="Last 3 approvals/rejections",
             value=(
                 "\n\n".join(decision_lines)[:1024]
                 if decision_lines
