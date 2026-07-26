@@ -573,6 +573,7 @@ class EventMapRequests(commands.Cog):
                 "temporary admin cam access on the **Events** or **Public** server.\n\n"
                 "For a map request, choose the map, game mode, and time-of-day variant. "
                 "For admin cam, choose the server and how long you need access.\n\n"
+                "Use **Show My T17 ID** to view your stored T17 ID and profile links.\n\n"
                 "Every request requires staff approval. Approved maps change immediately, "
                 "while approved admin cam requests receive temporary Spectator access."
             ),
