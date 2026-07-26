@@ -438,6 +438,23 @@ class ScheduledSeedSignupView(discord.ui.View):
         await cog.update_signup(interaction, joining=True)
 
     @discord.ui.button(
+        label="AFK Possible",
+        style=discord.ButtonStyle.primary,
+        emoji="💤",
+        custom_id="raid:scheduled_seed_afk_possible",
+    )
+    async def afk_possible(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        cog = interaction.client.get_cog("Raid")
+        if not isinstance(cog, Raid):
+            await interaction.response.send_message("The raid tool is unavailable.", ephemeral=True)
+            return
+        await cog.update_signup(interaction, joining=True, afk_possible=True)
+
+    @discord.ui.button(
         label="Withdraw",
         style=discord.ButtonStyle.secondary,
         emoji="↩️",
@@ -534,13 +551,17 @@ class Raid(commands.Cog):
         return value if isinstance(value, bool) else True
 
     @staticmethod
-    def _choose_raid_media(max_upload_bytes: int) -> Path | None:
+    def _choose_raid_media(
+        max_upload_bytes: int,
+        *,
+        allowed_extensions: set[str] = RAID_MEDIA_EXTENSIONS,
+    ) -> Path | None:
         try:
             candidates = [
                 path
                 for path in RAID_CONTENT_DIR.iterdir()
                 if path.is_file()
-                and path.suffix.casefold() in RAID_MEDIA_EXTENSIONS
+                and path.suffix.casefold() in allowed_extensions
                 and 0 < path.stat().st_size <= max_upload_bytes
             ]
         except OSError:
@@ -1390,6 +1411,12 @@ class Raid(commands.Cog):
             LOGGER.exception("Could not fetch live state for scheduled seed %s", message_id)
             return
         participants = [int(user_id) for user_id in post.get("participants", [])]
+        afk_possible_ids = [
+            int(user_id) for user_id in post.get("afk_possible", [])
+        ]
+        for user_id in afk_possible_ids:
+            if user_id not in participants:
+                participants.append(user_id)
         for member_id in live_state.get("clan_member_ids", []):
             detected_member_id = int(member_id)
             if detected_member_id not in participants:
@@ -1412,45 +1439,95 @@ class Raid(commands.Cog):
             ]
         post.pop("scheduled_for", None)
 
-        try:
-            await message.edit(
-                content=None,
-                embed=self.build_post_embed(post),
-                view=RaidSignupView(),
-                allowed_mentions=discord.AllowedMentions.none(),
-            )
-        except discord.NotFound:
-            await self._remove_scheduled_seed(message_key)
-            return
-        except (discord.Forbidden, discord.HTTPException):
-            await self._restore_scheduled_seed_status(message_key)
-            return
-
-        async with self._lock:
-            current = self._posts.get(message_key)
-            if current is None or str(current.get("status") or "") != "activating_seed":
-                return
-            self._posts[message_key] = post
-            self._save_posts()
+        guild = message.guild
+        max_upload_bytes = guild.filesize_limit if guild is not None else 8 * 1024 * 1024
+        media_path = self._choose_raid_media(
+            max_upload_bytes,
+            allowed_extensions={".gif"},
+        )
+        if media_path is not None:
+            media_extension = media_path.suffix.casefold()
+            post["media_filename"] = media_path.name
+            post["media_extension"] = media_extension
+            post["media_attachment_name"] = f"raid_media{media_extension}"
 
         ping_everyone = self.everyone_ping_enabled()
-        start_content = (
-            f"🌱 {'@everyone ' if ping_everyone else ''}Scheduled 7DR seeding starts now! "
-            f"{message.jump_url}"
-        )
+        send_kwargs: dict[str, object] = {
+            "content": "@everyone" if ping_everyone else None,
+            "embed": self.build_post_embed(post),
+            "view": RaidSignupView(),
+            "allowed_mentions": discord.AllowedMentions(
+                everyone=ping_everyone,
+                users=False,
+                roles=False,
+                replied_user=False,
+            ),
+        }
+        media_file = self._raid_media_file(post)
+        if media_file is not None:
+            send_kwargs["file"] = media_file
+        elif post.get("media_filename"):
+            post.pop("media_filename", None)
+            post.pop("media_extension", None)
+            post.pop("media_attachment_name", None)
+            send_kwargs["embed"] = self.build_post_embed(post)
+
         try:
-            await channel.send(
-                start_content,
-                allowed_mentions=discord.AllowedMentions(
-                    everyone=ping_everyone,
-                    users=False,
-                    roles=False,
-                    replied_user=False,
-                ),
+            live_message = await channel.send(**send_kwargs)
+        except (discord.Forbidden, discord.HTTPException) as exc:
+            if media_file is None:
+                await self._restore_scheduled_seed_status(message_key)
+                LOGGER.warning("Could not publish scheduled seed %s: %s", message_id, exc)
+                return
+            media_file.close()
+            LOGGER.warning(
+                "Could not upload scheduled seed media; retrying without it: %s",
+                exc,
             )
+            post.pop("media_filename", None)
+            post.pop("media_extension", None)
+            post.pop("media_attachment_name", None)
+            send_kwargs.pop("file", None)
+            send_kwargs["embed"] = self.build_post_embed(post)
+            try:
+                live_message = await channel.send(**send_kwargs)
+            except (discord.Forbidden, discord.HTTPException):
+                await self._restore_scheduled_seed_status(message_key)
+                LOGGER.exception("Could not publish scheduled seed %s", message_id)
+                return
+
+        post["message_id"] = live_message.id
+        accepted = False
+        async with self._lock:
+            current = self._posts.get(message_key)
+            if current is not None and str(current.get("status") or "") == "activating_seed":
+                self._posts.pop(message_key, None)
+                self._posts[str(live_message.id)] = post
+                self._save_posts()
+                accepted = True
+
+        if not accepted:
+            try:
+                await live_message.delete()
+            except (discord.Forbidden, discord.HTTPException):
+                LOGGER.warning("Could not remove an orphaned scheduled seed post %s", live_message.id)
+            return
+
+        try:
+            await message.delete()
+        except discord.NotFound:
+            pass
         except (discord.Forbidden, discord.HTTPException):
-            LOGGER.warning("Scheduled seed %s activated, but the start alert failed", message_id)
-        LOGGER.info("Activated scheduled 7DR seed %s", message_id)
+            LOGGER.warning(
+                "Live seed %s was published, but old interest post %s could not be deleted",
+                live_message.id,
+                message_id,
+            )
+        LOGGER.info(
+            "Activated scheduled 7DR seed %s as live raid post %s",
+            message_id,
+            live_message.id,
+        )
 
     async def _restore_scheduled_seed_status(self, message_key: str) -> None:
         async with self._lock:
@@ -1511,6 +1588,9 @@ class Raid(commands.Cog):
         stats_url = str(post.get("stats_url", ""))
         initiator_id = int(post.get("initiator_id", 0))
         participant_ids = [int(user_id) for user_id in post.get("participants", [])]
+        afk_possible_ids = {
+            int(user_id) for user_id in post.get("afk_possible", [])
+        }
         description = announcement
         if stats_url:
             description = f"{description}\n\n[Server stats]({stats_url})"
@@ -1560,7 +1640,10 @@ class Raid(commands.Cog):
         raider_lines: list[str] = []
         for user_id in visible:
             if user_id not in detected_clan_members:
-                raider_lines.append(f"<@{user_id}>")
+                if user_id in afk_possible_ids:
+                    raider_lines.append(f"💤 <@{user_id}> — AFK possible")
+                else:
+                    raider_lines.append(f"<@{user_id}>")
                 continue
             side = str(clan_member_sides.get(str(user_id)) or "").strip()
             side_suffix = f" - {side}" if side else ""
@@ -1584,6 +1667,9 @@ class Raid(commands.Cog):
     def build_scheduled_seed_embed(post: dict[str, object]) -> discord.Embed:
         initiator_id = int(post.get("initiator_id", 0))
         participant_ids = [int(user_id) for user_id in post.get("participants", [])]
+        afk_possible_ids = [
+            int(user_id) for user_id in post.get("afk_possible", [])
+        ]
         scheduled_for = datetime.fromisoformat(str(post["scheduled_for"]))
         if scheduled_for.tzinfo is None:
             scheduled_for = scheduled_for.replace(tzinfo=timezone.utc)
@@ -1593,11 +1679,17 @@ class Raid(commands.Cog):
         hidden_count = len(participant_ids) - len(visible)
         if hidden_count:
             interested_lines.append(f"…and {hidden_count} more")
+        visible_afk = afk_possible_ids[:MAX_VISIBLE_RAIDERS]
+        afk_lines = [f"<@{user_id}>" for user_id in visible_afk]
+        hidden_afk_count = len(afk_possible_ids) - len(visible_afk)
+        if hidden_afk_count:
+            afk_lines.append(f"…and {hidden_afk_count} more")
 
         embed = discord.Embed(
             title="🌱 7DR Seeding Interest",
             description=(
-                "7DR server seeding is planned. Tick **I'm Interested** if you expect to join. "
+                "7DR server seeding is planned. Choose **I'm Interested** if you expect to join, "
+                "or **AFK Possible** if you may be able to help while AFK. "
                 "At the scheduled time this post will automatically become the live seeding call."
             ),
             colour=discord.Colour.green(),
@@ -1614,7 +1706,14 @@ class Raid(commands.Cog):
             value="\n".join(interested_lines) or "No interest registered yet.",
             inline=False,
         )
-        embed.set_footer(text="Your interest will carry into the live seeding signup.")
+        embed.add_field(
+            name=f"AFK Possible ({len(afk_possible_ids)})",
+            value="\n".join(afk_lines) or "No AFK possibilities registered yet.",
+            inline=False,
+        )
+        embed.set_footer(
+            text="Choose one interest option; both groups carry into the live seeding signup."
+        )
         return embed
 
     async def _ongoing_raid_exists(self, stats_url: str, clan_name: str) -> bool:
@@ -1724,6 +1823,7 @@ class Raid(commands.Cog):
                 "announcement": "Register your interest for scheduled 7DR seeding.",
                 "stats_url": HOME_SERVER_STATS_URL,
                 "participants": [interaction.user.id],
+                "afk_possible": [],
                 "created_at": created_at.isoformat(),
                 "scheduled_for": scheduled_for.astimezone(timezone.utc).isoformat(),
                 "live_state": {},
@@ -1894,7 +1994,13 @@ class Raid(commands.Cog):
             self._save_posts()
         await interaction.followup.send("Raid post created.", ephemeral=True)
 
-    async def update_signup(self, interaction: discord.Interaction, *, joining: bool) -> None:
+    async def update_signup(
+        self,
+        interaction: discord.Interaction,
+        *,
+        joining: bool,
+        afk_possible: bool = False,
+    ) -> None:
         if interaction.message is None:
             await interaction.response.send_message("I could not identify this signup post.", ephemeral=True)
             return
@@ -1917,17 +2023,38 @@ class Raid(commands.Cog):
                 return
 
             participants = [int(user_id) for user_id in post.get("participants", [])]
-            if joining and interaction.user.id not in participants:
-                participants.append(interaction.user.id)
-                changed = True
-            elif not joining and interaction.user.id in participants:
-                participants.remove(interaction.user.id)
-                changed = True
+            afk_possible_ids = [
+                int(user_id) for user_id in post.get("afk_possible", [])
+            ]
+            user_id = interaction.user.id
+            scheduled = status == "scheduled_seed"
+
+            if scheduled and afk_possible:
+                if user_id in participants:
+                    participants.remove(user_id)
+                    changed = True
+                if user_id not in afk_possible_ids:
+                    afk_possible_ids.append(user_id)
+                    changed = True
+            elif joining:
+                if user_id in afk_possible_ids:
+                    afk_possible_ids.remove(user_id)
+                    changed = True
+                if user_id not in participants:
+                    participants.append(user_id)
+                    changed = True
+            else:
+                if user_id in participants:
+                    participants.remove(user_id)
+                    changed = True
+                if user_id in afk_possible_ids:
+                    afk_possible_ids.remove(user_id)
+                    changed = True
 
             post["participants"] = participants
+            post["afk_possible"] = afk_possible_ids
             if changed:
                 self._save_posts()
-            scheduled = status == "scheduled_seed"
             embed = (
                 self.build_scheduled_seed_embed(post)
                 if scheduled
@@ -1945,7 +2072,13 @@ class Raid(commands.Cog):
                 await interaction.followup.send("Your signup was saved, but I could not refresh the embed.", ephemeral=True)
                 return
 
-        if joining and scheduled:
+        if joining and scheduled and afk_possible:
+            response = (
+                "You are registered as **AFK Possible** for this seed."
+                if changed
+                else "You are already registered as **AFK Possible**."
+            )
+        elif joining and scheduled:
             response = (
                 "Your seeding interest is registered."
                 if changed
