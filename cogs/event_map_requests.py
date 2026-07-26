@@ -440,6 +440,13 @@ class EventMapRequests(commands.Cog):
         backend_message = str(request.get("backend_message") or "").strip()
         if backend_message:
             embed.add_field(name="Bifrost", value=backend_message[:1024], inline=False)
+        backend_error = str(request.get("backend_error") or "").strip()
+        if backend_error:
+            embed.add_field(
+                name="Last Bifrost error",
+                value=f"`{backend_error[:1000]}`",
+                inline=False,
+            )
         image_url = str(request.get("image_url") or "").strip()
         if image_url.startswith("https://"):
             embed.set_thumbnail(url=image_url)
@@ -659,6 +666,8 @@ class EventMapRequests(commands.Cog):
                 )
                 return
             request["status"] = "processing" if approved else "denied"
+            request.pop("backend_error", None)
+            request.pop("backend_error_at", None)
             if not approved:
                 request["resolved_by"] = interaction.user.id
                 request["resolved_at"] = datetime.now(timezone.utc).isoformat()
@@ -668,19 +677,38 @@ class EventMapRequests(commands.Cog):
             try:
                 result = await self._backend().change_map(str(request["rcon_name"]))
             except (HLLBackendError, KeyError) as exc:
+                error_message = str(exc) or type(exc).__name__
                 async with self._request_lock:
                     current = self._requests.get(message_key)
                     if isinstance(current, dict) and current.get("status") == "processing":
                         current["status"] = "pending"
+                        current["backend_error"] = error_message
+                        current["backend_error_at"] = datetime.now(timezone.utc).isoformat()
                         atomic_json_dump(
                             REQUEST_STATE_PATH,
                             self._requests,
                             indent=2,
                             ensure_ascii=False,
                         )
-                LOGGER.warning("Events server map change failed: %s", exc)
+                LOGGER.exception(
+                    "Events server map change failed request_id=%s map_rcon_name=%s: %s",
+                    message_key,
+                    request.get("rcon_name"),
+                    error_message,
+                )
+                try:
+                    await interaction.message.edit(
+                        embed=self._request_embed(request),
+                        view=self._approval_view,
+                        allowed_mentions=discord.AllowedMentions.none(),
+                    )
+                except discord.HTTPException:
+                    LOGGER.exception(
+                        "Could not display Bifrost failure on event map request %s",
+                        message_key,
+                    )
                 await interaction.followup.send(
-                    f"Bifrost did not change the map: `{str(exc)[:1500]}`",
+                    f"Bifrost did not change the map: `{error_message[:1500]}`",
                     ephemeral=True,
                 )
                 return

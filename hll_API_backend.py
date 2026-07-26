@@ -426,9 +426,7 @@ class BifrostBackendClient:
             return access_token
 
     async def _graphql(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
-        access_token = await self._get_access_token()
-
-        def do_request() -> tuple[int, Any]:
+        def do_request(access_token: str) -> tuple[int, Any]:
             response = requests.post(
                 self.graphql_url,
                 headers={
@@ -441,11 +439,23 @@ class BifrostBackendClient:
             return response.status_code, _parse_response_payload(response)
 
         payload: Any = None
+        refreshed_expired_token = False
         for attempt in range(1, self.max_rate_limit_retries + 1):
+            access_token = await self._get_access_token()
             try:
-                status_code, payload = await asyncio.to_thread(do_request)
+                status_code, payload = await asyncio.to_thread(do_request, access_token)
             except requests.RequestException as exc:
                 raise HLLBackendError(f"Bifrost request failed: {exc}") from exc
+
+            # A cached token can be revoked or expire before its advertised
+            # lifetime. Refresh it once and replay only the rejected request;
+            # a 401 is returned before GraphQL executes the operation.
+            if status_code == 401 and not refreshed_expired_token:
+                logger.warning("bifrost_graphql_unauthorized refreshing_access_token")
+                self._access_token = None
+                self._access_token_expires_at = 0.0
+                refreshed_expired_token = True
+                continue
 
             if status_code == 429:
                 retry_after = _extract_retry_after_seconds(payload)
@@ -463,7 +473,9 @@ class BifrostBackendClient:
                 continue
 
             if status_code >= 400:
-                raise HLLBackendError(f"Bifrost request failed: {_extract_error_message(payload)}")
+                raise HLLBackendError(
+                    f"Bifrost HTTP {status_code}: {_extract_error_message(payload)}"
+                )
 
             if not isinstance(payload, dict):
                 raise HLLBackendError("Bifrost returned an unexpected response payload")
@@ -653,6 +665,11 @@ class BifrostBackendClient:
         normalized_name = str(map_rcon_name or "").strip()
         if not normalized_name:
             raise HLLBackendError("A map RCON name is required")
+        logger.info(
+            "bifrost_change_map_start server_id=%s map_rcon_name=%s",
+            self.server_id,
+            normalized_name,
+        )
         query = (
             "mutation GuildChangeMap($input: GuildChangeMapInput!) {"
             " guildChangeMap(input: $input) { success message error timestamp }"
@@ -671,6 +688,12 @@ class BifrostBackendClient:
         if not isinstance(payload, dict) or not payload.get("success"):
             raise HLLBackendError(_extract_error_message(payload))
         payload.setdefault("_provider", self.provider)
+        logger.info(
+            "bifrost_change_map_success server_id=%s map_rcon_name=%s message=%s",
+            self.server_id,
+            normalized_name,
+            payload.get("message"),
+        )
         return payload
 
     async def add_guild_member(

@@ -105,7 +105,7 @@ Slash commands: none.
 
 How to use: Members use the persistent panel in the configured request channel, page through and choose a base map, then choose its exact mode and time-of-day variant. Staff review the resulting request in the approval channel and press **Approve & Change Map** or **Deny**.
 
-Rules and notes: Approval immediately calls Bifrost's `guildChangeMap` mutation, so staff should confirm the requested variant before approving. Approvers must be administrators, have Manage Server, or hold the configured map-admin role. The events server is configured with `BIFROST_EVENTS_SERVER_ID`, falling back to `BIFROST_SERVER_ID2`. The map catalogue is sourced from Bifrost and cached for at least four hours to respect its rate limit.
+Rules and notes: Approval immediately calls Bifrost's `guildChangeMap` mutation, so staff should confirm the requested variant before approving. Approvers must be administrators, have Manage Server, or hold the configured map-admin role. Event map changes always target Bifrost server `d688d156-773e-47ed-94cf-94c407b41ea3`. The map catalogue is sourced from Bifrost and cached for at least four hours to respect its rate limit.
 
 ## `BirthdayCog.py`
 
