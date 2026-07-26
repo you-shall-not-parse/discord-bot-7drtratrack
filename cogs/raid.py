@@ -8,9 +8,10 @@ import random
 import re
 import socket
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 import discord
 import requests
@@ -34,6 +35,8 @@ CLAN_MEMBER_ROLE_NAME = "Basic Trained"
 RAID_INITIATOR_ROLE_NAMES = {"7DR-NCO", "7DR-SNCO"}
 RAID_COOLDOWN_BYPASS_ROLE_NAME = "Administration"
 GLOBAL_RAID_COOLDOWN_SECONDS = 5 * 60
+SCHEDULED_SEED_CHECK_SECONDS = 15
+MAX_SEED_SCHEDULE_DAYS = 7
 HOME_CLAN_NAME = "7DR"
 HOME_SERVER_STATS_URL = "https://frostbite.bifrostgaming.com/hll/leaderboards/servers/27f605bce0f7"
 HOME_SERVER_ANNOUNCEMENT = "7DR server is seeding! Hop in for VIP!"
@@ -47,6 +50,7 @@ MAX_STATS_RESPONSE_BYTES = 2 * 1024 * 1024
 BIFROST_SERVER_PATTERN = re.compile(r"/servers/([A-Za-z0-9-]+)", re.IGNORECASE)
 FROSTBITE_TOKEN_URL = "https://frostbite.bifrostgaming.com/api/keycloak/token"
 FROSTBITE_GRAPHQL_URL = "https://api.dev.bifrostgaming.com/graphql"
+UK_TIMEZONE = ZoneInfo("Europe/London")
 
 
 def _safe_text(value: str, *, markdown: bool = False) -> str:
@@ -67,6 +71,71 @@ def _valid_stats_url(value: str) -> bool:
         and parsed.username is None
         and parsed.password is None
     )
+
+
+def _parse_uk_seed_time(value: str) -> tuple[datetime | None, str | None]:
+    """Parse a member-entered UK time and return an aware UTC datetime."""
+    raw = " ".join(value.strip().split())
+    now_utc = datetime.now(timezone.utc)
+    now_uk = now_utc.astimezone(UK_TIMEZONE)
+    local_naive: datetime | None = None
+
+    time_match = re.fullmatch(
+        r"(?:(today|tomorrow)\s+)?([01]?\d|2[0-3])[:.]([0-5]\d)",
+        raw,
+        flags=re.IGNORECASE,
+    )
+    if time_match:
+        day_word, hour, minute = time_match.groups()
+        target_date = now_uk.date()
+        if day_word and day_word.casefold() == "tomorrow":
+            target_date += timedelta(days=1)
+        local_naive = datetime.combine(
+            target_date,
+            datetime.min.time(),
+        ).replace(hour=int(hour), minute=int(minute))
+        if day_word is None:
+            tentative = local_naive.replace(tzinfo=UK_TIMEZONE)
+            if tentative.astimezone(timezone.utc) <= now_utc:
+                local_naive += timedelta(days=1)
+    else:
+        for date_format in (
+            "%d/%m/%Y %H:%M",
+            "%d/%m/%y %H:%M",
+            "%Y-%m-%d %H:%M",
+        ):
+            try:
+                local_naive = datetime.strptime(raw, date_format)
+                break
+            except ValueError:
+                continue
+
+    if local_naive is None:
+        return None, (
+            "Use UK time in one of these formats: `19:30`, `today 19:30`, "
+            "`tomorrow 19:30`, or `27/07/2026 19:30`."
+        )
+
+    local_time = local_naive.replace(tzinfo=UK_TIMEZONE)
+    # A nonexistent clock time during the spring DST jump will not round-trip.
+    round_trip = (
+        local_time.astimezone(timezone.utc)
+        .astimezone(UK_TIMEZONE)
+        .replace(tzinfo=None)
+    )
+    if round_trip != local_naive:
+        return None, "That UK clock time does not exist because of the daylight-saving change."
+
+    scheduled_utc = local_time.astimezone(timezone.utc)
+    if scheduled_utc <= now_utc:
+        return None, "That time has already passed in the UK."
+    if scheduled_utc > now_utc + timedelta(days=MAX_SEED_SCHEDULE_DAYS):
+        return None, f"Scheduled seeds must be within the next {MAX_SEED_SCHEDULE_DAYS} days."
+    return scheduled_utc, None
+
+
+def _format_uk_time(value: datetime) -> str:
+    return value.astimezone(UK_TIMEZONE).strftime("%A %d %B %Y at %H:%M %Z")
 
 
 class RaidModal(discord.ui.Modal, title="Initiate Raid"):
@@ -180,13 +249,95 @@ class Seed7DRButton(discord.ui.Button):
                 ephemeral=True,
             )
             return
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.send_message(
+            "Would you like to seed immediately or schedule an interest post?",
+            view=SeedTimingView(),
+            ephemeral=True,
+        )
+
+
+class ScheduleSeedModal(discord.ui.Modal, title="Schedule 7DR Seeding"):
+    desired_time = discord.ui.TextInput(
+        label="Start time (UK time)",
+        placeholder="19:30 or tomorrow 19:30",
+        min_length=4,
+        max_length=40,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        cog = interaction.client.get_cog("Raid")
+        if not isinstance(cog, Raid):
+            await interaction.response.send_message("The raid tool is unavailable.", ephemeral=True)
+            return
+        if not cog.can_initiate_raid(interaction.user):
+            await interaction.response.send_message(
+                "Only members with the 7DR-NCO or 7DR-SNCO role can schedule seeding.",
+                ephemeral=True,
+            )
+            return
+
+        scheduled_for, error = _parse_uk_seed_time(self.desired_time.value)
+        if scheduled_for is None:
+            await interaction.response.send_message(error or "Invalid start time.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        await cog.create_scheduled_seed(interaction, scheduled_for=scheduled_for)
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
+        LOGGER.exception("Scheduled seed modal failed", exc_info=error)
+        message = "Something went wrong while scheduling the seed."
+        if interaction.response.is_done():
+            await interaction.followup.send(message, ephemeral=True)
+        else:
+            await interaction.response.send_message(message, ephemeral=True)
+
+
+class SeedTimingView(discord.ui.View):
+    def __init__(self) -> None:
+        super().__init__(timeout=180)
+
+    @discord.ui.button(label="Seed Now", emoji="🚀", style=discord.ButtonStyle.success)
+    async def seed_now(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        cog = interaction.client.get_cog("Raid")
+        if not isinstance(cog, Raid):
+            await interaction.response.send_message("The raid tool is unavailable.", ephemeral=True)
+            return
+        if not cog.can_initiate_raid(interaction.user):
+            await interaction.response.send_message(
+                "Only members with the 7DR-NCO or 7DR-SNCO role can initiate seeding.",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
         await cog.create_post(
             interaction,
             clan_name=HOME_CLAN_NAME,
             announcement=HOME_SERVER_ANNOUNCEMENT,
             stats_url=HOME_SERVER_STATS_URL,
         )
+
+    @discord.ui.button(label="Schedule Seed", emoji="🕒", style=discord.ButtonStyle.primary)
+    async def schedule_seed(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        cog = interaction.client.get_cog("Raid")
+        if not isinstance(cog, Raid):
+            await interaction.response.send_message("The raid tool is unavailable.", ephemeral=True)
+            return
+        if not cog.can_initiate_raid(interaction.user):
+            await interaction.response.send_message(
+                "Only members with the 7DR-NCO or 7DR-SNCO role can schedule seeding.",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_modal(ScheduleSeedModal())
 
 
 class RaidLauncherView(discord.ui.View):
@@ -262,13 +413,42 @@ class RaidSignupView(discord.ui.View):
                 ephemeral=True,
             )
             return
-        await interaction.response.defer(ephemeral=True)
-        await cog.create_post(
-            interaction,
-            clan_name=HOME_CLAN_NAME,
-            announcement=HOME_SERVER_ANNOUNCEMENT,
-            stats_url=HOME_SERVER_STATS_URL,
+        await interaction.response.send_message(
+            "Would you like to seed immediately or schedule an interest post?",
+            view=SeedTimingView(),
+            ephemeral=True,
         )
+
+
+class ScheduledSeedSignupView(discord.ui.View):
+    def __init__(self) -> None:
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="I'm Interested",
+        style=discord.ButtonStyle.success,
+        emoji="✅",
+        custom_id="raid:scheduled_seed_join",
+    )
+    async def join(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        cog = interaction.client.get_cog("Raid")
+        if not isinstance(cog, Raid):
+            await interaction.response.send_message("The raid tool is unavailable.", ephemeral=True)
+            return
+        await cog.update_signup(interaction, joining=True)
+
+    @discord.ui.button(
+        label="Withdraw",
+        style=discord.ButtonStyle.secondary,
+        emoji="↩️",
+        custom_id="raid:scheduled_seed_leave",
+    )
+    async def leave(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        cog = interaction.client.get_cog("Raid")
+        if not isinstance(cog, Raid):
+            await interaction.response.send_message("The raid tool is unavailable.", ephemeral=True)
+            return
+        await cog.update_signup(interaction, joining=False)
 
 
 class Raid(commands.Cog):
@@ -293,12 +473,15 @@ class Raid(commands.Cog):
         self._posts = self._load_posts()
         bot.add_view(RaidLauncherView())
         bot.add_view(RaidSignupView())
+        bot.add_view(ScheduledSeedSignupView())
         self._panel_task = bot.loop.create_task(self._ensure_panel())
         self._live_refresh_task = bot.loop.create_task(self._live_refresh_loop())
+        self._scheduled_seed_task = bot.loop.create_task(self._scheduled_seed_loop())
 
     def cog_unload(self) -> None:
         self._panel_task.cancel()
         self._live_refresh_task.cancel()
+        self._scheduled_seed_task.cancel()
 
     def _load_posts(self) -> dict[str, dict[str, object]]:
         if not STATE_PATH.exists():
@@ -306,7 +489,13 @@ class Raid(commands.Cog):
         try:
             with STATE_PATH.open("r", encoding="utf-8") as handle:
                 data = json.load(handle)
-            return data if isinstance(data, dict) else {}
+            if not isinstance(data, dict):
+                return {}
+            # A restart may have interrupted activation after the status lock was set.
+            for post in data.values():
+                if isinstance(post, dict) and post.get("status") == "activating_seed":
+                    post["status"] = "scheduled_seed"
+            return data
         except (OSError, json.JSONDecodeError):
             LOGGER.exception("Could not load %s; starting with empty raid state", STATE_PATH)
             return {}
@@ -1055,6 +1244,8 @@ class Raid(commands.Cog):
             now = datetime.now(timezone.utc)
             snapshot = list(self._posts.items())
             for message_id, post in snapshot:
+                if str(post.get("status") or "active") != "active":
+                    continue
                 try:
                     created_at = datetime.fromisoformat(str(post.get("created_at", "")))
                     if created_at.tzinfo is None:
@@ -1116,6 +1307,163 @@ class Raid(commands.Cog):
                 except Exception:
                     LOGGER.exception("Unexpected error refreshing raid message %s", message_id)
 
+    async def _scheduled_seed_loop(self) -> None:
+        await self.bot.wait_until_ready()
+        while not self.bot.is_closed():
+            now = datetime.now(timezone.utc)
+            due_message_ids: list[int] = []
+            for message_id, post in list(self._posts.items()):
+                if str(post.get("status") or "") != "scheduled_seed":
+                    continue
+                try:
+                    scheduled_for = datetime.fromisoformat(str(post.get("scheduled_for") or ""))
+                    if scheduled_for.tzinfo is None:
+                        scheduled_for = scheduled_for.replace(tzinfo=timezone.utc)
+                except ValueError:
+                    LOGGER.warning("Scheduled seed %s has an invalid start time", message_id)
+                    continue
+                if scheduled_for <= now:
+                    try:
+                        due_message_ids.append(int(message_id))
+                    except ValueError:
+                        continue
+
+            for message_id in due_message_ids:
+                try:
+                    await self._activate_scheduled_seed(message_id)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    LOGGER.exception("Unexpected error activating scheduled seed %s", message_id)
+
+            await asyncio.sleep(SCHEDULED_SEED_CHECK_SECONDS)
+
+    async def _activate_scheduled_seed(self, message_id: int) -> None:
+        message_key = str(message_id)
+        async with self._lock:
+            current = self._posts.get(message_key)
+            if current is None or str(current.get("status") or "") != "scheduled_seed":
+                return
+            current["status"] = "activating_seed"
+            self._save_posts()
+            post = dict(current)
+
+        channel_id = self._integer(post.get("channel_id"))
+        if channel_id is None:
+            await self._restore_scheduled_seed_status(message_key)
+            return
+
+        channel = self.bot.get_channel(channel_id)
+        if channel is None:
+            try:
+                channel = await self.bot.fetch_channel(channel_id)
+            except discord.NotFound:
+                await self._remove_scheduled_seed(message_key)
+                return
+            except (discord.Forbidden, discord.HTTPException):
+                await self._restore_scheduled_seed_status(message_key)
+                return
+        if not isinstance(channel, (discord.TextChannel, discord.Thread)):
+            await self._remove_scheduled_seed(message_key)
+            return
+
+        try:
+            message = await channel.fetch_message(message_id)
+        except discord.NotFound:
+            await self._remove_scheduled_seed(message_key)
+            LOGGER.info("Cancelled scheduled seed %s because its interest post was deleted", message_id)
+            return
+        except (discord.Forbidden, discord.HTTPException):
+            await self._restore_scheduled_seed_status(message_key)
+            return
+
+        try:
+            live_state = await self._fetch_live_state(
+                HOME_SERVER_STATS_URL,
+                self._integer(post.get("guild_id")),
+            )
+        except asyncio.CancelledError:
+            await self._restore_scheduled_seed_status(message_key)
+            raise
+        except Exception:
+            await self._restore_scheduled_seed_status(message_key)
+            LOGGER.exception("Could not fetch live state for scheduled seed %s", message_id)
+            return
+        participants = [int(user_id) for user_id in post.get("participants", [])]
+        for member_id in live_state.get("clan_member_ids", []):
+            detected_member_id = int(member_id)
+            if detected_member_id not in participants:
+                participants.append(detected_member_id)
+
+        activated_at = datetime.now(timezone.utc)
+        post.update(
+            {
+                "status": "active",
+                "announcement": HOME_SERVER_ANNOUNCEMENT,
+                "stats_url": HOME_SERVER_STATS_URL,
+                "participants": participants,
+                "created_at": activated_at.isoformat(),
+                "live_state": live_state,
+            }
+        )
+        if live_state.get("player_detection_available"):
+            post["detected_member_ids"] = [
+                int(member_id) for member_id in live_state.get("clan_member_ids", [])
+            ]
+        post.pop("scheduled_for", None)
+
+        try:
+            await message.edit(
+                content=None,
+                embed=self.build_post_embed(post),
+                view=RaidSignupView(),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        except discord.NotFound:
+            await self._remove_scheduled_seed(message_key)
+            return
+        except (discord.Forbidden, discord.HTTPException):
+            await self._restore_scheduled_seed_status(message_key)
+            return
+
+        async with self._lock:
+            current = self._posts.get(message_key)
+            if current is None or str(current.get("status") or "") != "activating_seed":
+                return
+            self._posts[message_key] = post
+            self._save_posts()
+
+        ping_everyone = self.everyone_ping_enabled()
+        start_content = (
+            f"🌱 {'@everyone ' if ping_everyone else ''}Scheduled 7DR seeding starts now! "
+            f"{message.jump_url}"
+        )
+        try:
+            await channel.send(
+                start_content,
+                allowed_mentions=discord.AllowedMentions(
+                    everyone=ping_everyone,
+                    users=False,
+                    roles=False,
+                    replied_user=False,
+                ),
+            )
+        except (discord.Forbidden, discord.HTTPException):
+            LOGGER.warning("Scheduled seed %s activated, but the start alert failed", message_id)
+        LOGGER.info("Activated scheduled 7DR seed %s", message_id)
+
+    async def _restore_scheduled_seed_status(self, message_key: str) -> None:
+        async with self._lock:
+            current = self._posts.get(message_key)
+            if current is not None and str(current.get("status") or "") == "activating_seed":
+                current["status"] = "scheduled_seed"
+                self._save_posts()
+
+    async def _remove_scheduled_seed(self, message_key: str) -> None:
+        async with self._lock:
+            if self._posts.pop(message_key, None) is not None:
+                self._save_posts()
+
     async def _purge_raid_message(self, message_id: int, post: dict[str, object]) -> None:
         channel_id = self._integer(post.get("channel_id"))
         if channel_id is not None:
@@ -1149,7 +1497,8 @@ class Raid(commands.Cog):
             description=(
                 "Start a new server raid call below. You will be asked for the clan, "
                 "an announcement, and an optional CRCON or Bifrost server stats link. "
-                "Once a clan link is saved, you can leave the link blank next time."
+                "Once a clan link is saved, you can leave the link blank next time.\n\n"
+                "Use **Seed 7DR** to seed immediately or schedule a UK-time interest post."
             ),
             colour=discord.Colour.red(),
         )
@@ -1231,6 +1580,43 @@ class Raid(commands.Cog):
         embed.set_footer(text="Click Join Raid to add your name.")
         return embed
 
+    @staticmethod
+    def build_scheduled_seed_embed(post: dict[str, object]) -> discord.Embed:
+        initiator_id = int(post.get("initiator_id", 0))
+        participant_ids = [int(user_id) for user_id in post.get("participants", [])]
+        scheduled_for = datetime.fromisoformat(str(post["scheduled_for"]))
+        if scheduled_for.tzinfo is None:
+            scheduled_for = scheduled_for.replace(tzinfo=timezone.utc)
+        unix_time = int(scheduled_for.timestamp())
+        visible = participant_ids[:MAX_VISIBLE_RAIDERS]
+        interested_lines = [f"<@{user_id}>" for user_id in visible]
+        hidden_count = len(participant_ids) - len(visible)
+        if hidden_count:
+            interested_lines.append(f"…and {hidden_count} more")
+
+        embed = discord.Embed(
+            title="🌱 7DR Seeding Interest",
+            description=(
+                "7DR server seeding is planned. Tick **I'm Interested** if you expect to join. "
+                "At the scheduled time this post will automatically become the live seeding call."
+            ),
+            colour=discord.Colour.green(),
+            timestamp=datetime.fromisoformat(str(post["created_at"])),
+        )
+        embed.add_field(
+            name="Starts",
+            value=f"{_format_uk_time(scheduled_for)}\n<t:{unix_time}:R>",
+            inline=True,
+        )
+        embed.add_field(name="Organised by", value=f"<@{initiator_id}>", inline=True)
+        embed.add_field(
+            name=f"Interested ({len(participant_ids)})",
+            value="\n".join(interested_lines) or "No interest registered yet.",
+            inline=False,
+        )
+        embed.set_footer(text="Your interest will carry into the live seeding signup.")
+        return embed
+
     async def _ongoing_raid_exists(self, stats_url: str, clan_name: str) -> bool:
         server_key = self._server_key(stats_url) if stats_url else ""
         clan_key = self._clan_key(clan_name)
@@ -1288,6 +1674,94 @@ class Raid(commands.Cog):
             return 0
         elapsed = (datetime.now(timezone.utc) - created_at).total_seconds()
         return max(0, int(GLOBAL_RAID_COOLDOWN_SECONDS - elapsed + 0.999))
+
+    async def create_scheduled_seed(
+        self,
+        interaction: discord.Interaction,
+        *,
+        scheduled_for: datetime,
+    ) -> None:
+        if not self.can_initiate_raid(interaction.user):
+            await interaction.followup.send(
+                "Only members with the 7DR-NCO or 7DR-SNCO role can schedule seeding.",
+                ephemeral=True,
+            )
+            return
+        if interaction.channel is None:
+            await interaction.followup.send(
+                "The seeding channel is unavailable.",
+                ephemeral=True,
+            )
+            return
+
+        async with self._creation_lock:
+            if await self._ongoing_raid_exists(HOME_SERVER_STATS_URL, HOME_CLAN_NAME):
+                await interaction.followup.send(
+                    "A 7DR seed or scheduled seeding post is already active.",
+                    ephemeral=True,
+                )
+                return
+            cooldown_remaining = (
+                0
+                if self.can_bypass_raid_cooldown(interaction.user)
+                else self._cooldown_remaining()
+            )
+            if cooldown_remaining:
+                minutes, seconds = divmod(cooldown_remaining, 60)
+                await interaction.followup.send(
+                    f"Raid calls have a global 5-minute cooldown. Try again in {minutes}:{seconds:02d}.",
+                    ephemeral=True,
+                )
+                return
+
+            created_at = datetime.now(timezone.utc)
+            post: dict[str, object] = {
+                "status": "scheduled_seed",
+                "guild_id": interaction.guild_id,
+                "channel_id": interaction.channel_id,
+                "initiator_id": interaction.user.id,
+                "clan_name": HOME_CLAN_NAME,
+                "announcement": "Register your interest for scheduled 7DR seeding.",
+                "stats_url": HOME_SERVER_STATS_URL,
+                "participants": [interaction.user.id],
+                "created_at": created_at.isoformat(),
+                "scheduled_for": scheduled_for.astimezone(timezone.utc).isoformat(),
+                "live_state": {},
+            }
+            ping_everyone = self.everyone_ping_enabled()
+            try:
+                message = await interaction.channel.send(
+                    content="@everyone" if ping_everyone else None,
+                    embed=self.build_scheduled_seed_embed(post),
+                    view=ScheduledSeedSignupView(),
+                    allowed_mentions=discord.AllowedMentions(
+                        everyone=ping_everyone,
+                        users=False,
+                        roles=False,
+                        replied_user=False,
+                    ),
+                )
+            except (discord.Forbidden, discord.HTTPException):
+                LOGGER.exception("Could not create scheduled 7DR seed interest post")
+                await interaction.followup.send(
+                    "Discord could not create the seeding interest post.",
+                    ephemeral=True,
+                )
+                return
+
+            post["message_id"] = message.id
+            async with self._lock:
+                self._posts[str(message.id)] = post
+                self._save_posts()
+            self._control_state["last_raid_created_at"] = created_at.isoformat()
+            self._save_control_state()
+
+        unix_time = int(scheduled_for.timestamp())
+        await interaction.followup.send(
+            f"Seeding interest post created for **{_format_uk_time(scheduled_for)}** "
+            f"(<t:{unix_time}:R>).",
+            ephemeral=True,
+        )
 
     async def create_post(
         self,
@@ -1434,6 +1908,13 @@ class Raid(commands.Cog):
             if post is None:
                 await interaction.followup.send("This raid post is no longer active.", ephemeral=True)
                 return
+            status = str(post.get("status") or "active")
+            if status == "activating_seed":
+                await interaction.followup.send(
+                    "This scheduled seed is starting now. Please try the live signup in a moment.",
+                    ephemeral=True,
+                )
+                return
 
             participants = [int(user_id) for user_id in post.get("participants", [])]
             if joining and interaction.user.id not in participants:
@@ -1446,17 +1927,37 @@ class Raid(commands.Cog):
             post["participants"] = participants
             if changed:
                 self._save_posts()
-            embed = self.build_post_embed(post)
+            scheduled = status == "scheduled_seed"
+            embed = (
+                self.build_scheduled_seed_embed(post)
+                if scheduled
+                else self.build_post_embed(post)
+            )
+            view: discord.ui.View = (
+                ScheduledSeedSignupView() if scheduled else RaidSignupView()
+            )
 
         if changed:
             try:
-                await interaction.message.edit(embed=embed, view=RaidSignupView())
+                await interaction.message.edit(embed=embed, view=view)
             except discord.HTTPException:
                 LOGGER.exception("Could not update raid message %s", message_id)
                 await interaction.followup.send("Your signup was saved, but I could not refresh the embed.", ephemeral=True)
                 return
 
-        if joining:
+        if joining and scheduled:
+            response = (
+                "Your seeding interest is registered."
+                if changed
+                else "You are already registered as interested."
+            )
+        elif not joining and scheduled:
+            response = (
+                "Your seeding interest has been withdrawn."
+                if changed
+                else "You were not registered as interested."
+            )
+        elif joining:
             response = "You have joined this raid." if changed else "You are already on this raid."
         else:
             response = "You have left this raid." if changed else "You were not signed up for this raid."

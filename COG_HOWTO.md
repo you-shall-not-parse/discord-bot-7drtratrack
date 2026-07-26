@@ -267,6 +267,16 @@ How to use: In the role directory channel, choose one HLL rank and/or one play s
 
 Rules and notes: Existing roles are left untouched when the cog starts. A category changes only when that member uses its menu. Each category is exclusive, so choosing a new option replaces any other configured role in that category. The bot needs `Manage Roles`, and its top role must be above every role managed by the selector.
 
+## `raid.py`
+
+Overview: Creates raid calls and manages immediate or scheduled 7DR server seeding.
+
+Slash commands: `/raideveryone on`, `/raideveryone off`.
+
+How to use: Use **Initiate Raid** for another clan server. Use **Seed 7DR**, then choose **Seed Now** for an immediate live post or **Schedule Seed** to enter a UK start time. Scheduled posts collect interest through buttons and automatically become live seed posts at the selected time.
+
+Rules and notes: Scheduled times accept `19:30`, `today 19:30`, `tomorrow 19:30`, or a full date such as `27/07/2026 19:30`, all interpreted in the Europe/London timezone. A time without a date means the next occurrence of that time. Schedules persist across restarts, must be within seven days, and carry interested members into the live signup. Only 7DR-NCO and 7DR-SNCO members can initiate or schedule seeding.
+
 ## `hellorleaderboard.py`
 
 Overview: Builds and posts the `hellor.pro` leaderboard for the configured Discord role.
