@@ -22,6 +22,7 @@ APPROVAL_CHANNEL_ID = 1279831955935854712
 MAP_APPROVER_ROLE_ID = 1279832920479109160
 EVENTS_BACKEND_NAME = "events"
 MAP_CACHE_MAX_AGE = timedelta(hours=4)
+SELECT_PAGE_SIZE = 25
 
 PANEL_STATE_PATH = Path(data_path("event_map_request_panel.json"))
 REQUEST_STATE_PATH = Path(data_path("event_map_requests.json"))
@@ -95,17 +96,23 @@ class BaseMapSelect(discord.ui.Select):
         self,
         cog: "EventMapRequests",
         maps_by_name: dict[str, list[dict[str, str]]],
+        page: int,
     ) -> None:
         self.cog = cog
         self.maps_by_name = maps_by_name
         self.base_names = sorted(maps_by_name, key=str.casefold)
+        page_start = page * SELECT_PAGE_SIZE
+        page_end = page_start + SELECT_PAGE_SIZE
         options = [
             discord.SelectOption(
                 label=name[:100],
                 value=str(index),
                 description=f"{len(maps_by_name[name])} available variant(s)"[:100],
             )
-            for index, name in enumerate(self.base_names[:25])
+            for index, name in enumerate(
+                self.base_names[page_start:page_end],
+                start=page_start,
+            )
         ]
         super().__init__(
             placeholder="Choose a map…",
@@ -119,8 +126,8 @@ class BaseMapSelect(discord.ui.Select):
         base_name = self.base_names[index]
         variants = self.maps_by_name[base_name]
         await interaction.response.edit_message(
-            content=f"Choose the exact **{discord.utils.escape_markdown(base_name)}** variant:",
-            view=MapVariantView(self.cog, variants),
+            content=MapVariantView.prompt(base_name, variants, page=0),
+            view=MapVariantView(self.cog, base_name, variants, page=0),
         )
 
 
@@ -129,9 +136,62 @@ class BaseMapView(discord.ui.View):
         self,
         cog: "EventMapRequests",
         maps_by_name: dict[str, list[dict[str, str]]],
+        *,
+        page: int = 0,
     ) -> None:
         super().__init__(timeout=180)
-        self.add_item(BaseMapSelect(cog, maps_by_name))
+        self.cog = cog
+        self.maps_by_name = maps_by_name
+        self.page_count = max(
+            1,
+            (len(maps_by_name) + SELECT_PAGE_SIZE - 1) // SELECT_PAGE_SIZE,
+        )
+        self.page = max(0, min(page, self.page_count - 1))
+        self.add_item(BaseMapSelect(cog, maps_by_name, self.page))
+        self.previous_page.disabled = self.page == 0
+        self.next_page.disabled = self.page >= self.page_count - 1
+
+    @staticmethod
+    def prompt(maps_by_name: dict[str, list[dict[str, str]]], page: int) -> str:
+        page_count = max(
+            1,
+            (len(maps_by_name) + SELECT_PAGE_SIZE - 1) // SELECT_PAGE_SIZE,
+        )
+        return f"Choose the base map you would like to request — page {page + 1}/{page_count}:"
+
+    @discord.ui.button(
+        label="Previous",
+        emoji="⬅️",
+        style=discord.ButtonStyle.secondary,
+        row=1,
+    )
+    async def previous_page(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        page = max(0, self.page - 1)
+        await interaction.response.edit_message(
+            content=self.prompt(self.maps_by_name, page),
+            view=BaseMapView(self.cog, self.maps_by_name, page=page),
+        )
+
+    @discord.ui.button(
+        label="Next",
+        emoji="➡️",
+        style=discord.ButtonStyle.secondary,
+        row=1,
+    )
+    async def next_page(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        page = min(self.page_count - 1, self.page + 1)
+        await interaction.response.edit_message(
+            content=self.prompt(self.maps_by_name, page),
+            view=BaseMapView(self.cog, self.maps_by_name, page=page),
+        )
 
 
 class MapVariantSelect(discord.ui.Select):
@@ -139,11 +199,17 @@ class MapVariantSelect(discord.ui.Select):
         self,
         cog: "EventMapRequests",
         variants: list[dict[str, str]],
+        page: int,
     ) -> None:
         self.cog = cog
         self.variants = variants
+        page_start = page * SELECT_PAGE_SIZE
+        page_end = page_start + SELECT_PAGE_SIZE
         options = []
-        for index, map_data in enumerate(variants[:25]):
+        for index, map_data in enumerate(
+            variants[page_start:page_end],
+            start=page_start,
+        ):
             label = _variant_label(map_data)
             description = map_data["rcon_name"]
             factions = " vs ".join(
@@ -176,10 +242,79 @@ class MapVariantView(discord.ui.View):
     def __init__(
         self,
         cog: "EventMapRequests",
+        base_name: str,
         variants: list[dict[str, str]],
+        *,
+        page: int = 0,
     ) -> None:
         super().__init__(timeout=180)
-        self.add_item(MapVariantSelect(cog, variants))
+        self.cog = cog
+        self.base_name = base_name
+        self.variants = variants
+        self.page_count = max(
+            1,
+            (len(variants) + SELECT_PAGE_SIZE - 1) // SELECT_PAGE_SIZE,
+        )
+        self.page = max(0, min(page, self.page_count - 1))
+        self.add_item(MapVariantSelect(cog, variants, self.page))
+        self.previous_page.disabled = self.page == 0
+        self.next_page.disabled = self.page >= self.page_count - 1
+
+    @staticmethod
+    def prompt(base_name: str, variants: list[dict[str, str]], page: int) -> str:
+        page_count = max(
+            1,
+            (len(variants) + SELECT_PAGE_SIZE - 1) // SELECT_PAGE_SIZE,
+        )
+        escaped_name = discord.utils.escape_markdown(base_name)
+        return (
+            f"Choose the exact **{escaped_name}** variant "
+            f"— page {page + 1}/{page_count}:"
+        )
+
+    @discord.ui.button(
+        label="Previous",
+        emoji="⬅️",
+        style=discord.ButtonStyle.secondary,
+        row=1,
+    )
+    async def previous_page(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        page = max(0, self.page - 1)
+        await interaction.response.edit_message(
+            content=self.prompt(self.base_name, self.variants, page),
+            view=MapVariantView(
+                self.cog,
+                self.base_name,
+                self.variants,
+                page=page,
+            ),
+        )
+
+    @discord.ui.button(
+        label="Next",
+        emoji="➡️",
+        style=discord.ButtonStyle.secondary,
+        row=1,
+    )
+    async def next_page(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        page = min(self.page_count - 1, self.page + 1)
+        await interaction.response.edit_message(
+            content=self.prompt(self.base_name, self.variants, page),
+            view=MapVariantView(
+                self.cog,
+                self.base_name,
+                self.variants,
+                page=page,
+            ),
+        )
 
 
 class MapApprovalView(discord.ui.View):
@@ -427,15 +562,9 @@ class EventMapRequests(commands.Cog):
         maps_by_name: dict[str, list[dict[str, str]]] = {}
         for map_data in maps:
             maps_by_name.setdefault(map_data["friendly_name"], []).append(map_data)
-        if len(maps_by_name) > 25:
-            await interaction.followup.send(
-                "The map catalogue currently exceeds Discord's selector limit. Please contact staff.",
-                ephemeral=True,
-            )
-            return
         await interaction.followup.send(
-            "Choose the base map you would like to request:",
-            view=BaseMapView(self, maps_by_name),
+            BaseMapView.prompt(maps_by_name, page=0),
+            view=BaseMapView(self, maps_by_name, page=0),
             ephemeral=True,
         )
 
