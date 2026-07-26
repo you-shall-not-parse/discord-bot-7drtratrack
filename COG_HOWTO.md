@@ -257,6 +257,16 @@ How to use: Use `/applyroletomessage` with the message link, the exact emoji, an
 
 Rules and notes: This is an admin/staff tool, not a self-serve reaction-role system. The bot needs `Manage Roles`, and its top role must be above the target role. Use the exact message link and exact emoji or it will not match the intended reaction set.
 
+## `reaction_roles.py`
+
+Overview: Replaces the HLL rank and infantry play-style reaction posts with one persistent role directory and two dropdown menus.
+
+Slash commands: none.
+
+How to use: In the role directory channel, choose one HLL rank and/or one play style. Choose the remove option in a menu to clear that category.
+
+Rules and notes: Existing roles are left untouched when the cog starts. A category changes only when that member uses its menu. Each category is exclusive, so choosing a new option replaces any other configured role in that category. The bot needs `Manage Roles`, and its top role must be above every role managed by the selector.
+
 ## `hellorleaderboard.py`
 
 Overview: Builds and posts the `hellor.pro` leaderboard for the configured Discord role.

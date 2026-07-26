@@ -40,6 +40,7 @@ EXTENSIONS = (
     "cogs.hellorleaderboard",
     "cogs.docsync",
     "cogs.supporters_embed",
+    "cogs.reaction_roles",
     "cogs.raid",
 )
 
