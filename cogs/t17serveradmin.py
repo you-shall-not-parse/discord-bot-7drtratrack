@@ -170,6 +170,48 @@ class T17ServerAdmin(commands.Cog, name="[API] T17ServerAdmin"):
         normalized = self.lookup.normalize_discord_username(member.display_name, strip_rank_prefix=True)
         return normalized or member.display_name
 
+    async def grant_temporary_admin_cam(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        member_display_name: str,
+        player_id: str,
+        description: str,
+        server_name: str,
+        server_label: str,
+        source: str,
+        queries: list[str],
+        duration_hours: int,
+        granted_by_id: int,
+        granted_by_name: str,
+    ) -> dict[str, Any]:
+        duration = max(1, min(168, int(duration_hours)))
+        await self._add_admin_cam(server_name, player_id, description)
+
+        expires_at = time.time() + (duration * 3600)
+        grant = {
+            "guild_id": guild_id,
+            "user_id": user_id,
+            "member_display_name": member_display_name,
+            "player_id": player_id,
+            "role": ADMIN_CAM_ROLE,
+            "description": description,
+            "server_name": server_name,
+            "server_label": server_label,
+            "source": source,
+            "queries": queries,
+            "duration_hours": duration,
+            "created_at": time.time(),
+            "expires_at": expires_at,
+            "granted_by_id": granted_by_id,
+            "granted_by_name": granted_by_name,
+        }
+        grant_key = self._grant_key(guild_id, user_id, server_name)
+        self._upsert_grant(grant)
+        self._schedule_removal(grant_key)
+        return grant
+
     @app_commands.command(name="hll_backend_status", description="Show the active HLL backend configuration status.")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.guild_only()
@@ -246,7 +288,20 @@ class T17ServerAdmin(commands.Cog, name="[API] T17ServerAdmin"):
         description = self._description_for_member(member, queries)
 
         try:
-            await self._add_admin_cam(selected_server, t17_id, description)
+            grant = await self.grant_temporary_admin_cam(
+                guild_id=interaction.guild.id,
+                user_id=member.id,
+                member_display_name=member.display_name,
+                player_id=t17_id,
+                description=description,
+                server_name=selected_server,
+                server_label=server.name,
+                source=source,
+                queries=queries,
+                duration_hours=int(duration_hours),
+                granted_by_id=interaction.user.id,
+                granted_by_name=getattr(interaction.user, "display_name", str(interaction.user)),
+            )
         except HLLBackendError as exc:
             self.logger.exception(
                 "t17admincam_add_failed server=%s member_id=%s t17_id=%s error=%s",
@@ -268,35 +323,13 @@ class T17ServerAdmin(commands.Cog, name="[API] T17ServerAdmin"):
             await interaction.followup.send(f"Failed to grant Spectator admin cam: {exc}", ephemeral=True)
             return
 
-        expires_at = time.time() + (int(duration_hours) * 3600)
-        grant = {
-            "guild_id": interaction.guild.id,
-            "user_id": member.id,
-            "member_display_name": member.display_name,
-            "player_id": t17_id,
-            "role": ADMIN_CAM_ROLE,
-            "description": description,
-            "server_name": selected_server,
-            "server_label": server.name,
-            "source": source,
-            "queries": queries,
-            "duration_hours": int(duration_hours),
-            "created_at": time.time(),
-            "expires_at": expires_at,
-            "granted_by_id": interaction.user.id,
-            "granted_by_name": getattr(interaction.user, "display_name", str(interaction.user)),
-        }
-        grant_key = self._grant_key(interaction.guild.id, member.id, selected_server)
-        self._upsert_grant(grant)
-        self._schedule_removal(grant_key)
-
         await interaction.followup.send(
             f"Granted {ADMIN_CAM_ROLE} admin cam to {member.mention}.\n"
             f"Server: **{server.name}**\n"
             f"T17 ID: `{t17_id}`\n"
             f"Description sent to backend: `{description}`\n"
             f"Resolved via: `{source}`\n"
-            f"Expires: <t:{int(expires_at)}:F> (<t:{int(expires_at)}:R>)",
+            f"Expires: <t:{int(grant['expires_at'])}:F> (<t:{int(grant['expires_at'])}:R>)",
         )
 
     @t17admincam.error
