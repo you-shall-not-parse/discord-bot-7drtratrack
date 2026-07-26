@@ -566,13 +566,15 @@ class EventMapRequests(commands.Cog):
 
     def build_panel_embed(self) -> discord.Embed:
         embed = discord.Embed(
-            title="Request an Events Server Map",
+            title="7DR Map & Admin Cam Requests",
             colour=discord.Colour.blue(),
             description=(
-                "Request a map for the 7DR events server. Choose the map, mode, and time-of-day "
-                "variant, or request temporary admin cam access, using the buttons below.\n\n"
-                "Your request is sent to staff for approval. If approved, the events server changes "
-                "to that map immediately or grants temporary Spectator access."
+                "Use this panel to request a scouting map on the 7DR **Events Server**, or "
+                "temporary admin cam access on the **Events** or **Public** server.\n\n"
+                "For a map request, choose the map, game mode, and time-of-day variant. "
+                "For admin cam, choose the server and how long you need access.\n\n"
+                "Every request requires staff approval. Approved maps change immediately, "
+                "while approved admin cam requests receive temporary Spectator access."
             ),
         )
         decision_lines = self._recent_decision_lines()
