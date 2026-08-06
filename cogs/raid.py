@@ -824,6 +824,12 @@ class Raid(commands.Cog):
                         break
 
                 side = ""
+                if isinstance(raw_side, dict):
+                    raw_side = (
+                        raw_side.get("side")
+                        or raw_side.get("team")
+                        or raw_side.get("name")
+                    )
                 side_text = str(raw_side or "").strip()
                 side_key = side_text.casefold()
                 if allied_faction is not None and side_text == str(allied_faction):
@@ -935,29 +941,60 @@ class Raid(commands.Cog):
         self,
         game_payload: dict[str, object],
         scoreboard_payload: dict[str, object] | None,
+        public_info_payload: dict[str, object] | None = None,
     ) -> dict[str, object] | None:
         game_data: object = game_payload.get("result", game_payload)
         scoreboard_data: object = (
             scoreboard_payload.get("result", scoreboard_payload) if scoreboard_payload else None
         )
+        public_info_data: object = (
+            public_info_payload.get("result", public_info_payload)
+            if public_info_payload
+            else None
+        )
 
         map_value = self._first_nested_value(
-            game_data,
+            public_info_data if public_info_data is not None else game_data,
             ("current_map", "currentMap", "map_name", "mapName", "map"),
         )
         map_name = self._map_name(map_value)
+        if map_name is None and public_info_data is not None:
+            map_name = self._map_name(
+                self._first_nested_value(
+                    game_data,
+                    ("current_map", "currentMap", "map_name", "mapName", "map"),
+                )
+            )
 
         players = self._integer(
             self._first_nested_value(
-                game_data,
-                ("player_count", "playerCount", "num_players", "current_players"),
+                public_info_data if public_info_data is not None else game_data,
+                (
+                    "player_count",
+                    "playerCount",
+                    "num_players",
+                    "current_players",
+                ),
             )
         )
+        if players is None:
+            players = self._integer(
+                self._first_nested_value(
+                    game_data,
+                    ("player_count", "playerCount", "num_players", "current_players"),
+                )
+            )
         allied = self._integer(
-            self._first_nested_value(game_data, ("num_allied_players", "allied_players"))
+            self._first_nested_value(
+                public_info_data if public_info_data is not None else game_data,
+                ("num_allied_players", "allied_players", "allied"),
+            )
         )
         axis = self._integer(
-            self._first_nested_value(game_data, ("num_axis_players", "axis_players"))
+            self._first_nested_value(
+                public_info_data if public_info_data is not None else game_data,
+                ("num_axis_players", "axis_players", "axis"),
+            )
         )
         if players is None and allied is not None and axis is not None:
             players = allied + axis
@@ -995,7 +1032,7 @@ class Raid(commands.Cog):
         player_records = self._player_records_from_list(player_list)
         time_remaining_seconds = self._duration_seconds(
             self._first_nested_value(
-                game_data,
+                public_info_data if public_info_data is not None else game_data,
                 (
                     "remaining_seconds",
                     "remainingSeconds",
@@ -1009,8 +1046,14 @@ class Raid(commands.Cog):
 
         max_players = self._integer(
             self._first_nested_value(
-                game_data,
-                ("max_players", "maxPlayers", "player_slots", "slots"),
+                public_info_data if public_info_data is not None else game_data,
+                (
+                    "max_players",
+                    "maxPlayers",
+                    "max_player_count",
+                    "player_slots",
+                    "slots",
+                ),
             )
         )
         if map_name is None and players is None:
@@ -1035,14 +1078,20 @@ class Raid(commands.Cog):
         origin = f"{parsed.scheme}://{parsed.netloc}{prefix.rstrip('/')}"
         game_url = f"{origin}/api/get_live_game_stats"
         scoreboard_url = f"{origin}/api/get_live_scoreboard"
+        public_info_url = f"{origin}/api/get_public_info"
 
-        game_payload, scoreboard_payload = await asyncio.gather(
+        game_payload, scoreboard_payload, public_info_payload = await asyncio.gather(
             self._fetch_public_json(game_url),
             self._fetch_public_json(scoreboard_url),
+            self._fetch_public_json(public_info_url),
         )
-        if game_payload is None:
+        if game_payload is None and scoreboard_payload is None and public_info_payload is None:
             return None
-        return self._parse_crcon_live_state(game_payload, scoreboard_payload)
+        return self._parse_crcon_live_state(
+            game_payload or {},
+            scoreboard_payload,
+            public_info_payload,
+        )
 
     async def _get_frostbite_service_token(self) -> str:
         now = time.time()
