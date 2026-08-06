@@ -727,6 +727,20 @@ class Raid(commands.Cog):
         return None
 
     @staticmethod
+    def _first_nested_list(payload: object, keys: tuple[str, ...]) -> list[object] | None:
+        """Find a named list while preserving an empty list as valid data."""
+        if isinstance(payload, dict):
+            for key in keys:
+                value = payload.get(key)
+                if isinstance(value, list):
+                    return value
+            for value in payload.values():
+                found = Raid._first_nested_list(value, keys)
+                if found is not None:
+                    return found
+        return None
+
+    @staticmethod
     def _map_name(value: object) -> str | None:
         if isinstance(value, str):
             return value.strip() or None
@@ -948,6 +962,24 @@ class Raid(commands.Cog):
         if players is None and allied is not None and axis is not None:
             players = allied + axis
 
+        player_list = None
+        if scoreboard_data is not None:
+            player_list = self._first_nested_list(
+                scoreboard_data,
+                ("players", "player_stats", "stats"),
+            )
+        if not isinstance(player_list, list):
+            # Current CRCON versions expose the same ``stats`` player array on
+            # get_live_game_stats as well as get_live_scoreboard.  Using it as
+            # a fallback also keeps detection working when the scoreboard
+            # endpoint is disabled or temporarily unavailable.
+            game_player_list = self._first_nested_list(
+                game_data,
+                ("players", "player_stats", "stats"),
+            )
+            if isinstance(game_player_list, list):
+                player_list = game_player_list
+
         if players is None and scoreboard_data is not None:
             players = self._integer(
                 self._first_nested_value(
@@ -956,15 +988,10 @@ class Raid(commands.Cog):
                 )
             )
             if players is None:
-                player_list = self._first_nested_value(scoreboard_data, ("players", "player_stats"))
                 if isinstance(player_list, list):
                     players = len(player_list)
-
-        player_list = (
-            self._first_nested_value(scoreboard_data, ("players", "player_stats"))
-            if scoreboard_data is not None
-            else None
-        )
+        if players is None and isinstance(player_list, list):
+            players = len(player_list)
         player_records = self._player_records_from_list(player_list)
         time_remaining_seconds = self._duration_seconds(
             self._first_nested_value(
