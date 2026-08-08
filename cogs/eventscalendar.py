@@ -474,12 +474,25 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
         title: str,
         occurrence_start: Optional[datetime],
     ) -> discord.Embed:
+        calendar_channel_url = None
+        if scheduled_event.guild_id:
+            calendar_channel_url = (
+                f"https://discord.com/channels/{scheduled_event.guild_id}/{EVENT_DISPLAY_CHANNEL_ID}"
+            )
+
         embed = discord.Embed(
             title="New Event Added to Calendar!",
+            url=calendar_channel_url,
             colour=discord.Colour.blurple(),
             timestamp=datetime.now(timezone.utc),
         )
-        embed.description = f"**{title}**"
+        event_url = str(scheduled_event.url) if getattr(scheduled_event, "url", None) else None
+        title_text = f"[{title}]({event_url})" if event_url else title
+        description_links = [f"**{title_text}**"]
+        google_calendar_url = self._build_google_calendar_url(scheduled_event)
+        if google_calendar_url:
+            description_links.append(f"[Google Calendar]({google_calendar_url})")
+        embed.description = " · ".join(description_links)
         embed.add_field(
             name="Date / Time",
             value=self._format_event_datetime_text(
@@ -494,11 +507,6 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
         elif getattr(scheduled_event, "creator_id", None):
             organiser = f"<@{scheduled_event.creator_id}>"
         embed.add_field(name="Added By", value=organiser, inline=False)
-        if getattr(scheduled_event, "url", None):
-            embed.add_field(name="Event Link", value=f"[View Discord Event]({scheduled_event.url})", inline=True)
-        google_calendar_url = self._build_google_calendar_url(scheduled_event)
-        if google_calendar_url:
-            embed.add_field(name="Google Calendar", value=f"[Add to Google Calendar]({google_calendar_url})", inline=True)
         embed.set_image(url=f"attachment://{EVENT_NOTIFICATION_FILENAME}")
         embed.set_footer(text="Event details update automatically until the event has ended")
         return embed

@@ -18,6 +18,7 @@ class EventCalendarNotificationTests(unittest.IsolatedAsyncioTestCase):
     def _event(self) -> SimpleNamespace:
         return SimpleNamespace(
             id=1535370648119943168,
+            guild_id=1097913605082579024,
             name="TAF Round 3: 7DR Vs OFIN",
             description=(
                 "Aiming for 50s, possible 40s\n"
@@ -35,7 +36,7 @@ class EventCalendarNotificationTests(unittest.IsolatedAsyncioTestCase):
             url="https://discord.com/events/1097913605082579024/1535370648119943168",
         )
 
-    def test_notification_embed_contains_title_details_and_compact_links(self) -> None:
+    def test_notification_embed_contains_compact_title_links(self) -> None:
         event = self._event()
         guild = SimpleNamespace(emojis=[])
         title = self.cog._format_event_title(guild, event.name)
@@ -49,14 +50,19 @@ class EventCalendarNotificationTests(unittest.IsolatedAsyncioTestCase):
         fields = {field["name"]: field["value"] for field in payload["fields"]}
 
         self.assertEqual(payload["title"], "New Event Added to Calendar!")
-        self.assertIn("TAF Round 3: 7DR :7DR: Vs OFIN :flag_fi:", payload["description"])
+        self.assertEqual(
+            payload["url"],
+            "https://discord.com/channels/1097913605082579024/1332736267485708419",
+        )
+        self.assertIn("[TAF Round 3: 7DR :7DR: Vs OFIN :flag_fi:](https://discord.com/events/", payload["description"])
+        self.assertIn("[Google Calendar](https://calendar.google.com/", payload["description"])
         self.assertNotIn("Aiming for 50s, possible 40s", payload["description"])
         self.assertEqual(fields["Date / Time"], "30 Aug 2026  |  19:00 - 20:00 UTC")
         self.assertNotIn("Location", fields)
         self.assertNotIn("Channel", fields)
         self.assertEqual(fields["Added By"], "<@1234>")
-        self.assertTrue(fields["Event Link"].startswith("[View Discord Event]("))
-        self.assertTrue(fields["Google Calendar"].startswith("[Add to Google Calendar]("))
+        self.assertNotIn("Event Link", fields)
+        self.assertNotIn("Google Calendar", fields)
         self.assertNotIn("Discussion Thread", fields)
 
     def test_updates_stop_at_event_end(self) -> None:
