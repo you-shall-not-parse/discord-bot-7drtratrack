@@ -688,9 +688,7 @@ class ReactionRoles(commands.Cog):
                     if message.author != self.bot.user or not message.embeds:
                         continue
                     if message.embeds[0].title == "🎂 Birthday Manager 🎂":
-                        await message.delete(
-                            reason="Birthday manager was merged into the reaction-role directory."
-                        )
+                        await message.delete()
             except (discord.Forbidden, discord.HTTPException):
                 logger.exception("Could not remove the legacy birthday-manager message.")
 

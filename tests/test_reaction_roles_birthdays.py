@@ -1,6 +1,7 @@
 import unittest
 from datetime import date
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from cogs.reaction_roles import (
     BirthdayActionSelect,
@@ -69,6 +70,29 @@ class ReactionRoleBirthdayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["title"], "Role & Birthday Directory")
         self.assertIn("`DD MM`", fields["Birthday Manager"])
         self.assertIn("private", fields["Birthday Manager"])
+
+    async def test_legacy_manager_message_delete_uses_supported_arguments(self) -> None:
+        bot_user = object()
+        message = SimpleNamespace(
+            author=bot_user,
+            embeds=[SimpleNamespace(title="🎂 Birthday Manager 🎂")],
+            delete=AsyncMock(),
+        )
+
+        class FakeTextChannel:
+            async def history(self, *, limit: int):
+                self.requested_limit = limit
+                yield message
+
+        channel = FakeTextChannel()
+        guild = SimpleNamespace(get_channel=lambda _channel_id: channel)
+        cog = ReactionRoles.__new__(ReactionRoles)
+        cog.bot = SimpleNamespace(guilds=[guild], user=bot_user)
+
+        with patch("cogs.reaction_roles.discord.TextChannel", FakeTextChannel):
+            await cog._remove_legacy_birthday_manager()
+
+        message.delete.assert_awaited_once_with()
 
 
 if __name__ == "__main__":
