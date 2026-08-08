@@ -479,10 +479,7 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
             colour=discord.Colour.blurple(),
             timestamp=datetime.now(timezone.utc),
         )
-        description_parts = [f"**{title}**"]
-        if scheduled_event.description:
-            description_parts.append(self._truncate_text(scheduled_event.description, 3800))
-        embed.description = "\n\n".join(description_parts)
+        embed.description = f"**{title}**"
         embed.add_field(
             name="Date / Time",
             value=self._format_event_datetime_text(
@@ -491,10 +488,6 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
             ),
             inline=False,
         )
-        if scheduled_event.location:
-            embed.add_field(name="Location", value=scheduled_event.location, inline=False)
-        elif scheduled_event.channel:
-            embed.add_field(name="Channel", value=scheduled_event.channel.mention, inline=False)
         organiser = "Unknown"
         if getattr(scheduled_event, "creator", None):
             organiser = scheduled_event.creator.mention
