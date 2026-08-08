@@ -287,6 +287,16 @@ How to use: Use **Initiate Raid** for another clan server. Use **Seed 7DR**, the
 
 Rules and notes: Scheduled times accept `19:30`, `today 19:30`, `tomorrow 19:30`, or a full date such as `27/07/2026 19:30`, all interpreted in the Europe/London timezone. A time without a date means the next occurrence of that time. The two interest choices are mutually exclusive, schedules persist across restarts, must be within seven days, and carry both definite and AFK-possible members into the live signup. At the scheduled time the interest post is replaced by the normal raid embed with a raid GIF and the configured `@everyone` mention; no separate start message is posted. Only 7DR-NCO and 7DR-SNCO members can initiate or schedule seeding.
 
+## `strategic_review_note.py`
+
+Overview: Creates transcript-backed strategic review threads and posts a weekly index of every tracked note.
+
+Slash commands: `/strategic-review-note`.
+
+How to use: Run `/strategic-review-note`, enter a thread title, and supply the transcript start in UK time. Accepted examples are `09:30`, `today 09:30`, `yesterday 18:00`, `07/08/2026 09:30`, and `2026-08-07 09:30`. The bot posts a `.txt` transcript of messages from the strategic review channel, then opens a thread from that header. Paste the transcript into ChatGPT for a summary and continue the discussion in the thread.
+
+Rules and notes: The transcript ends at the instant the command is run. Anyone who can use the header can press **Close Note**, which archives and locks its thread. Every Monday at 09:00 UK time the bot posts an embed index with open and closed counts and links to all tracked notes. The bot needs View Channel, Read Message History, Send Messages, Attach Files, Create Public Threads, Send Messages in Threads, and Manage Threads in the configured channel.
+
 ## `hellorleaderboard.py`
 
 Overview: Builds and posts the `hellor.pro` leaderboard for the configured Discord role.

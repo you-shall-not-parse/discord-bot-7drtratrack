@@ -43,6 +43,7 @@ EXTENSIONS = (
     "cogs.supporters_embed",
     "cogs.reaction_roles",
     "cogs.raid",
+    "cogs.strategic_review_note",
 )
 
 DISABLED_EXTENSIONS = (
