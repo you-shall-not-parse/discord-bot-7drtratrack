@@ -130,7 +130,6 @@ features from starting. Slash commands are synchronized once during startup.
 - `SquadUp`
 - `eventscalendar`
 - `event_map_requests`
-- `BirthdayCog`
 - `contentfeed`
 - `discordgreeting`
 - `echo`

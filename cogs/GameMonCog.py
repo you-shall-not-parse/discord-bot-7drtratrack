@@ -35,7 +35,12 @@ THREAD_ID = 1412934277133369494  # replace with your thread ID
 HLL_CHANNEL_ID = 1099090838203666474
 # Users with any of these roles will never generate GameMon posts.
 # Put role IDs in this list, e.g. [123, 456]. Leave empty to disable.
-EXCLUDED_ROLE_IDS: list[int] = [1098206797900284035, 1103762811491975218]
+BLUEBERRY_ROLE_ID = 1440120995171012699
+EXCLUDED_ROLE_IDS: list[int] = [
+    1098206797900284035,
+    1103762811491975218,
+    BLUEBERRY_ROLE_ID,
+]
 IGNORED_GAMES = ["Spotify", "Discord", "Pornhub", "Netflix", "Disney", "Sky TV", "Youtube", "RedTube"]
 
 # For custom image links: Discord embeds generally require a *direct* image URL.
@@ -73,7 +78,7 @@ TEMP_DISABLE_DEFAULT_MONITORING = False  # Set to True to temporarily disable al
 # Throttle: minimum seconds between feed posts (global debounce)
 FEED_POST_MIN_INTERVAL = 5  # increase if still rate-limited
 # Prune: keep only the newest N messages in the thread (excluding pinned)
-KEEP_LAST_MESSAGES = 20
+KEEP_LAST_MESSAGES = 5
 # How many messages beyond KEEP_LAST_MESSAGES to fetch per prune pass
 PRUNE_EXTRA_FETCH = 50
 
@@ -785,6 +790,11 @@ class GameMonCog(commands.Cog, name="GameMonCog"):
                 self._persistent_view_registered = True
             except Exception as e:
                 logger.error(f"Failed to register persistent PreferenceView: {e}")
+
+        # Apply the retention cap immediately on startup, not only after a new post.
+        for destination_id in {THREAD_ID, HLL_CHANNEL_ID}:
+            if isinstance(destination_id, int) and destination_id:
+                await self.prune_channel_messages(destination_id)
 
     # ---------- Message Event Handler ----------
     @commands.Cog.listener()

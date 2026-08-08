@@ -107,16 +107,6 @@ How to use: Members use the persistent panel in the configured request channel t
 
 Rules and notes: Map approval immediately calls Bifrost's `guildChangeMap` mutation, so staff should confirm the requested variant before approving. Map changes always target Bifrost server `d688d156-773e-47ed-94cf-94c407b41ea3`. Admin cam approval grants temporary `Spectator` access on the selected Events (`main`) or Public (`server_2`) backend and schedules its automatic removal using `/t17admincam`'s existing lifecycle. Approvers must be administrators, have Manage Server, or hold the configured map-admin role. The request-channel panel shows the two most recent approvals or rejections and includes a button for members to view their stored T17 ID, hellor.pro profile, and HLL Records profile. The map catalogue is sourced from Bifrost and cached for at least four hours to respect its rate limit.
 
-## `BirthdayCog.py`
-
-Overview: Lets members store birthdays and shows birthday lists.
-
-Slash commands: `/setbirthday`, `/removebirthday`, `/birthdaysplease`.
-
-How to use: Members use `/setbirthday`, `/removebirthday`, and `/birthdaysplease`.
-
-Rules and notes: Only set your own birthday unless staff explicitly manage these for someone else. If age display is optional, think before making that visible.
-
 ## `contentfeed.py`
 
 Overview: Pushes configured content automatically and allows manual override.
@@ -269,13 +259,13 @@ Rules and notes: This is an admin/staff tool, not a self-serve reaction-role sys
 
 ## `reaction_roles.py`
 
-Overview: Replaces the HLL rank and infantry play-style reaction posts with one persistent role directory and two dropdown menus.
+Overview: Provides one persistent directory for HLL rank roles, infantry play style, and birthday management.
 
 Slash commands: none.
 
-How to use: In the role directory channel, choose one HLL rank and/or one play style. Choose the remove option in a menu to clear that category.
+How to use: In the role directory channel, choose one HLL rank and/or one play style. Use the birthday menu to add or update a birthday through the `DD MM YYYY` form, remove it, or view the current month's birthdays. Submit `DD MM` without a year to keep the birth year and age private.
 
-Rules and notes: Existing roles are left untouched when the cog starts. A category changes only when that member uses its menu. Each category is exclusive, so choosing a new option replaces any other configured role in that category. The bot needs `Manage Roles`, and its top role must be above every role managed by the selector.
+Rules and notes: Existing roles and birthday records are preserved. A role category changes only when that member uses its menu. Each role category is exclusive, so choosing a new option replaces any other configured role in that category. Birthday announcements and monthly summaries continue in the birthday channel. The bot needs `Manage Roles`, and its top role must be above every role managed by the selector.
 
 ## `raid.py`
 

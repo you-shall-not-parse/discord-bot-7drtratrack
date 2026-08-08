@@ -3,10 +3,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
+import re
+import sqlite3
+from datetime import date, datetime, time
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 from config import MAIN_GUILD_ID
 from data_paths import data_path
@@ -17,6 +22,20 @@ logger = logging.getLogger(__name__)
 
 ROLE_SELECTOR_CHANNEL_ID = 1099248200776421406
 STATE_PATH = Path(data_path("reaction_roles.json"))
+BIRTHDAY_CHANNEL_ID = 1098333222540152944
+BIRTHDAY_DB_PATH = data_path("birthdays.db")
+BIRTHDAY_TIMEZONE = ZoneInfo("Europe/London")
+BIRTHDAY_GIF_URLS = [
+    "https://media.tenor.com/X185VU8GGAUAAAAC/everybody-dance-now-speaker.gif",
+    "https://media.tenor.com/zID0voNWZeMAAAAC/the-office-its-your-birthday-period-happy-birthday.gif",
+    "https://media.tenor.com/mW9Bne87qc0AAAAC/the-office.gif",
+    "https://media.tenor.com/BiqWZ9UdZ8kAAAAC/surprised-theoffice.gif",
+    "https://media.tenor.com/GzGo7jQeLB0AAAAd/happy-birthday-bon-anniversaire.gif",
+    "https://media.tenor.com/9pu-un8ImGUAAAAC/action-drama.gif",
+    "https://media.tenor.com/fHAJclG404oAAAAC/birthday-parks-and-rec.gif",
+    "https://media.tenor.com/z2xPe5mCygcAAAAC/birthday-self-worth.gif",
+    "https://media.tenor.com/CSMv9A3-HkoAAAAC/shocked-happy.gif",
+]
 
 RANK_ROLES: dict[str, tuple[str, int, str]] = {
     "rank_20_79": ("HLL Rank 20-79", 1401656461913882734, "🪖"),
@@ -53,6 +72,53 @@ def _load_state() -> dict[str, int]:
         if isinstance(value, int):
             state[key] = value
     return state
+
+
+def _parse_birthday_input(
+    value: str,
+    *,
+    today: date | None = None,
+) -> tuple[str | None, bool, str | None]:
+    """Parse DD MM [YYYY]; a missing year is not stored."""
+    raw = " ".join(value.strip().split())
+    match = re.fullmatch(r"(\d{1,2})[\s/.-]+(\d{1,2})(?:[\s/.-]+(\d{4}))?", raw)
+    if match is None:
+        return None, False, "Enter your birthday as `DD MM YYYY`, or `DD MM` to keep your birth year private."
+
+    day_value, month_value, year_text = match.groups()
+    current_date = today or datetime.now(BIRTHDAY_TIMEZONE).date()
+    year_is_public = year_text is not None
+    year_value = int(year_text) if year_text else 2000
+    if year_is_public and not 1900 <= year_value <= current_date.year:
+        return None, False, f"Enter a birth year between 1900 and {current_date.year}, or leave it blank."
+
+    try:
+        birthday = date(year_value, int(month_value), int(day_value))
+    except ValueError:
+        return None, False, "That is not a valid calendar date."
+
+    stored_value = birthday.strftime("%d/%m/%Y" if year_is_public else "%d/%m")
+    return stored_value, year_is_public, None
+
+
+def _birthday_parts(date_str: str) -> tuple[int, int, int | None]:
+    parts = str(date_str).split("/")
+    if len(parts) not in (2, 3):
+        raise ValueError("Invalid stored birthday")
+    day_value, month_value = int(parts[0]), int(parts[1])
+    year_value = int(parts[2]) if len(parts) == 3 else None
+    date(year_value or 2000, month_value, day_value)
+    return day_value, month_value, year_value
+
+
+def _birthday_display(date_str: str, *, show_age: bool, today: date) -> str:
+    day_value, month_value, year_value = _birthday_parts(date_str)
+    birthday = date(year_value or 2000, month_value, day_value)
+    text = birthday.strftime("%d %B")
+    if show_age and year_value is not None:
+        age = today.year - year_value - ((today.month, today.day) < (month_value, day_value))
+        text += f" ({age} years old)"
+    return text
 
 
 class RoleCategorySelect(discord.ui.Select):
@@ -103,6 +169,63 @@ class RoleCategorySelect(discord.ui.Select):
         )
 
 
+class BirthdayModal(discord.ui.Modal, title="Add or update your birthday"):
+    birthday = discord.ui.TextInput(
+        label="Birthday (DD MM YYYY)",
+        placeholder="Example: 15 06 1995 — or 15 06 to hide the year",
+        min_length=5,
+        max_length=10,
+        required=True,
+    )
+
+    def __init__(self, cog: "ReactionRoles") -> None:
+        super().__init__(timeout=300, custom_id="reaction_roles:birthday_modal")
+        self.cog = cog
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await self.cog.save_birthday_from_modal(interaction, str(self.birthday.value))
+
+
+class BirthdayActionSelect(discord.ui.Select):
+    def __init__(self, cog: "ReactionRoles") -> None:
+        self.cog = cog
+        super().__init__(
+            placeholder="Add, update, remove, or view birthdays…",
+            min_values=1,
+            max_values=1,
+            options=[
+                discord.SelectOption(
+                    label="Add or update my birthday",
+                    value="set",
+                    emoji="🎂",
+                    description="Open the DD MM YYYY birthday form",
+                ),
+                discord.SelectOption(
+                    label="Remove my birthday",
+                    value="remove",
+                    emoji="❌",
+                    description="Delete your saved birthday",
+                ),
+                discord.SelectOption(
+                    label="View birthdays this month",
+                    value="view_month",
+                    emoji="📅",
+                    description="Show this month's saved birthdays",
+                ),
+            ],
+            custom_id="reaction_roles:birthday_actions",
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        selected = self.values[0]
+        if selected == "set":
+            await interaction.response.send_modal(BirthdayModal(self.cog))
+        elif selected == "remove":
+            await self.cog.handle_birthday_removal(interaction)
+        else:
+            await self.cog.show_month_birthdays(interaction)
+
+
 class ReactionRoleView(discord.ui.View):
     def __init__(self, cog: "ReactionRoles") -> None:
         super().__init__(timeout=None)
@@ -124,10 +247,11 @@ class ReactionRoleView(discord.ui.View):
                 placeholder="Choose or remove your play style…",
             )
         )
+        self.add_item(BirthdayActionSelect(cog))
 
 
 class ReactionRoles(commands.Cog):
-    """Persistent, self-service HLL rank and play-style role selectors."""
+    """Persistent self-service roles and birthday manager."""
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
@@ -135,14 +259,37 @@ class ReactionRoles(commands.Cog):
         self._sync_lock = asyncio.Lock()
         self._view = ReactionRoleView(self)
         self.bot.add_view(self._view)
+        self._birthday_db = sqlite3.connect(BIRTHDAY_DB_PATH)
+        self._birthday_db.execute(
+            "CREATE TABLE IF NOT EXISTS birthdays ("
+            "guild_id INTEGER, user_id INTEGER, date TEXT, display_age INTEGER DEFAULT 0, "
+            "PRIMARY KEY (guild_id, user_id))"
+        )
+        self._birthday_db.commit()
+        columns = {
+            str(row[1])
+            for row in self._birthday_db.execute("PRAGMA table_info(birthdays)").fetchall()
+        }
+        if "display_age" not in columns:
+            self._birthday_db.execute(
+                "ALTER TABLE birthdays ADD COLUMN display_age INTEGER DEFAULT 0"
+            )
+            self._birthday_db.commit()
+
+    def cog_unload(self) -> None:
+        if self.check_birthdays.is_running():
+            self.check_birthdays.cancel()
+        if self.post_monthly_birthday_summary.is_running():
+            self.post_monthly_birthday_summary.cancel()
+        self._birthday_db.close()
 
     @staticmethod
     def build_embed() -> discord.Embed:
         embed = discord.Embed(
-            title="HLL Role Directory",
+            title="Role & Birthday Directory",
             color=discord.Color.dark_green(),
             description=(
-                "Use the menus below to choose or remove your HLL rank and infantry play-style roles.\n\n"
+                "Use the menus below to manage your HLL rank, infantry play style, and birthday.\n\n"
                 "**Your existing roles are preserved.** Nothing changes until you make a selection. "
                 "Choosing a new option replaces only your role in that category."
             ),
@@ -171,7 +318,15 @@ class ReactionRoles(commands.Cog):
             ),
             inline=False,
         )
-        embed.set_footer(text="You may change either selection at any time.")
+        embed.add_field(
+            name="Birthday Manager",
+            value=(
+                "Use the birthday menu to add, update, remove, or view birthdays. Enter `DD MM YYYY`, "
+                "or leave the year blank as `DD MM` to keep your birth year and age private."
+            ),
+            inline=False,
+        )
+        embed.set_footer(text="You may change your role selections or birthday at any time.")
         return embed
 
     async def _target_channel(self) -> discord.TextChannel | None:
@@ -235,6 +390,129 @@ class ReactionRoles(commands.Cog):
             self.state = {"channel_id": channel.id, "message_id": message.id}
             atomic_json_dump(STATE_PATH, self.state, indent=2)
             return True
+
+    def _set_birthday(
+        self,
+        guild_id: int,
+        user_id: int,
+        date_str: str,
+        display_age: bool,
+    ) -> None:
+        self._birthday_db.execute(
+            "INSERT OR REPLACE INTO birthdays (guild_id, user_id, date, display_age) "
+            "VALUES (?, ?, ?, ?)",
+            (guild_id, user_id, date_str, int(display_age)),
+        )
+        self._birthday_db.commit()
+
+    def _remove_birthday(self, guild_id: int, user_id: int) -> bool:
+        cursor = self._birthday_db.execute(
+            "DELETE FROM birthdays WHERE guild_id = ? AND user_id = ?",
+            (guild_id, user_id),
+        )
+        self._birthday_db.commit()
+        return cursor.rowcount > 0
+
+    def _month_birthdays(self, guild_id: int, month: int) -> list[tuple[int, str, bool]]:
+        rows = self._birthday_db.execute(
+            "SELECT user_id, date, display_age FROM birthdays WHERE guild_id = ?",
+            (guild_id,),
+        ).fetchall()
+        birthdays: list[tuple[int, str, bool]] = []
+        for user_id, date_str, display_age in rows:
+            try:
+                _day, stored_month, stored_year = _birthday_parts(str(date_str))
+                if stored_month == month:
+                    birthdays.append(
+                        (int(user_id), str(date_str), bool(display_age) and stored_year is not None)
+                    )
+            except (TypeError, ValueError):
+                logger.warning("Ignoring invalid stored birthday for user %s: %r", user_id, date_str)
+        return birthdays
+
+    async def save_birthday_from_modal(
+        self,
+        interaction: discord.Interaction,
+        value: str,
+    ) -> None:
+        if interaction.guild is None or interaction.guild.id != MAIN_GUILD_ID:
+            await interaction.response.send_message(
+                "Birthday settings can only be changed in the 7DR server.",
+                ephemeral=True,
+            )
+            return
+
+        date_str, display_age, error = _parse_birthday_input(value)
+        if date_str is None:
+            await interaction.response.send_message(error, ephemeral=True)
+            return
+
+        self._set_birthday(interaction.guild.id, interaction.user.id, date_str, display_age)
+        day_value, month_value, year_value = _birthday_parts(date_str)
+        birthday = date(year_value or 2000, month_value, day_value)
+        saved_date = birthday.strftime("%d %B")
+        if year_value is not None:
+            saved_date += f" {year_value}"
+        privacy = (
+            "Your birth year is saved and your age will be shown on birthday posts."
+            if display_age
+            else "Your birth year was not stored and your age will not be shown."
+        )
+        await interaction.response.send_message(
+            f"✅ Birthday saved as **{saved_date}**. {privacy}",
+            ephemeral=True,
+        )
+
+    async def handle_birthday_removal(self, interaction: discord.Interaction) -> None:
+        if interaction.guild is None or interaction.guild.id != MAIN_GUILD_ID:
+            await interaction.response.send_message(
+                "Birthday settings can only be changed in the 7DR server.",
+                ephemeral=True,
+            )
+            return
+        removed = self._remove_birthday(interaction.guild.id, interaction.user.id)
+        message = "Your saved birthday has been removed." if removed else "You do not have a saved birthday."
+        await interaction.response.send_message(message, ephemeral=True)
+
+    async def show_month_birthdays(self, interaction: discord.Interaction) -> None:
+        if interaction.guild is None or interaction.guild.id != MAIN_GUILD_ID:
+            await interaction.response.send_message(
+                "Birthdays can only be viewed in the 7DR server.",
+                ephemeral=True,
+            )
+            return
+
+        today = datetime.now(BIRTHDAY_TIMEZONE).date()
+        birthdays = self._month_birthdays(interaction.guild.id, today.month)
+        lines = self._birthday_lines(interaction.guild, birthdays, today=today)
+        if not lines:
+            await interaction.response.send_message("📭 No birthdays this month.", ephemeral=True)
+            return
+        embed = discord.Embed(
+            title=f"🎉 Birthdays in {today.strftime('%B')} 🎉",
+            description="\n".join(lines),
+            color=discord.Color.purple(),
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @staticmethod
+    def _birthday_lines(
+        guild: discord.Guild,
+        birthdays: list[tuple[int, str, bool]],
+        *,
+        today: date,
+    ) -> list[str]:
+        lines: list[str] = []
+        for user_id, date_str, display_age in sorted(
+            birthdays,
+            key=lambda item: (_birthday_parts(item[1])[1], _birthday_parts(item[1])[0]),
+        ):
+            member = guild.get_member(user_id)
+            if member is None:
+                continue
+            display = _birthday_display(date_str, show_age=display_age, today=today)
+            lines.append(f"🎂 {member.mention} — {display}")
+        return lines
 
     async def apply_selection(
         self,
@@ -353,9 +631,77 @@ class ReactionRoles(commands.Cog):
             message = f"Your {category_name.lower()} is now **{selected_label}**."
         await interaction.followup.send(message, ephemeral=True)
 
+    @tasks.loop(time=time(hour=9, minute=0, tzinfo=BIRTHDAY_TIMEZONE))
+    async def check_birthdays(self) -> None:
+        today = datetime.now(BIRTHDAY_TIMEZONE).date()
+        for guild in self.bot.guilds:
+            birthdays = self._month_birthdays(guild.id, today.month)
+            birthdays_today = [
+                item
+                for item in birthdays
+                if _birthday_parts(item[1])[0] == today.day
+            ]
+            if not birthdays_today:
+                continue
+            channel = guild.get_channel(BIRTHDAY_CHANNEL_ID)
+            if not isinstance(channel, discord.TextChannel):
+                continue
+            for user_id, date_str, display_age in birthdays_today:
+                member = guild.get_member(user_id)
+                if member is None:
+                    continue
+                display = _birthday_display(date_str, show_age=display_age, today=today)
+                age_suffix = ""
+                if display_age and "(" in display:
+                    age_suffix = f" {display[display.index('('):]}"
+                message = f"🎉 Happy Birthday to {member.mention}!{age_suffix}"
+                gif_url = random.choice(BIRTHDAY_GIF_URLS) if BIRTHDAY_GIF_URLS else None
+                await channel.send(f"{message}\n{gif_url}" if gif_url else message)
+
+    @tasks.loop(time=time(hour=9, minute=5, tzinfo=BIRTHDAY_TIMEZONE))
+    async def post_monthly_birthday_summary(self) -> None:
+        today = datetime.now(BIRTHDAY_TIMEZONE).date()
+        if today.day != 1:
+            return
+        for guild in self.bot.guilds:
+            birthdays = self._month_birthdays(guild.id, today.month)
+            lines = self._birthday_lines(guild, birthdays, today=today)
+            if not lines:
+                continue
+            channel = guild.get_channel(BIRTHDAY_CHANNEL_ID)
+            if not isinstance(channel, discord.TextChannel):
+                continue
+            embed = discord.Embed(
+                title=f"📅 Birthdays in {today.strftime('%B')}",
+                description="\n".join(lines),
+                color=discord.Color.gold(),
+            )
+            await channel.send(embed=embed)
+
+    async def _remove_legacy_birthday_manager(self) -> None:
+        for guild in self.bot.guilds:
+            channel = guild.get_channel(BIRTHDAY_CHANNEL_ID)
+            if not isinstance(channel, discord.TextChannel):
+                continue
+            try:
+                async for message in channel.history(limit=100):
+                    if message.author != self.bot.user or not message.embeds:
+                        continue
+                    if message.embeds[0].title == "🎂 Birthday Manager 🎂":
+                        await message.delete(
+                            reason="Birthday manager was merged into the reaction-role directory."
+                        )
+            except (discord.Forbidden, discord.HTTPException):
+                logger.exception("Could not remove the legacy birthday-manager message.")
+
     @commands.Cog.listener()
     async def on_ready(self) -> None:
         await self.sync_message()
+        if not self.check_birthdays.is_running():
+            self.check_birthdays.start()
+        if not self.post_monthly_birthday_summary.is_running():
+            self.post_monthly_birthday_summary.start()
+        await self._remove_legacy_birthday_manager()
 
 
 async def setup(bot: commands.Bot) -> None:
