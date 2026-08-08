@@ -4,14 +4,13 @@ import json
 import os
 import asyncio
 import io
-import random
 import calendar
+from pathlib import Path
 from time import monotonic
 from urllib.parse import urlencode
 from typing import Awaitable, Callable, Optional, TypeVar
 from datetime import datetime, timedelta, timezone
 
-import aiohttp
 import discord
 from discord.http import Route
 from discord.ext import commands, tasks
@@ -50,34 +49,23 @@ EVENTS_JSON_PATH = data_path("events_history.json")
 EVENTS_DISPLAY_STATE_PATH = data_path("events_display_state.json")
 
 # -----------------------------
-# EVENT THREADS (AUTO)
+# EVENT NOTIFICATIONS (AUTO)
 # -----------------------------
-# When a new scheduled event is created, the bot will create a thread in this channel.
-# Default: use the same channel as the calendar embed.
-EVENT_THREADS_PARENT_CHANNEL_ID = 1192922522673500190
-
-# Auto-archive duration for the created threads (minutes).
-# Valid values depend on the server settings: 60, 1440, 4320, 10080.
-EVENT_THREAD_AUTO_ARCHIVE_MINUTES = 10080
-
-# Forum channel where event discussion posts should be created.
-EVENT_FORUM_CHANNEL_ID = 1506797609489272934
-
-# Random background image pool used for event cover images.
-EVENT_FORUM_BACKGROUND_URLS: list[str] = [
-    "https://cdn.discordapp.com/attachments/1098976074852999261/1448099075143503922/file_0000000040dc7208b0cf42742a355373.png?ex=6a0ef11b&is=6a0d9f9b&hm=3362f8760b775caaabe6f44e7bf55ad66bf54a42bd5f2f86911ab60a6b8eab54",
-    "https://cdn.discordapp.com/attachments/1098976074852999261/1444515451727253544/file_00000000e5f871f488f94dd458b30c09.png?ex=6a106819&is=6a0f1699&hm=564e2b7f03c66d88861f0e3719f68623ebbdd6bfd5e930401865b474de74f10a",
-    "https://cdn.discordapp.com/attachments/1098976074852999261/1444490230957608980/ChatGPT_Image_Nov_30_2025_12_47_57_AM.png?ex=6a0eff1c&is=6a0dad9c&hm=76b339a9b853a022c9588097227b29a9fe0503c10a8f5f8eaffff8eea9f60288",
+# Add more channel IDs here to publish the notification in multiple channels.
+EVENT_NOTIFICATION_CHANNEL_IDS: list[int] = [
+    1192922522673500190,
 ]
 
-EVENT_FORUM_FILENAME = "event-cover.png"
-EVENT_FORUM_IMAGE_SIZE = (1600, 900)
-EVENT_FORUM_OPEN_LEAD = timedelta(hours=24)
-EVENT_FORUM_SYNC_WINDOW = timedelta(hours=24)
+EVENT_NOTIFICATION_FILENAME = "event-cover.png"
+EVENT_NOTIFICATION_IMAGE_SIZE = (1600, 900)
+EVENT_NOTIFICATION_BACKGROUND_DIR = data_path("map_images", ensure_dir=False)
+EVENT_NOTIFICATION_BACKGROUND_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".avif"}
+EVENT_NOTIFICATION_OPEN_LEAD = timedelta(hours=24)
+EVENT_NOTIFICATION_SYNC_WINDOW = timedelta(hours=24)
 EVENT_IMAGE_FONT_PATH = SCOREBOARD_FONT_PATH
 
-# Persist which events we've already handled so we don't create duplicate threads.
-EVENTS_THREAD_STATE_PATH = data_path("events_threads_state.json")
+# Persist message IDs so notifications remain editable across restarts.
+EVENTS_NOTIFICATION_STATE_PATH = data_path("events_notification_state.json")
 
 # -----------------------------
 # EVENT TITLE EMOJI TAGGING
@@ -112,9 +100,7 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
         self._target_guild_id: Optional[int] = None
         self._update_lock = asyncio.Lock()
         self._debounce_task: Optional[asyncio.Task] = None
-        self._thread_state = self._load_thread_state()
-        self._background_cache: dict[str, bytes] = {}
-        self._missing_background_sources: set[str] = set()
+        self._notification_state = self._load_notification_state()
         self._raw_events_cache: dict[int, dict] = {}
         self._raw_events_cache_time = 0.0
         self.update_events_display.start()
@@ -169,46 +155,35 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
         await self.bot.wait_until_ready()
         logger.info("EventDisplayCog: Bot is ready, starting event display loop")
 
-        # On startup, establish the target guild and optionally create threads for any
-        # events that appeared while the bot was offline.
-        await self._startup_sync_threads()
+        # On startup, establish the target guild and publish/update notifications.
+        await self._startup_sync_notifications()
 
-    def _load_thread_state(self) -> dict:
+    def _load_notification_state(self) -> dict:
         try:
-            if not os.path.exists(EVENTS_THREAD_STATE_PATH):
-                return {"initialized": False, "seen_event_ids": [], "threads": {}}
-            with open(EVENTS_THREAD_STATE_PATH, "r", encoding="utf-8") as f:
+            if not os.path.exists(EVENTS_NOTIFICATION_STATE_PATH):
+                return {"events": {}}
+            with open(EVENTS_NOTIFICATION_STATE_PATH, "r", encoding="utf-8") as f:
                 state = json.load(f)
             if not isinstance(state, dict):
-                return {"initialized": False, "seen_event_ids": [], "threads": {}}
-            state.setdefault("initialized", False)
-            state.setdefault("seen_event_ids", [])
-            state.setdefault("threads", {})
+                return {"events": {}}
+            state.setdefault("events", {})
             return state
         except Exception:
-            logger.warning("Could not read events thread state; will recreate it.", exc_info=True)
-            return {"initialized": False, "seen_event_ids": [], "threads": {}}
+            logger.warning("Could not read event notification state; will recreate it.", exc_info=True)
+            return {"events": {}}
 
-    def _save_thread_state(self) -> None:
+    def _save_notification_state(self) -> None:
         try:
-            self._thread_state["updated_at"] = datetime.utcnow().isoformat()
-            atomic_json_dump(EVENTS_THREAD_STATE_PATH, self._thread_state, ensure_ascii=False)
+            self._notification_state["updated_at"] = datetime.utcnow().isoformat()
+            atomic_json_dump(EVENTS_NOTIFICATION_STATE_PATH, self._notification_state, ensure_ascii=False)
         except Exception:
-            logger.warning("Failed to persist events thread state.", exc_info=True)
-
-    def _is_event_seen(self, event_id: int) -> bool:
-        return str(event_id) in set(map(str, self._thread_state.get("seen_event_ids", [])))
-
-    def _mark_event_seen(self, event_id: int) -> None:
-        seen = set(map(str, self._thread_state.get("seen_event_ids", [])))
-        seen.add(str(event_id))
-        self._thread_state["seen_event_ids"] = sorted(seen)
+            logger.warning("Failed to persist event notification state.", exc_info=True)
 
     def _get_event_state(self, event_id: int) -> dict:
-        return self._thread_state.setdefault("threads", {}).setdefault(str(event_id), {})
+        return self._notification_state.setdefault("events", {}).setdefault(str(event_id), {})
 
-    async def _startup_sync_threads(self) -> None:
-        """Initialize thread state and handle events created while offline."""
+    async def _startup_sync_notifications(self) -> None:
+        """Publish events created while offline and refresh existing notifications."""
 
         try:
             channel = self.bot.get_channel(EVENT_DISPLAY_CHANNEL_ID)
@@ -219,90 +194,11 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
                 return
 
             self._target_guild_id = guild.id
-
             current_events = await guild.fetch_scheduled_events(with_counts=False)
-
-            # First ever run: mark all existing events as seen so we don't spam threads.
-            if not self._thread_state.get("initialized", False):
-                for ev in current_events:
-                    self._mark_event_seen(ev.id)
-                self._thread_state["initialized"] = True
-                await self._sync_forum_posts(guild, current_events)
-                self._save_thread_state()
-                logger.info("Initialized events thread state (existing events marked as seen)")
-                return
-
-            # Subsequent runs: create threads for any events we haven't seen yet.
-            for ev in current_events:
-                if not self._is_event_seen(ev.id):
-                    await self._create_event_thread(ev)
-                    self._mark_event_seen(ev.id)
-
-            await self._sync_forum_posts(guild, current_events)
-            self._save_thread_state()
-
+            await self._sync_event_notifications(guild, current_events)
+            self._save_notification_state()
         except Exception:
-            logger.warning("Startup thread sync failed.", exc_info=True)
-
-    async def _create_event_thread(self, scheduled_event: discord.ScheduledEvent) -> None:
-        parent = self.bot.get_channel(EVENT_THREADS_PARENT_CHANNEL_ID)
-        if not isinstance(parent, discord.TextChannel):
-            logger.warning("Thread parent channel is missing or not a text channel")
-            return
-
-        # Build a starter message; threads are created from messages reliably.
-        start_time_str = (
-            f"<t:{int(scheduled_event.start_time.timestamp())}:F>"
-            if scheduled_event.start_time
-            else "TBA"
-        )
-
-        organiser = "Unknown"
-        if getattr(scheduled_event, "creator", None):
-            organiser = scheduled_event.creator.mention
-        elif getattr(scheduled_event, "creator_id", None):
-            organiser = f"<@{scheduled_event.creator_id}>"
-
-        title = self._format_event_title(parent.guild, scheduled_event.name)
-
-        # No URLs in the starter text to avoid link embeds.
-        starter_text = (
-            f"📅 New event created: **{title}**\n"
-            f"**Date/Time:** {start_time_str}\n"
-            f"**Added By:** {organiser}"
-        )
-
-        state = self._get_event_state(scheduled_event.id)
-
-        try:
-            starter_msg = await parent.send(starter_text)
-
-            date_suffix = "TBA"
-            if scheduled_event.start_time:
-                date_suffix = scheduled_event.start_time.strftime("%d/%m/%Y")
-
-            thread_name = f"{scheduled_event.name} - {date_suffix}".strip()
-            if len(thread_name) > 100:
-                thread_name = thread_name[:97] + "..."
-
-            thread = await starter_msg.create_thread(
-                name=thread_name,
-                auto_archive_duration=EVENT_THREAD_AUTO_ARCHIVE_MINUTES,
-            )
-
-            state.update(
-                {
-                    "thread_id": thread.id,
-                    "starter_message_id": starter_msg.id,
-                    "created_at": datetime.utcnow().isoformat(),
-                }
-            )
-            logger.info(f"Created thread {thread.id} for event {scheduled_event.id}")
-
-        except discord.Forbidden:
-            logger.warning("Missing permissions to create event thread (send message / create thread)")
-        except Exception:
-            logger.warning("Failed to create event thread.", exc_info=True)
+            logger.warning("Startup event notification sync failed.", exc_info=True)
 
     async def _fetch_raw_scheduled_events(self, guild: discord.Guild) -> dict[int, dict]:
         now = monotonic()
@@ -539,12 +435,12 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
             return scheduled_start
 
         try:
-            window_start = now - EVENT_FORUM_SYNC_WINDOW
+            window_start = now - EVENT_NOTIFICATION_SYNC_WINDOW
             candidate = self._find_matching_occurrence(
                 rule_start=rule_start,
                 recurrence_rule=recurrence_rule,
                 window_start=window_start,
-                window_end=now + EVENT_FORUM_OPEN_LEAD,
+                window_end=now + EVENT_NOTIFICATION_OPEN_LEAD,
             )
         except Exception:
             logger.warning("Failed to calculate recurring event occurrence for payload %s", payload.get("id"), exc_info=True)
@@ -571,19 +467,7 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
 
         return f"{start_utc.strftime('%d %b %Y  |  %H:%M UTC')}"
 
-    def _truncate_thread_name(self, value: str) -> str:
-        value = " ".join((value or "").split())
-        if len(value) <= 100:
-            return value
-        return value[:97].rstrip() + "..."
-
-    def _build_event_post_name(self, event_name: str, occurrence_start: Optional[datetime]) -> str:
-        suffix = "TBA"
-        if occurrence_start is not None:
-            suffix = occurrence_start.astimezone(timezone.utc).strftime("%d/%m/%Y")
-        return self._truncate_thread_name(f"{event_name} - {suffix}".strip())
-
-    def _build_event_post_embed(
+    def _build_event_notification_embed(
         self,
         *,
         scheduled_event: discord.ScheduledEvent,
@@ -591,17 +475,20 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
         occurrence_start: Optional[datetime],
     ) -> discord.Embed:
         embed = discord.Embed(
-            title=title,
+            title="New Event Added to Calendar!",
             colour=discord.Colour.blurple(),
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
         )
-        embed.description = self._truncate_text(
-            scheduled_event.description or "Discussion thread for this scheduled event.",
-            4000,
-        )
+        description_parts = [f"**{title}**"]
+        if scheduled_event.description:
+            description_parts.append(self._truncate_text(scheduled_event.description, 3800))
+        embed.description = "\n\n".join(description_parts)
         embed.add_field(
             name="Date / Time",
-            value=self._format_event_datetime_text(occurrence_start or scheduled_event.start_time, scheduled_event.end_time),
+            value=self._format_event_datetime_text(
+                occurrence_start or scheduled_event.start_time,
+                self._event_update_cutoff(scheduled_event, occurrence_start),
+            ),
             inline=False,
         )
         if scheduled_event.location:
@@ -615,56 +502,37 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
             organiser = f"<@{scheduled_event.creator_id}>"
         embed.add_field(name="Added By", value=organiser, inline=False)
         if getattr(scheduled_event, "url", None):
-            embed.add_field(name="Event Link", value=str(scheduled_event.url), inline=False)
+            embed.add_field(name="Event Link", value=f"[View Discord Event]({scheduled_event.url})", inline=True)
         google_calendar_url = self._build_google_calendar_url(scheduled_event)
         if google_calendar_url:
-            embed.add_field(name="Google Calendar", value=google_calendar_url, inline=False)
-        if scheduled_event.guild_id:
-            thread_info = self._thread_state.get("threads", {}).get(str(scheduled_event.id))
-            if isinstance(thread_info, dict):
-                thread_id = thread_info.get("thread_id")
-                if isinstance(thread_id, int):
-                    embed.add_field(
-                        name="Discussion Thread",
-                        value=f"https://discord.com/channels/{scheduled_event.guild_id}/{thread_id}",
-                        inline=False,
-                    )
-        embed.set_image(url=f"attachment://{EVENT_FORUM_FILENAME}")
-        embed.set_footer(text="Event details update automatically")
+            embed.add_field(name="Google Calendar", value=f"[Add to Google Calendar]({google_calendar_url})", inline=True)
+        embed.set_image(url=f"attachment://{EVENT_NOTIFICATION_FILENAME}")
+        embed.set_footer(text="Event details update automatically until the event has ended")
         return embed
 
-    async def _load_background_bytes(self, source: str) -> Optional[bytes]:
-        cached = self._background_cache.get(source)
-        if cached is not None:
-            return cached
-        if source in self._missing_background_sources:
-            return None
-
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(source) as response:
-                    if response.status != 200:
-                        self._missing_background_sources.add(source)
-                        logger.warning("Failed to fetch event background %s (status %s)", source, response.status)
-                        return None
-                    data = await response.read()
-        except Exception:
-            self._missing_background_sources.add(source)
-            logger.warning("Failed to load event background from %s", source, exc_info=True)
-            return None
-
-        self._background_cache[source] = data
-        return data
-
     def _pick_event_background(self, event_id: int, state: dict) -> Optional[str]:
-        stored = state.get("background_url")
-        if stored:
+        stored = state.get("background_path")
+        if isinstance(stored, str) and Path(stored).is_file():
             return stored
-        if not EVENT_FORUM_BACKGROUND_URLS:
+
+        background_dir = Path(EVENT_NOTIFICATION_BACKGROUND_DIR)
+        try:
+            available = sorted(
+                str(path)
+                for path in background_dir.iterdir()
+                if path.is_file() and path.suffix.lower() in EVENT_NOTIFICATION_BACKGROUND_EXTENSIONS
+            )
+        except OSError:
+            logger.warning("Could not read event backgrounds from %s", background_dir, exc_info=True)
             return None
-        url = random.choice(EVENT_FORUM_BACKGROUND_URLS)
-        state["background_url"] = url
-        return url
+
+        if not available:
+            logger.warning("No event background images found in %s", background_dir)
+            return None
+
+        path = available[event_id % len(available)]
+        state["background_path"] = path
+        return path
 
     async def _render_event_cover_image(
         self,
@@ -672,19 +540,18 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
         title: str,
         start_time: Optional[datetime],
         end_time: Optional[datetime],
-        background_url: Optional[str],
+        background_path: Optional[str],
     ) -> bytes:
         from PIL import Image, ImageDraw, ImageFont, ImageOps  # pyright: ignore[reportMissingImports]
 
-        width, height = EVENT_FORUM_IMAGE_SIZE
-        background_bytes = await self._load_background_bytes(background_url) if background_url else None
+        width, height = EVENT_NOTIFICATION_IMAGE_SIZE
 
-        if background_bytes:
+        if background_path:
             try:
-                with Image.open(io.BytesIO(background_bytes)) as source_image:
+                with Image.open(background_path) as source_image:
                     base = ImageOps.fit(source_image.convert("RGBA"), (width, height), method=Image.Resampling.LANCZOS)
             except Exception:
-                logger.warning("Failed to render event background from %s", background_url, exc_info=True)
+                logger.warning("Failed to render event background from %s", background_path, exc_info=True)
                 base = Image.new("RGBA", (width, height), (18, 24, 38, 255))
         else:
             base = Image.new("RGBA", (width, height), (18, 24, 38, 255))
@@ -754,139 +621,89 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
         out.seek(0)
         return out.getvalue()
 
-    async def _update_existing_event_thread(self, scheduled_event: discord.ScheduledEvent, occurrence_start: Optional[datetime]) -> None:
-        state = self._thread_state.get("threads", {}).get(str(scheduled_event.id))
-        if not isinstance(state, dict):
-            return
-
-        thread_id = state.get("thread_id")
-        starter_message_id = state.get("starter_message_id")
-        if not isinstance(thread_id, int) or not isinstance(starter_message_id, int):
-            return
-
-        parent = self.bot.get_channel(EVENT_THREADS_PARENT_CHANNEL_ID)
-        thread = self.bot.get_channel(thread_id)
-        if not isinstance(parent, discord.TextChannel) or not isinstance(thread, discord.Thread):
-            return
-
-        title = self._format_event_title(parent.guild, scheduled_event.name)
-        organiser = "Unknown"
-        if getattr(scheduled_event, "creator", None):
-            organiser = scheduled_event.creator.mention
-        elif getattr(scheduled_event, "creator_id", None):
-            organiser = f"<@{scheduled_event.creator_id}>"
-
-        start_to_display = occurrence_start or scheduled_event.start_time
-        start_time_str = f"<t:{int(start_to_display.timestamp())}:F>" if start_to_display else "TBA"
-        starter_text = (
-            f"📅 New event created: **{title}**\n"
-            f"**Date/Time:** {start_time_str}\n"
-            f"**Added By:** {organiser}"
-        )
-
-        try:
-            starter_message = await self._retry_discord_request(
-                f"fetching starter message for event {scheduled_event.id}",
-                lambda: parent.fetch_message(starter_message_id),
-            )
-            await self._retry_discord_request(
-                f"editing starter message for event {scheduled_event.id}",
-                lambda: starter_message.edit(content=starter_text),
-            )
-        except Exception:
-            logger.warning("Failed to update starter message for event %s", scheduled_event.id, exc_info=True)
-
-        try:
-            await thread.edit(name=self._build_event_post_name(scheduled_event.name, start_to_display))
-        except Exception:
-            logger.warning("Failed to rename thread for event %s", scheduled_event.id, exc_info=True)
-
-    async def _upsert_forum_post(
+    def _event_update_cutoff(
         self,
+        scheduled_event: discord.ScheduledEvent,
+        occurrence_start: Optional[datetime],
+    ) -> Optional[datetime]:
+        start = occurrence_start or scheduled_event.start_time
+        if start is None:
+            return None
+        if scheduled_event.end_time is None:
+            return start
+        if occurrence_start is None or scheduled_event.start_time is None:
+            return scheduled_event.end_time
+        return occurrence_start + (scheduled_event.end_time - scheduled_event.start_time)
+
+    async def _upsert_event_notification(
+        self,
+        channel: discord.TextChannel,
         scheduled_event: discord.ScheduledEvent,
         *,
         occurrence_start: Optional[datetime],
     ) -> None:
-        forum = self.bot.get_channel(EVENT_FORUM_CHANNEL_ID)
-        if not isinstance(forum, discord.ForumChannel):
-            logger.warning("Forum channel %s is missing or not a forum channel", EVENT_FORUM_CHANNEL_ID)
-            return
-
         state = self._get_event_state(scheduled_event.id)
-        if state.get("forum_deleted_manually"):
-            return
+        messages = state.setdefault("notification_messages", {})
+        channel_key = str(channel.id)
+        message_id = messages.get(channel_key)
+        title = self._format_event_title(channel.guild, scheduled_event.name)
+        embed = self._build_event_notification_embed(
+            scheduled_event=scheduled_event,
+            title=title,
+            occurrence_start=occurrence_start,
+        )
+        background_path = self._pick_event_background(scheduled_event.id, state)
+        image_bytes = await self._render_event_cover_image(
+            title=scheduled_event.name,
+            start_time=occurrence_start or scheduled_event.start_time,
+            end_time=self._event_update_cutoff(scheduled_event, occurrence_start),
+            background_path=background_path,
+        )
 
-        title = self._format_event_title(forum.guild, scheduled_event.name)
-        embed = self._build_event_post_embed(scheduled_event=scheduled_event, title=title, occurrence_start=occurrence_start)
-
-        state["forum_occurrence_start"] = occurrence_start.isoformat() if occurrence_start else None
-
-        forum_thread_id = state.get("forum_thread_id")
-        forum_message_id = state.get("forum_message_id")
-        existing_thread = self.bot.get_channel(forum_thread_id) if isinstance(forum_thread_id, int) else None
-
-        if isinstance(forum_thread_id, int) and existing_thread is None:
-            state["forum_deleted_manually"] = True
-            state["forum_deleted_at"] = datetime.utcnow().isoformat()
-            logger.info(
-                "Forum post for event %s is missing; treating it as manually deleted and not recreating it",
-                scheduled_event.id,
-            )
-            return
-
-        if isinstance(existing_thread, discord.Thread) and isinstance(forum_message_id, int):
+        if isinstance(message_id, int):
             try:
-                starter_message = await self._retry_discord_request(
-                    f"fetching forum starter message for event {scheduled_event.id}",
-                    lambda: existing_thread.fetch_message(forum_message_id),
+                message = await self._retry_discord_request(
+                    f"fetching event notification {message_id}",
+                    lambda: channel.fetch_message(message_id),
                 )
                 await self._retry_discord_request(
-                    f"editing forum starter message for event {scheduled_event.id}",
-                    lambda: starter_message.edit(content=None, embed=embed),
-                )
-                await self._retry_discord_request(
-                    f"renaming forum thread for event {scheduled_event.id}",
-                    lambda: existing_thread.edit(name=self._build_event_post_name(scheduled_event.name, occurrence_start or scheduled_event.start_time)),
+                    f"editing event notification {message_id}",
+                    lambda: message.edit(
+                        content=None,
+                        embed=embed,
+                        attachments=[discord.File(io.BytesIO(image_bytes), filename=EVENT_NOTIFICATION_FILENAME)],
+                    ),
                 )
                 return
             except discord.NotFound:
-                state["forum_deleted_manually"] = True
-                state["forum_deleted_at"] = datetime.utcnow().isoformat()
-                logger.info(
-                    "Forum starter message for event %s is missing; treating it as manually deleted and not recreating it",
+                messages.pop(channel_key, None)
+            except Exception:
+                logger.warning(
+                    "Failed to update event %s notification in channel %s",
                     scheduled_event.id,
+                    channel.id,
+                    exc_info=True,
                 )
                 return
-            except Exception:
-                logger.warning("Failed to update forum post for event %s", scheduled_event.id, exc_info=True)
 
         try:
-            background_url = self._pick_event_background(scheduled_event.id, state)
-            image_bytes = await self._render_event_cover_image(
-                title=scheduled_event.name,
-                start_time=occurrence_start or scheduled_event.start_time,
-                end_time=scheduled_event.end_time,
-                background_url=background_url,
-            )
-            created = await forum.create_thread(
-                name=self._build_event_post_name(scheduled_event.name, occurrence_start or scheduled_event.start_time),
+            message = await channel.send(
                 embed=embed,
-                file=discord.File(io.BytesIO(image_bytes), filename=EVENT_FORUM_FILENAME),
-                auto_archive_duration=EVENT_THREAD_AUTO_ARCHIVE_MINUTES,
+                file=discord.File(io.BytesIO(image_bytes), filename=EVENT_NOTIFICATION_FILENAME),
             )
-            state.update(
-                {
-                    "forum_thread_id": created.thread.id,
-                    "forum_message_id": created.message.id,
-                    "forum_created_at": datetime.utcnow().isoformat(),
-                }
-            )
+            messages[channel_key] = message.id
+            state["created_at"] = datetime.utcnow().isoformat()
         except discord.Forbidden:
-            logger.warning("Missing permissions to create event forum post")
+            logger.warning("Missing permission to send event notifications in channel %s", channel.id)
         except Exception:
-            logger.warning("Failed to create event forum post for event %s", scheduled_event.id, exc_info=True)
+            logger.warning(
+                "Failed to create event %s notification in channel %s",
+                scheduled_event.id,
+                channel.id,
+                exc_info=True,
+            )
 
-    async def _sync_forum_posts(
+    async def _sync_event_notifications(
         self,
         guild: discord.Guild,
         events: list[discord.ScheduledEvent],
@@ -909,8 +726,23 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
             if is_recurring and occurrence_start is None:
                 continue
 
-            await self._update_existing_event_thread(scheduled_event, occurrence_start)
-            await self._upsert_forum_post(scheduled_event, occurrence_start=occurrence_start)
+            cutoff = self._event_update_cutoff(scheduled_event, occurrence_start)
+            if cutoff is not None and cutoff <= now:
+                continue
+
+            for channel_id in EVENT_NOTIFICATION_CHANNEL_IDS:
+                channel = self.bot.get_channel(channel_id)
+                if not isinstance(channel, discord.TextChannel):
+                    logger.warning("Event notification channel %s is missing or not a text channel", channel_id)
+                    continue
+                if channel.guild.id != guild.id:
+                    logger.warning("Event notification channel %s belongs to a different guild", channel_id)
+                    continue
+                await self._upsert_event_notification(
+                    channel,
+                    scheduled_event,
+                    occurrence_start=occurrence_start,
+                )
 
     def _load_display_message_id(self) -> Optional[int]:
         try:
@@ -971,7 +803,7 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
             emoji_str = self._resolve_custom_emoji(guild, emoji_tag)
 
             # Match keyword as a standalone token (not inside another word).
-            pattern = re.compile(rf"(?<!\\w){re.escape(keyword)}(?!\\w)")
+            pattern = re.compile(rf"(?<!\w){re.escape(keyword)}(?!\w)")
 
             def _repl(match: re.Match) -> str:
                 return f"{match.group(0)} {emoji_str}"  # append with a space before emoji
@@ -1072,8 +904,8 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
 
                 # Save all events (not just filtered ones) to JSON
                 await self.save_events_to_json(events)
-                await self._sync_forum_posts(guild, events)
-                self._save_thread_state()
+                await self._sync_event_notifications(guild, events)
+                self._save_notification_state()
 
                 # Edit existing display message if possible (persists across restarts)
                 message: Optional[discord.Message] = None
@@ -1131,19 +963,9 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
         if self._target_guild_id and scheduled_event.guild_id != self._target_guild_id:
             return
 
-        # If we haven't initialized yet (race at startup), sync once.
-        if not self._thread_state.get("initialized", False):
-            await self._startup_sync_threads()
-
-        # Only create a thread once per event.
-        if not self._is_event_seen(scheduled_event.id):
-            await self._create_event_thread(scheduled_event)
-            self._mark_event_seen(scheduled_event.id)
-            self._save_thread_state()
-
         if scheduled_event.guild is not None:
-            await self._sync_forum_posts(scheduled_event.guild, [scheduled_event])
-            self._save_thread_state()
+            await self._sync_event_notifications(scheduled_event.guild, [scheduled_event])
+            self._save_notification_state()
 
         self._debounced_refresh()
 
@@ -1152,10 +974,10 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
         if self._target_guild_id and scheduled_event.guild_id != self._target_guild_id:
             return
 
-        state = self._thread_state.get("threads", {}).get(str(scheduled_event.id))
+        state = self._notification_state.get("events", {}).get(str(scheduled_event.id))
         if isinstance(state, dict):
             state["deleted_at"] = datetime.utcnow().isoformat()
-            self._save_thread_state()
+            self._save_notification_state()
 
         self._debounced_refresh()
 
@@ -1166,8 +988,8 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
             return
 
         if after and after.guild is not None:
-            await self._sync_forum_posts(after.guild, [after])
-            self._save_thread_state()
+            await self._sync_event_notifications(after.guild, [after])
+            self._save_notification_state()
 
         self._debounced_refresh()
 
@@ -1241,13 +1063,7 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
             embed.description = "No upcoming events scheduled."
         else:
             for event in events:
-                thread_url: Optional[str] = None
                 google_calendar_url = self._build_google_calendar_url(event)
-                thread_info = self._thread_state.get("threads", {}).get(str(event.id))
-                if isinstance(thread_info, dict):
-                    thread_id = thread_info.get("thread_id")
-                    if isinstance(thread_id, int):
-                        thread_url = f"https://discord.com/channels/{guild.id}/{thread_id}"
 
                 # Format the event time
                 start_time_str = (
@@ -1298,21 +1114,11 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
                         description = re.sub(r'https?://(?:discord|discordapp)\.com/channels/\d+/\d+', '', description).strip()
                         if description:
                             description = self._truncate_text(description, 100)
-                            if thread_url:
-                                detail_line = f"**[Details]({thread_url})**: {description}"
-                            else:
-                                detail_line = f"**Details:** {description}"
+                            detail_line = f"**Details:** {description}"
                     else:
                         # No channel mention or URL, show description normally
                         description = self._truncate_text(event.description, 100)
-                        if thread_url:
-                            detail_line = f"**[Details]({thread_url})**: {description}"
-                        else:
-                            detail_line = f"**Details:** {description}"
-
-                elif thread_url:
-                    # No description, but still provide a link to the event thread.
-                    fixed_lines.append(f"**[Details]({thread_url})**")
+                        detail_line = f"**Details:** {description}"
 
                 if google_calendar_url:
                     fixed_lines.append(f"**[Add to Google Calendar]({google_calendar_url})**")
