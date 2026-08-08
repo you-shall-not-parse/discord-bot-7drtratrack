@@ -23,6 +23,8 @@ LOGGER = logging.getLogger(__name__)
 
 STRATEGIC_REVIEW_CHANNEL_ID = 1535617056752537710
 STRATEGIC_REVIEW_ROLE_NAME = "Fight Arranger"
+NOTE_TITLE_PREFIX = "Strategic Review Note: "
+MAX_USER_TITLE_LENGTH = 100 - len(NOTE_TITLE_PREFIX)
 UK_TIMEZONE = ZoneInfo("Europe/London")
 STATE_PATH = Path(data_path("strategic_review_notes_state.json"))
 MONDAY_DIGEST_TIME = time(hour=9, minute=0, tzinfo=UK_TIMEZONE)
@@ -136,6 +138,10 @@ def _bold_title(title: str) -> str:
     return f"**{safe_title}**"
 
 
+def _display_title(title: str) -> str:
+    return f"{NOTE_TITLE_PREFIX}{title}"
+
+
 def _has_fight_arranger_role(user: discord.abc.User) -> bool:
     return any(
         getattr(role, "name", None) == STRATEGIC_REVIEW_ROLE_NAME
@@ -229,9 +235,9 @@ class StrategicReviewNote(commands.Cog):
         since_at = datetime.fromisoformat(str(note["since_at"]))
         captured_at = datetime.fromisoformat(str(note["created_at"]))
         embed = discord.Embed(
-            title=str(note["title"]),
+            title=_display_title(str(note["title"])),
             description=(
-                "The attached transcript is the starting context for this strategic review. "
+                "The transcript at the start of this thread is the context for this strategic review. "
                 "Download it and paste it into ChatGPT to summarise the discussion, then continue "
                 "the review in this thread."
             ),
@@ -305,9 +311,9 @@ class StrategicReviewNote(commands.Cog):
         since: str,
     ) -> None:
         clean_title = " ".join(title.strip().split())
-        if not clean_title or len(clean_title) > 100:
+        if not clean_title or len(clean_title) > MAX_USER_TITLE_LENGTH:
             await interaction.response.send_message(
-                "The title must contain between 1 and 100 characters.",
+                f"The title must contain between 1 and {MAX_USER_TITLE_LENGTH} characters.",
                 ephemeral=True,
             )
             return
@@ -359,14 +365,32 @@ class StrategicReviewNote(commands.Cog):
             "channel_id": channel.id,
         }
         filename = _safe_filename(clean_title, captured_at)
+        display_title = _display_title(clean_title)
         try:
-            thread = await channel.create_thread(
-                name=clean_title,
-                type=discord.ChannelType.public_thread,
+            parent_message = await channel.send(
+                content=_bold_title(display_title),
+                file=discord.File(io.BytesIO(transcript), filename=filename),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        except (discord.Forbidden, discord.HTTPException):
+            LOGGER.exception("Could not post the strategic review transcript.")
+            await interaction.followup.send(
+                "Discord could not post the strategic review transcript. Please check my Send Messages and Attach Files permissions.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            thread = await parent_message.create_thread(
+                name=display_title,
                 reason=f"Strategic review note created by {interaction.user} ({interaction.user.id})",
             )
         except (discord.Forbidden, discord.HTTPException):
             LOGGER.exception("Could not create strategic review note thread.")
+            try:
+                await parent_message.delete()
+            except (discord.Forbidden, discord.HTTPException):
+                LOGGER.exception("Could not remove incomplete strategic review transcript post.")
             await interaction.followup.send(
                 "Discord could not create the strategic review thread. Please check my Create Public Threads permission.",
                 ephemeral=True,
@@ -375,9 +399,8 @@ class StrategicReviewNote(commands.Cog):
 
         try:
             header_message = await thread.send(
-                content=_bold_title(clean_title),
+                content=_bold_title(display_title),
                 embed=self._note_embed(note),
-                file=discord.File(io.BytesIO(transcript), filename=filename),
                 view=StrategicReviewNoteView(),
                 allowed_mentions=discord.AllowedMentions.none(),
             )
@@ -389,8 +412,12 @@ class StrategicReviewNote(commands.Cog):
                 )
             except (discord.Forbidden, discord.HTTPException):
                 LOGGER.exception("Could not remove incomplete strategic review thread %s.", thread.id)
+            try:
+                await parent_message.delete()
+            except (discord.Forbidden, discord.HTTPException):
+                LOGGER.exception("Could not remove incomplete strategic review transcript post.")
             await interaction.followup.send(
-                "The thread was created, but Discord could not post its transcript. Please check my Send Messages in Threads and Attach Files permissions.",
+                "The thread was created, but Discord could not post its detailed note. Please check my Send Messages in Threads permission.",
                 ephemeral=True,
             )
             return
@@ -399,6 +426,7 @@ class StrategicReviewNote(commands.Cog):
             {
                 "thread_id": thread.id,
                 "header_message_id": header_message.id,
+                "parent_message_id": parent_message.id,
             }
         )
         async with self._state_lock:
@@ -513,7 +541,10 @@ class StrategicReviewNote(commands.Cog):
                 if (thread_id is not None and int(note.get("thread_id", 0)) == thread_id)
                 or (
                     message_ids is not None
-                    and int(note.get("header_message_id", 0)) in message_ids
+                    and (
+                        int(note.get("header_message_id", 0)) in message_ids
+                        or int(note.get("parent_message_id", 0)) in message_ids
+                    )
                 )
             ]
             if not keys_to_remove:
@@ -557,7 +588,9 @@ class StrategicReviewNote(commands.Cog):
         for note in notes:
             status = "OPEN" if note.get("status") == "open" else "CLOSED"
             created = datetime.fromisoformat(str(note["created_at"]))
-            title = discord.utils.escape_markdown(str(note.get("title") or "Untitled"))
+            title = discord.utils.escape_markdown(
+                _display_title(str(note.get("title") or "Untitled"))
+            )
             if len(title) > 80:
                 title = title[:77] + "..."
             lines.append(

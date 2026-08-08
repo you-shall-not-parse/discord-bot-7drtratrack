@@ -6,6 +6,7 @@ from unittest.mock import Mock
 
 from cogs.strategic_review_note import (
     StrategicReviewNote,
+    _display_title,
     _has_fight_arranger_role,
     _parse_uk_since_time,
     _safe_filename,
@@ -57,14 +58,30 @@ class StrategicReviewNoteTimeTests(unittest.TestCase):
         self.assertFalse(_has_fight_arranger_role(wrong_case))
         self.assertFalse(_has_fight_arranger_role(no_roles))
 
+    def test_display_title_has_strategic_review_prefix(self) -> None:
+        self.assertEqual(
+            _display_title("Use of Snipers"),
+            "Strategic Review Note: Use of Snipers",
+        )
+
 
 class StrategicReviewNoteDeletionTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.cog = StrategicReviewNote.__new__(StrategicReviewNote)
         self.cog.state = {
             "notes": {
-                "100": {"thread_id": 100, "header_message_id": 200, "title": "First"},
-                "101": {"thread_id": 101, "header_message_id": 201, "title": "Second"},
+                "100": {
+                    "thread_id": 100,
+                    "header_message_id": 200,
+                    "parent_message_id": 300,
+                    "title": "First",
+                },
+                "101": {
+                    "thread_id": 101,
+                    "header_message_id": 201,
+                    "parent_message_id": 301,
+                    "title": "Second",
+                },
             }
         }
         self.cog._state_lock = asyncio.Lock()
@@ -82,6 +99,13 @@ class StrategicReviewNoteDeletionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertNotIn("101", self.cog.state["notes"])
         self.assertIn("100", self.cog.state["notes"])
+        self.cog._save_state.assert_called_once_with()
+
+    async def test_removes_entry_when_parent_transcript_is_deleted(self) -> None:
+        await self.cog._remove_deleted_note(message_ids={300})
+
+        self.assertNotIn("100", self.cog.state["notes"])
+        self.assertIn("101", self.cog.state["notes"])
         self.cog._save_state.assert_called_once_with()
 
 
