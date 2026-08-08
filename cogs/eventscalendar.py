@@ -644,7 +644,10 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
     ) -> None:
         state = self._get_event_state(scheduled_event.id)
         messages = state.setdefault("notification_messages", {})
+        deleted_channels = state.setdefault("deleted_channels", [])
         channel_key = str(channel.id)
+        if channel_key in {str(value) for value in deleted_channels}:
+            return
         message_id = messages.get(channel_key)
         title = self._format_event_title(channel.guild, scheduled_event.name)
         embed = self._build_event_notification_embed(
@@ -677,6 +680,13 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
                 return
             except discord.NotFound:
                 messages.pop(channel_key, None)
+                deleted_channels.append(channel_key)
+                logger.info(
+                    "Event %s notification was deleted from channel %s; it will not be recreated",
+                    scheduled_event.id,
+                    channel.id,
+                )
+                return
             except Exception:
                 logger.warning(
                     "Failed to update event %s notification in channel %s",
@@ -707,6 +717,8 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
         self,
         guild: discord.Guild,
         events: list[discord.ScheduledEvent],
+        *,
+        allow_new_events: bool = False,
     ) -> None:
         raw_events = await self._fetch_raw_scheduled_events(guild)
         now = datetime.now(timezone.utc)
@@ -714,6 +726,13 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
         for scheduled_event in events:
             if scheduled_event.status not in (discord.EventStatus.scheduled, discord.EventStatus.active):
                 continue
+
+            event_key = str(scheduled_event.id)
+            tracked_events = self._notification_state.setdefault("events", {})
+            if event_key not in tracked_events and not allow_new_events:
+                continue
+            if allow_new_events:
+                tracked_events.setdefault(event_key, {})
 
             payload = raw_events.get(scheduled_event.id)
             occurrence_start = self._get_due_occurrence_start(
@@ -964,7 +983,11 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
             return
 
         if scheduled_event.guild is not None:
-            await self._sync_event_notifications(scheduled_event.guild, [scheduled_event])
+            await self._sync_event_notifications(
+                scheduled_event.guild,
+                [scheduled_event],
+                allow_new_events=True,
+            )
             self._save_notification_state()
 
         self._debounced_refresh()
