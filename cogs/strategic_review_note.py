@@ -93,6 +93,63 @@ def _parse_uk_since_time(
     return since_utc, None
 
 
+def _parse_uk_transcript_window(
+    date_value: str,
+    from_value: str,
+    to_value: str,
+    *,
+    now_utc: datetime | None = None,
+) -> tuple[datetime | None, datetime | None, str | None]:
+    """Parse a same-day UK transcript window and return aware UTC datetimes."""
+    current_utc = now_utc or datetime.now(timezone.utc)
+    if current_utc.tzinfo is None:
+        current_utc = current_utc.replace(tzinfo=timezone.utc)
+    current_utc = current_utc.astimezone(timezone.utc)
+    current_uk = current_utc.astimezone(UK_TIMEZONE)
+
+    raw_date = " ".join(date_value.strip().split())
+    if raw_date.casefold() == "today":
+        selected_date = current_uk.date()
+    elif raw_date.casefold() == "yesterday":
+        selected_date = current_uk.date() - timedelta(days=1)
+    else:
+        selected_date = None
+        for date_format in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d"):
+            try:
+                selected_date = datetime.strptime(raw_date, date_format).date()
+                break
+            except ValueError:
+                continue
+
+    if selected_date is None:
+        return None, None, (
+            "Use a UK date such as `07/08/2026`, `2026-08-07`, `today`, or `yesterday`."
+        )
+
+    parsed_times: list[time] = []
+    for label, value in (("from", from_value), ("to", to_value)):
+        match = re.fullmatch(r"([01]?\d|2[0-3])[:.]([0-5]\d)", value.strip())
+        if match is None:
+            return None, None, f"The `{label}` time must use UK 24-hour time, for example `18:30`."
+        parsed_times.append(time(hour=int(match.group(1)), minute=int(match.group(2))))
+
+    local_values: list[datetime] = []
+    for label, parsed_time in zip(("from", "to"), parsed_times):
+        local_naive = datetime.combine(selected_date, parsed_time)
+        local_value = local_naive.replace(tzinfo=UK_TIMEZONE)
+        round_trip = local_value.astimezone(timezone.utc).astimezone(UK_TIMEZONE).replace(tzinfo=None)
+        if round_trip != local_naive:
+            return None, None, f"The `{label}` UK time does not exist because of the daylight-saving change."
+        local_values.append(local_value)
+
+    from_utc, to_utc = (value.astimezone(timezone.utc) for value in local_values)
+    if from_utc >= to_utc:
+        return None, None, "The `from` time must be earlier than the `to` time."
+    if to_utc > current_utc:
+        return None, None, "The transcript `to` time cannot be in the future."
+    return from_utc, to_utc, None
+
+
 def _clean_transcript_text(value: str) -> str:
     return value.replace("\r\n", "\n").replace("\r", "\n")
 
@@ -234,6 +291,7 @@ class StrategicReviewNote(commands.Cog):
     def _note_embed(note: dict[str, Any], *, closed: bool = False) -> discord.Embed:
         since_at = datetime.fromisoformat(str(note["since_at"]))
         captured_at = datetime.fromisoformat(str(note["created_at"]))
+        until_at = datetime.fromisoformat(str(note.get("until_at") or note["created_at"]))
         embed = discord.Embed(
             title=_display_title(str(note["title"])),
             description=(
@@ -248,7 +306,7 @@ class StrategicReviewNote(commands.Cog):
         embed.add_field(name="Created by", value=f"<@{note['creator_id']}>", inline=True)
         embed.add_field(
             name="Transcript window",
-            value=f"<t:{int(since_at.timestamp())}:F> to <t:{int(captured_at.timestamp())}:F>",
+            value=f"<t:{int(since_at.timestamp())}:F> to <t:{int(until_at.timestamp())}:F>",
             inline=False,
         )
         embed.add_field(
@@ -271,13 +329,13 @@ class StrategicReviewNote(commands.Cog):
         channel: discord.TextChannel,
         *,
         since_utc: datetime,
-        captured_at: datetime,
+        until_utc: datetime,
     ) -> tuple[bytes, int]:
         blocks: list[str] = []
         async for message in channel.history(
             limit=None,
             after=since_utc,
-            before=captured_at,
+            before=until_utc,
             oldest_first=True,
         ):
             blocks.append(_message_transcript_block(message))
@@ -286,7 +344,7 @@ class StrategicReviewNote(commands.Cog):
             "STRATEGIC REVIEW NOTE TRANSCRIPT\n"
             f"Channel: #{channel.name} ({channel.id})\n"
             f"From: {since_utc.astimezone(UK_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
-            f"Captured: {captured_at.astimezone(UK_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
+            f"To: {until_utc.astimezone(UK_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
             f"Messages: {len(blocks)}\n"
             "\n"
         )
@@ -300,15 +358,20 @@ class StrategicReviewNote(commands.Cog):
     @app_commands.guilds(discord.Object(id=MAIN_GUILD_ID))
     @app_commands.guild_only()
     @app_commands.check(_is_fight_arranger)
+    @app_commands.rename(from_time="from", to_time="to")
     @app_commands.describe(
         title="Title for the new strategic review thread",
-        since="Start of the transcript in UK time, e.g. yesterday 18:00",
+        date="UK date for the transcript, e.g. 07/08/2026 or yesterday",
+        from_time="Start time in UK 24-hour format, e.g. 18:00",
+        to_time="End time in UK 24-hour format, e.g. 20:30",
     )
     async def strategic_review_note(
         self,
         interaction: discord.Interaction,
         title: str,
-        since: str,
+        date: str,
+        from_time: str,
+        to_time: str,
     ) -> None:
         clean_title = " ".join(title.strip().split())
         if not clean_title or len(clean_title) > MAX_USER_TITLE_LENGTH:
@@ -318,9 +381,14 @@ class StrategicReviewNote(commands.Cog):
             )
             return
 
-        captured_at = datetime.now(timezone.utc)
-        since_utc, error = _parse_uk_since_time(since, now_utc=captured_at)
-        if since_utc is None:
+        created_at = datetime.now(timezone.utc)
+        since_utc, until_utc, error = _parse_uk_transcript_window(
+            date,
+            from_time,
+            to_time,
+            now_utc=created_at,
+        )
+        if since_utc is None or until_utc is None:
             await interaction.response.send_message(error, ephemeral=True)
             return
 
@@ -337,7 +405,7 @@ class StrategicReviewNote(commands.Cog):
             transcript, message_count = await self._build_transcript(
                 channel,
                 since_utc=since_utc,
-                captured_at=captured_at,
+                until_utc=until_utc,
             )
         except (discord.Forbidden, discord.HTTPException):
             LOGGER.exception("Could not read strategic review channel history.")
@@ -358,13 +426,14 @@ class StrategicReviewNote(commands.Cog):
         note: dict[str, Any] = {
             "title": clean_title,
             "creator_id": interaction.user.id,
-            "created_at": captured_at.isoformat(),
+            "created_at": created_at.isoformat(),
             "since_at": since_utc.isoformat(),
+            "until_at": until_utc.isoformat(),
             "status": "open",
             "message_count": message_count,
             "channel_id": channel.id,
         }
-        filename = _safe_filename(clean_title, captured_at)
+        filename = _safe_filename(clean_title, created_at)
         display_title = _display_title(clean_title)
         try:
             parent_message = await channel.send(
@@ -627,6 +696,16 @@ class StrategicReviewNote(commands.Cog):
             embed.add_field(name="Open", value=str(open_count), inline=True)
             embed.add_field(name="Closed", value=str(closed_count), inline=True)
             embed.add_field(name="Total", value=str(len(notes)), inline=True)
+            embed.add_field(
+                name="Create a strategic review note",
+                value=(
+                    "Use `/strategic-review-note` and provide a title, UK date, start time and end time. "
+                    "The bot captures messages from that window and opens a review thread.\n"
+                    "Example: `/strategic-review-note title:Use of Snipers date:07/08/2026 "
+                    "from:18:00 to:20:30`"
+                ),
+                inline=False,
+            )
             embed.set_footer(text="Posted every Monday at 09:00 UK time")
             embeds.append(embed)
         return embeds

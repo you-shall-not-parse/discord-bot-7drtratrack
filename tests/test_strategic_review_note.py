@@ -9,6 +9,7 @@ from cogs.strategic_review_note import (
     _display_title,
     _has_fight_arranger_role,
     _parse_uk_since_time,
+    _parse_uk_transcript_window,
     _safe_filename,
 )
 
@@ -62,6 +63,81 @@ class StrategicReviewNoteTimeTests(unittest.TestCase):
         self.assertEqual(
             _display_title("Use of Snipers"),
             "Strategic Review Note: Use of Snipers",
+        )
+
+    def test_parses_explicit_date_from_and_to_window(self) -> None:
+        from_utc, to_utc, error = _parse_uk_transcript_window(
+            "07/08/2026",
+            "18:00",
+            "20:30",
+            now_utc=self.now,
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(from_utc, datetime(2026, 8, 7, 17, 0, tzinfo=timezone.utc))
+        self.assertEqual(to_utc, datetime(2026, 8, 7, 19, 30, tzinfo=timezone.utc))
+
+    def test_rejects_window_when_from_is_not_before_to(self) -> None:
+        from_utc, to_utc, error = _parse_uk_transcript_window(
+            "07/08/2026",
+            "20:30",
+            "18:00",
+            now_utc=self.now,
+        )
+
+        self.assertIsNone(from_utc)
+        self.assertIsNone(to_utc)
+        self.assertIn("earlier", error or "")
+
+    def test_rejects_window_with_future_to_time(self) -> None:
+        from_utc, to_utc, error = _parse_uk_transcript_window(
+            "today",
+            "12:00",
+            "23:00",
+            now_utc=self.now,
+        )
+
+        self.assertIsNone(from_utc)
+        self.assertIsNone(to_utc)
+        self.assertIn("future", error or "")
+
+    def test_slash_command_exposes_date_from_and_to_options(self) -> None:
+        option_names = [
+            option["name"]
+            for option in StrategicReviewNote.strategic_review_note.to_dict()["options"]
+        ]
+
+        self.assertEqual(option_names, ["title", "date", "from", "to"])
+
+    def test_weekly_embed_explains_slash_command(self) -> None:
+        cog = StrategicReviewNote.__new__(StrategicReviewNote)
+        cog.state = {"notes": {}}
+
+        embed = cog._digest_embeds(now_uk=self.now)[0].to_dict()
+        fields = {field["name"]: field["value"] for field in embed["fields"]}
+
+        instructions = fields["Create a strategic review note"]
+        self.assertIn("/strategic-review-note", instructions)
+        self.assertIn("date:07/08/2026", instructions)
+        self.assertIn("from:18:00", instructions)
+        self.assertIn("to:20:30", instructions)
+
+    def test_note_embed_uses_selected_to_time(self) -> None:
+        note = {
+            "title": "Use of Snipers",
+            "creator_id": 123,
+            "created_at": "2026-08-08T12:00:00+00:00",
+            "since_at": "2026-08-07T17:00:00+00:00",
+            "until_at": "2026-08-07T19:30:00+00:00",
+            "message_count": 4,
+        }
+
+        payload = StrategicReviewNote._note_embed(note).to_dict()
+        fields = {field["name"]: field["value"] for field in payload["fields"]}
+
+        self.assertEqual(
+            fields["Transcript window"],
+            "<t:1786122000:F> to <t:1786131000:F>",
         )
 
 
