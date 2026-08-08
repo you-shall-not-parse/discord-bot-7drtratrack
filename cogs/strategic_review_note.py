@@ -22,6 +22,7 @@ from state_io import atomic_json_dump
 LOGGER = logging.getLogger(__name__)
 
 STRATEGIC_REVIEW_CHANNEL_ID = 1535617056752537710
+STRATEGIC_REVIEW_ROLE_NAME = "Fight Arranger"
 UK_TIMEZONE = ZoneInfo("Europe/London")
 STATE_PATH = Path(data_path("strategic_review_notes_state.json"))
 MONDAY_DIGEST_TIME = time(hour=9, minute=0, tzinfo=UK_TIMEZONE)
@@ -128,6 +129,22 @@ def _safe_filename(title: str, captured_at: datetime) -> str:
         slug = "note"
     stamp = captured_at.astimezone(UK_TIMEZONE).strftime("%Y%m%d-%H%M")
     return f"strategic-review-{slug}-{stamp}.txt"
+
+
+def _bold_title(title: str) -> str:
+    safe_title = discord.utils.escape_mentions(discord.utils.escape_markdown(title))
+    return f"**{safe_title}**"
+
+
+def _has_fight_arranger_role(user: discord.abc.User) -> bool:
+    return any(
+        getattr(role, "name", None) == STRATEGIC_REVIEW_ROLE_NAME
+        for role in getattr(user, "roles", ())
+    )
+
+
+def _is_fight_arranger(interaction: discord.Interaction) -> bool:
+    return _has_fight_arranger_role(interaction.user)
 
 
 def _load_state() -> dict[str, Any]:
@@ -276,6 +293,7 @@ class StrategicReviewNote(commands.Cog):
     )
     @app_commands.guilds(discord.Object(id=MAIN_GUILD_ID))
     @app_commands.guild_only()
+    @app_commands.check(_is_fight_arranger)
     @app_commands.describe(
         title="Title for the new strategic review thread",
         since="Start of the transcript in UK time, e.g. yesterday 18:00",
@@ -342,33 +360,37 @@ class StrategicReviewNote(commands.Cog):
         }
         filename = _safe_filename(clean_title, captured_at)
         try:
-            header_message = await channel.send(
+            thread = await channel.create_thread(
+                name=clean_title,
+                type=discord.ChannelType.public_thread,
+                reason=f"Strategic review note created by {interaction.user} ({interaction.user.id})",
+            )
+        except (discord.Forbidden, discord.HTTPException):
+            LOGGER.exception("Could not create strategic review note thread.")
+            await interaction.followup.send(
+                "Discord could not create the strategic review thread. Please check my Create Public Threads permission.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            header_message = await thread.send(
+                content=_bold_title(clean_title),
                 embed=self._note_embed(note),
                 file=discord.File(io.BytesIO(transcript), filename=filename),
                 view=StrategicReviewNoteView(),
                 allowed_mentions=discord.AllowedMentions.none(),
             )
         except (discord.Forbidden, discord.HTTPException):
-            LOGGER.exception("Could not post strategic review note header.")
-            await interaction.followup.send(
-                "Discord could not post the strategic review note. Please check my message and attachment permissions.",
-                ephemeral=True,
-            )
-            return
-
-        try:
-            thread = await header_message.create_thread(
-                name=clean_title,
-                reason=f"Strategic review note created by {interaction.user} ({interaction.user.id})",
-            )
-        except (discord.Forbidden, discord.HTTPException):
-            LOGGER.exception("Could not create strategic review note thread.")
+            LOGGER.exception("Could not post the strategic review note header inside thread %s.", thread.id)
             try:
-                await header_message.delete()
+                await thread.delete(
+                    reason="Removing incomplete strategic review note after its header failed to post."
+                )
             except (discord.Forbidden, discord.HTTPException):
-                LOGGER.exception("Could not remove the incomplete strategic review header.")
+                LOGGER.exception("Could not remove incomplete strategic review thread %s.", thread.id)
             await interaction.followup.send(
-                "Discord could not create the strategic review thread. Please check my Create Public Threads permission.",
+                "The thread was created, but Discord could not post its transcript. Please check my Send Messages in Threads and Attach Files permissions.",
                 ephemeral=True,
             )
             return
@@ -387,6 +409,22 @@ class StrategicReviewNote(commands.Cog):
             f"Created strategic review note {thread.mention} with {message_count} message(s) in its transcript.",
             ephemeral=True,
         )
+
+    @strategic_review_note.error
+    async def strategic_review_note_error(
+        self,
+        interaction: discord.Interaction,
+        error: app_commands.AppCommandError,
+    ) -> None:
+        if isinstance(error, app_commands.CheckFailure):
+            message = f"You need the **{STRATEGIC_REVIEW_ROLE_NAME}** role to use this command."
+            if interaction.response.is_done():
+                await interaction.followup.send(message, ephemeral=True)
+            else:
+                await interaction.response.send_message(message, ephemeral=True)
+            return
+        LOGGER.exception("Strategic review note command failed.", exc_info=error)
+        raise error
 
     async def close_note(self, interaction: discord.Interaction) -> None:
         message = interaction.message
@@ -425,7 +463,16 @@ class StrategicReviewNote(commands.Cog):
                 return
 
             closed_at = datetime.now(timezone.utc)
+            closed_note = dict(note)
+            closed_note["status"] = "closed"
+            closed_note["closed_at"] = closed_at.isoformat()
+            closed_note["closed_by"] = interaction.user.id
             try:
+                await message.edit(
+                    embed=self._note_embed(closed_note, closed=True),
+                    view=StrategicReviewNoteView(closed=True),
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
                 await thread.edit(
                     archived=True,
                     locked=True,
@@ -433,27 +480,68 @@ class StrategicReviewNote(commands.Cog):
                 )
             except (discord.Forbidden, discord.HTTPException):
                 LOGGER.exception("Could not close strategic review thread %s.", thread.id)
+                try:
+                    await message.edit(
+                        embed=self._note_embed(note),
+                        view=StrategicReviewNoteView(),
+                        allowed_mentions=discord.AllowedMentions.none(),
+                    )
+                except (discord.Forbidden, discord.HTTPException):
+                    LOGGER.exception("Could not restore the open header for note %s.", thread.id)
                 await interaction.followup.send(
                     "I could not close and lock this thread. Please check my Manage Threads permission.",
                     ephemeral=True,
                 )
                 return
 
-            note["status"] = "closed"
-            note["closed_at"] = closed_at.isoformat()
-            note["closed_by"] = interaction.user.id
+            note.update(closed_note)
             self._save_state()
 
-        try:
-            await message.edit(
-                embed=self._note_embed(note, closed=True),
-                view=StrategicReviewNoteView(closed=True),
-                allowed_mentions=discord.AllowedMentions.none(),
-            )
-        except (discord.Forbidden, discord.HTTPException):
-            LOGGER.exception("Closed note %s but could not update its header.", thread.id)
-
         await interaction.followup.send(f"Closed and locked **{note['title']}**.", ephemeral=True)
+
+    async def _remove_deleted_note(
+        self,
+        *,
+        thread_id: int | None = None,
+        message_ids: set[int] | None = None,
+    ) -> None:
+        async with self._state_lock:
+            notes = self.state["notes"]
+            keys_to_remove = [
+                key
+                for key, note in notes.items()
+                if (thread_id is not None and int(note.get("thread_id", 0)) == thread_id)
+                or (
+                    message_ids is not None
+                    and int(note.get("header_message_id", 0)) in message_ids
+                )
+            ]
+            if not keys_to_remove:
+                return
+            for key in keys_to_remove:
+                removed = notes.pop(key)
+                LOGGER.info(
+                    "Removed deleted strategic review note %s (%s) from the index.",
+                    removed.get("title"),
+                    key,
+                )
+            self._save_state()
+
+    @commands.Cog.listener()
+    async def on_thread_delete(self, thread: discord.Thread) -> None:
+        await self._remove_deleted_note(thread_id=thread.id)
+
+    @commands.Cog.listener()
+    async def on_raw_thread_delete(self, payload: discord.RawThreadDeleteEvent) -> None:
+        await self._remove_deleted_note(thread_id=payload.thread_id)
+
+    @commands.Cog.listener()
+    async def on_raw_message_delete(self, payload: discord.RawMessageDeleteEvent) -> None:
+        await self._remove_deleted_note(message_ids={payload.message_id})
+
+    @commands.Cog.listener()
+    async def on_raw_bulk_message_delete(self, payload: discord.RawBulkMessageDeleteEvent) -> None:
+        await self._remove_deleted_note(message_ids=set(payload.message_ids))
 
     def _digest_embeds(self, *, now_uk: datetime) -> list[discord.Embed]:
         notes = list(self.state["notes"].values())

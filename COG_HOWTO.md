@@ -293,9 +293,9 @@ Overview: Creates transcript-backed strategic review threads and posts a weekly 
 
 Slash commands: `/strategic-review-note`.
 
-How to use: Run `/strategic-review-note`, enter a thread title, and supply the transcript start in UK time. Accepted examples are `09:30`, `today 09:30`, `yesterday 18:00`, `07/08/2026 09:30`, and `2026-08-07 09:30`. The bot posts a `.txt` transcript of messages from the strategic review channel, then opens a thread from that header. Paste the transcript into ChatGPT for a summary and continue the discussion in the thread.
+How to use: Run `/strategic-review-note`, enter a thread title, and supply the transcript start in UK time. Accepted examples are `09:30`, `today 09:30`, `yesterday 18:00`, `07/08/2026 09:30`, and `2026-08-07 09:30`. The bot opens a standalone public thread and posts the bold title, `.txt` transcript, review embed, and close control inside it. The parent channel only shows Discord's compact thread entry. Paste the transcript into ChatGPT for a summary and continue the discussion in the thread.
 
-Rules and notes: The transcript ends at the instant the command is run. Anyone who can use the header can press **Close Note**, which archives and locks its thread. Every Monday at 09:00 UK time the bot posts an embed index with open and closed counts and links to all tracked notes. The bot needs View Channel, Read Message History, Send Messages, Attach Files, Create Public Threads, Send Messages in Threads, and Manage Threads in the configured channel.
+Rules and notes: Only members with the **Fight Arranger** role can run the slash command. The transcript ends at the instant the command is run. Anyone who can use the header can press **Close Note**, which archives and locks its thread. Deleting either the thread or its transcript/header message removes that note from the saved index and future Monday summaries. Every Monday at 09:00 UK time the bot posts an embed index with open and closed counts and links to all tracked notes. The bot needs View Channel, Read Message History, Send Messages, Attach Files, Create Public Threads, Send Messages in Threads, and Manage Threads in the configured channel.
 
 ## `hellorleaderboard.py`
 

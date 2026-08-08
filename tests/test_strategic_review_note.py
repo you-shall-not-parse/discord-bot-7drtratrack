@@ -1,7 +1,15 @@
+import asyncio
 import unittest
 from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import Mock
 
-from cogs.strategic_review_note import _parse_uk_since_time, _safe_filename
+from cogs.strategic_review_note import (
+    StrategicReviewNote,
+    _has_fight_arranger_role,
+    _parse_uk_since_time,
+    _safe_filename,
+)
 
 
 class StrategicReviewNoteTimeTests(unittest.TestCase):
@@ -39,6 +47,42 @@ class StrategicReviewNoteTimeTests(unittest.TestCase):
         filename = _safe_filename("A review: plans / risks?", self.now)
 
         self.assertEqual(filename, "strategic-review-A-review-plans-risks-20260808-1300.txt")
+
+    def test_fight_arranger_role_is_required_by_exact_name(self) -> None:
+        allowed = SimpleNamespace(roles=[SimpleNamespace(name="Fight Arranger")])
+        wrong_case = SimpleNamespace(roles=[SimpleNamespace(name="fight arranger")])
+        no_roles = SimpleNamespace()
+
+        self.assertTrue(_has_fight_arranger_role(allowed))
+        self.assertFalse(_has_fight_arranger_role(wrong_case))
+        self.assertFalse(_has_fight_arranger_role(no_roles))
+
+
+class StrategicReviewNoteDeletionTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.cog = StrategicReviewNote.__new__(StrategicReviewNote)
+        self.cog.state = {
+            "notes": {
+                "100": {"thread_id": 100, "header_message_id": 200, "title": "First"},
+                "101": {"thread_id": 101, "header_message_id": 201, "title": "Second"},
+            }
+        }
+        self.cog._state_lock = asyncio.Lock()
+        self.cog._save_state = Mock()
+
+    async def test_removes_entry_when_thread_is_deleted(self) -> None:
+        await self.cog._remove_deleted_note(thread_id=100)
+
+        self.assertNotIn("100", self.cog.state["notes"])
+        self.assertIn("101", self.cog.state["notes"])
+        self.cog._save_state.assert_called_once_with()
+
+    async def test_removes_entry_when_header_is_deleted(self) -> None:
+        await self.cog._remove_deleted_note(message_ids={201})
+
+        self.assertNotIn("101", self.cog.state["notes"])
+        self.assertIn("100", self.cog.state["notes"])
+        self.cog._save_state.assert_called_once_with()
 
 
 if __name__ == "__main__":
