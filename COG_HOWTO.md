@@ -55,7 +55,7 @@ Slash commands: `/bulkdelete`.
 
 How to use: Run `/bulkdelete date:13/08/2026 from:18:00 to:20:30` in the channel to clean. Review the ephemeral message counts and its start and finish message links, then choose **Delete messages** or **Cancel**.
 
-Rules and notes: Only Discord users `1250569593609654316` and `1109147750932676649` can use it. The finish minute is inclusive. The bot re-checks ✅ reactions after confirmation, skips every message carrying that emoji, and DMs a text transcript of messages it successfully deleted. The bot needs View Channel, Read Message History, and Manage Messages in the channel. Messages older than Discord's 14-day bulk-delete limit are deleted individually and may take longer.
+Rules and notes: Only Discord users `1250569593609654316` and `1109147750932676649` can use it. A single operation can delete at most 20 messages; choose a smaller time range if more are found. The finish minute is inclusive. Messages sent by RatBot are always excluded. The bot re-checks ✅ reactions after confirmation, skips every message carrying that emoji, and DMs a text transcript of messages it successfully deleted. The bot needs View Channel, Read Message History, and Manage Messages in the channel. Messages older than Discord's 14-day bulk-delete limit are deleted individually and may take longer.
 
 ## `certify.py`
 

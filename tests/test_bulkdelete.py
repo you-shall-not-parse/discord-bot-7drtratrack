@@ -2,7 +2,13 @@ import unittest
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from cogs.bulkdelete import BulkDelete, _has_protected_tick, _parse_uk_window
+from cogs.bulkdelete import (
+    MAX_MESSAGES_TO_DELETE,
+    BulkDelete,
+    _has_protected_tick,
+    _is_bot_message,
+    _parse_uk_window,
+)
 
 
 class BulkDeleteTimeTests(unittest.TestCase):
@@ -45,6 +51,9 @@ class BulkDeleteTimeTests(unittest.TestCase):
 
 
 class BulkDeleteProtectionTests(unittest.TestCase):
+    def test_deletion_limit_is_twenty(self) -> None:
+        self.assertEqual(MAX_MESSAGES_TO_DELETE, 20)
+
     def test_exact_tick_reaction_protects_message(self) -> None:
         message = SimpleNamespace(reactions=[SimpleNamespace(emoji="✅")])
         self.assertTrue(_has_protected_tick(message))
@@ -52,6 +61,11 @@ class BulkDeleteProtectionTests(unittest.TestCase):
     def test_other_reactions_do_not_protect_message(self) -> None:
         message = SimpleNamespace(reactions=[SimpleNamespace(emoji="👍")])
         self.assertFalse(_has_protected_tick(message))
+
+    def test_ratbot_message_is_excluded_by_author_id(self) -> None:
+        message = SimpleNamespace(author=SimpleNamespace(id=1234))
+        self.assertTrue(_is_bot_message(message, 1234))
+        self.assertFalse(_is_bot_message(message, 5678))
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ LOGGER = logging.getLogger(__name__)
 UK_TIMEZONE = ZoneInfo("Europe/London")
 ALLOWED_USER_IDS = frozenset({1250569593609654316, 1109147750932676649})
 PROTECTED_EMOJI = "✅"
+MAX_MESSAGES_TO_DELETE = 20
 CONFIRMATION_TIMEOUT_SECONDS = 120
 TRANSCRIPT_CHUNK_BYTES = 7 * 1024 * 1024
 
@@ -84,6 +85,10 @@ def _parse_uk_window(
 
 def _has_protected_tick(message: discord.Message) -> bool:
     return any(str(reaction.emoji) == PROTECTED_EMOJI for reaction in message.reactions)
+
+
+def _is_bot_message(message: discord.Message, bot_user_id: int) -> bool:
+    return getattr(message.author, "id", None) == bot_user_id
 
 
 def _transcript_block(message: discord.Message) -> str:
@@ -253,11 +258,29 @@ class BulkDelete(commands.Cog):
             await interaction.followup.send("There are no messages in that date and time range.", ephemeral=True)
             return
 
-        protected_count = sum(_has_protected_tick(message) for message in messages)
-        delete_count = len(messages) - protected_count
+        bot_user = self.bot.user
+        if bot_user is None:
+            await interaction.followup.send("I could not identify the bot account, so nothing was deleted.", ephemeral=True)
+            return
+
+        bot_message_count = sum(_is_bot_message(message, bot_user.id) for message in messages)
+        protected_count = sum(
+            _has_protected_tick(message)
+            for message in messages
+            if not _is_bot_message(message, bot_user.id)
+        )
+        delete_count = len(messages) - protected_count - bot_message_count
         if delete_count == 0:
             await interaction.followup.send(
-                f"All {protected_count} messages in that range have {PROTECTED_EMOJI}, so nothing can be deleted.",
+                f"There are no deletable messages in that range. Skipped **{protected_count}** with "
+                f"{PROTECTED_EMOJI} and **{bot_message_count}** sent by RatBot.",
+                ephemeral=True,
+            )
+            return
+        if delete_count > MAX_MESSAGES_TO_DELETE:
+            await interaction.followup.send(
+                f"That range contains **{delete_count}** unprotected messages. "
+                f"The maximum is **{MAX_MESSAGES_TO_DELETE}**; choose a smaller time range.",
                 ephemeral=True,
             )
             return
@@ -269,7 +292,8 @@ class BulkDelete(commands.Cog):
             f"Channel: {getattr(channel, 'mention', '#unknown')}\n"
             f"Range: <t:{int(start_utc.timestamp())}:F> to <t:{int(finish_utc.timestamp())}:F> (UK selection)\n"
             f"Boundary messages: [start]({start_link}) · [finish]({finish_link})\n"
-            f"Will delete: **{delete_count}** · Will skip because of {PROTECTED_EMOJI}: **{protected_count}**\n\n"
+            f"Will delete: **{delete_count}** · Skip with {PROTECTED_EMOJI}: **{protected_count}** · "
+            f"Skip from RatBot: **{bot_message_count}**\n\n"
             "Protection will be checked again immediately before deletion. This cannot be undone."
         )
         view = BulkDeleteConfirmation(self, interaction.user.id, channel, start_utc, finish_utc)
@@ -292,8 +316,28 @@ class BulkDelete(commands.Cog):
                 await interaction.followup.send("I could not re-check the messages, so nothing was deleted.", ephemeral=True)
                 return
 
-            protected = [message for message in messages if _has_protected_tick(message)]
-            candidates = [message for message in messages if not _has_protected_tick(message)]
+            bot_user = self.bot.user
+            if bot_user is None:
+                await interaction.followup.send("I could not identify the bot account, so nothing was deleted.", ephemeral=True)
+                return
+            bot_messages = [message for message in messages if _is_bot_message(message, bot_user.id)]
+            protected = [
+                message
+                for message in messages
+                if not _is_bot_message(message, bot_user.id) and _has_protected_tick(message)
+            ]
+            candidates = [
+                message
+                for message in messages
+                if not _is_bot_message(message, bot_user.id) and not _has_protected_tick(message)
+            ]
+            if len(candidates) > MAX_MESSAGES_TO_DELETE:
+                await interaction.followup.send(
+                    f"Nothing was deleted because the final re-check found **{len(candidates)}** unprotected messages. "
+                    f"The maximum is **{MAX_MESSAGES_TO_DELETE}**; run the command again with a smaller time range.",
+                    ephemeral=True,
+                )
+                return
             deleted: list[discord.Message] = []
             failed = 0
             cutoff = discord.utils.utcnow() - timedelta(days=14)
@@ -342,7 +386,8 @@ class BulkDelete(commands.Cog):
             for index, transcript_file in enumerate(files):
                 summary = (
                     f"Bulk deletion transcript for {getattr(channel, 'mention', '#unknown')}: "
-                    f"{len(deleted)} deleted, {len(protected)} skipped with {PROTECTED_EMOJI}, {failed} failed."
+                    f"{len(deleted)} deleted, {len(protected)} skipped with {PROTECTED_EMOJI}, "
+                    f"{len(bot_messages)} RatBot messages skipped, {failed} failed."
                     if index == 0 else None
                 )
                 await interaction.user.send(summary, file=transcript_file)
@@ -351,7 +396,8 @@ class BulkDelete(commands.Cog):
             LOGGER.exception("Could not DM bulk deletion transcript to user %s", interaction.user.id)
 
         result = (
-            f"Deleted **{len(deleted)}** messages. Skipped **{len(protected)}** with {PROTECTED_EMOJI}."
+            f"Deleted **{len(deleted)}** messages. Skipped **{len(protected)}** with {PROTECTED_EMOJI} "
+            f"and **{len(bot_messages)}** sent by RatBot."
             + (f" **{failed}** messages could not be deleted." if failed else "")
         )
         if dm_sent:
