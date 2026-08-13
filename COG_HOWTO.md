@@ -47,6 +47,16 @@ How to use: Use `/bulk-role` to give one user a saved preset of roles, usually d
 
 Rules and notes: Only use presets that match your staff process. Bulk role tools are fast, so mistakes spread fast too.
 
+## `bulkdelete.py`
+
+Overview: Lets the two approved users delete messages from the current channel within a selected UK date and time window while preserving messages marked with ✅.
+
+Slash commands: `/bulkdelete`.
+
+How to use: Run `/bulkdelete date:13/08/2026 from:18:00 to:20:30` in the channel to clean. Review the ephemeral message counts and its start and finish message links, then choose **Delete messages** or **Cancel**.
+
+Rules and notes: Only Discord users `1250569593609654316` and `1109147750932676649` can use it. The finish minute is inclusive. The bot re-checks ✅ reactions after confirmation, skips every message carrying that emoji, and DMs a text transcript of messages it successfully deleted. The bot needs View Channel, Read Message History, and Manage Messages in the channel. Messages older than Discord's 14-day bulk-delete limit are deleted individually and may take longer.
+
 ## `certify.py`
 
 Overview: Generates a certificate image for a member.

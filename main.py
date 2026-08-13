@@ -43,6 +43,7 @@ EXTENSIONS = (
     "cogs.reaction_roles",
     "cogs.raid",
     "cogs.strategic_review_note",
+    "cogs.bulkdelete",
 )
 
 DISABLED_EXTENSIONS = (
