@@ -269,11 +269,11 @@ Rules and notes: This is an admin/staff tool, not a self-serve reaction-role sys
 
 ## `reaction_roles.py`
 
-Overview: Provides one persistent directory for HLL rank roles, infantry play style, and birthday management.
+Overview: Provides one persistent directory for HLL rank roles, infantry play style, community teams, and birthday management.
 
 Slash commands: none.
 
-How to use: In the role directory channel, choose one HLL rank and/or one play style. Use the birthday menu to add or update a birthday through the `DD MM YYYY` form, remove it, or view the current month's birthdays. Submit `DD MM` without a year to keep the birth year and age private.
+How to use: In the role directory channel, choose one HLL rank and/or one play style. Members can also join or leave the Registered Building Inspector team, which checks building-code compliance in HLL. Use the birthday menu to add or update a birthday through the `DD MM YYYY` form, remove it, or view the current month's birthdays. Submit `DD MM` without a year to keep the birth year and age private.
 
 Rules and notes: Existing roles and birthday records are preserved. A role category changes only when that member uses its menu. Each role category is exclusive, so choosing a new option replaces any other configured role in that category. Birthday announcements and monthly summaries continue in the birthday channel. The bot needs `Manage Roles`, and its top role must be above every role managed by the selector.
 

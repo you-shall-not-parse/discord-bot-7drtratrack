@@ -52,6 +52,14 @@ PLAY_STYLE_ROLES: dict[str, tuple[str, int, str]] = {
     "flexi": ("Prefer to be Fluid and Meatgrind (Flexi)", 1446583412084310027, "🏃‍♂️"),
 }
 
+COMMUNITY_TEAM_ROLES: dict[str, tuple[str, int, str]] = {
+    "registered_building_inspector": (
+        "Registered Building Inspector",
+        1103588562714251264,
+        "🏗️",
+    ),
+}
+
 
 def _load_state() -> dict[str, int]:
     if not STATE_PATH.exists():
@@ -247,6 +255,15 @@ class ReactionRoleView(discord.ui.View):
                 placeholder="Choose or remove your play style…",
             )
         )
+        self.add_item(
+            RoleCategorySelect(
+                cog,
+                category_name="Community Team",
+                role_choices=COMMUNITY_TEAM_ROLES,
+                custom_id="reaction_roles:community_team",
+                placeholder="Join or leave a community team…",
+            )
+        )
         self.add_item(BirthdayActionSelect(cog))
 
 
@@ -289,7 +306,8 @@ class ReactionRoles(commands.Cog):
             title="Role & Birthday Directory",
             color=discord.Color.dark_green(),
             description=(
-                "Use the menus below to manage your HLL rank, infantry play style, and birthday.\n\n"
+                "Use the menus below to manage your HLL rank, infantry play style, community team, "
+                "and birthday.\n\n"
                 "**Your existing roles are preserved.** Nothing changes until you make a selection. "
                 "Choosing a new option replaces only your role in that category."
             ),
@@ -314,6 +332,18 @@ class ReactionRoles(commands.Cog):
                 + "\n".join(
                     f"{emoji} <@&{role_id}>"
                     for label, role_id, emoji in PLAY_STYLE_ROLES.values()
+                )
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Community Teams",
+            value=(
+                "Would you like to join the team that inspects building-code compliance in HLL? "
+                "Choose the role below to sign up.\n\n"
+                + "\n".join(
+                    f"{emoji} <@&{role_id}>"
+                    for label, role_id, emoji in COMMUNITY_TEAM_ROLES.values()
                 )
             ),
             inline=False,

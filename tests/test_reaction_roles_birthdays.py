@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 from cogs.reaction_roles import (
     BirthdayActionSelect,
+    COMMUNITY_TEAM_ROLES,
     ReactionRoleView,
     ReactionRoles,
     _birthday_display,
@@ -63,6 +64,20 @@ class ReactionRoleBirthdayTests(unittest.IsolatedAsyncioTestCase):
             "reaction_roles:birthday_actions",
         )
 
+    async def test_view_contains_building_inspector_dropdown(self) -> None:
+        view = ReactionRoleView(SimpleNamespace())
+
+        team_selects = [
+            child
+            for child in view.children
+            if getattr(child, "custom_id", None) == "reaction_roles:community_team"
+        ]
+        self.assertEqual(len(team_selects), 1)
+        self.assertEqual(
+            COMMUNITY_TEAM_ROLES["registered_building_inspector"][1],
+            1103588562714251264,
+        )
+
     def test_directory_embed_explains_private_year(self) -> None:
         payload = ReactionRoles.build_embed().to_dict()
         fields = {field["name"]: field["value"] for field in payload["fields"]}
@@ -70,6 +85,8 @@ class ReactionRoleBirthdayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["title"], "Role & Birthday Directory")
         self.assertIn("`DD MM`", fields["Birthday Manager"])
         self.assertIn("private", fields["Birthday Manager"])
+        self.assertIn("<@&1103588562714251264>", fields["Community Teams"])
+        self.assertIn("building-code compliance", fields["Community Teams"])
 
     async def test_legacy_manager_message_delete_uses_supported_arguments(self) -> None:
         bot_user = object()
