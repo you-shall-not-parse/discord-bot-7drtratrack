@@ -38,6 +38,10 @@ HLL_BACKEND_SERVERS: dict[str, dict[str, Any]] = {
             ),
             "server_id_env": "BIFROST_HLLV_SERVER_ID",
             "game_type": "HLLV",
+            # Keep HLLV on the Guild OAuth v1 endpoints even when an older
+            # deployment still has legacy global Bifrost URLs in .env.
+            "oauth_url": "https://api.dev.bifrostgaming.com/v1/oauth/token",
+            "graphql_url": "https://api.dev.bifrostgaming.com/v1/graphql",
         },
     },
     "events": {

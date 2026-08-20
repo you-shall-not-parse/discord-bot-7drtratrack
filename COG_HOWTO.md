@@ -265,7 +265,7 @@ Slash commands: `/t17admincam`, `/hll_backend_status`.
 
 How to use: Run `/t17admincam`, select the Discord member, choose Events, Public, or HLLV server, and enter a duration from 1 to 168 hours.
 
-Rules and notes: Set `BIFROST_HLLV_SERVER_ID` to the Vietnam server's Bifrost server ID before selecting HLLV server. `BIFROST_SERVER_ID3` is accepted as a legacy fallback. The HLLV target uses Bifrost game type `HLLV`; grants and scheduled removals are tracked separately for each server.
+Rules and notes: Set `BIFROST_HLLV_SERVER_ID` to the Vietnam server's Bifrost server ID before selecting HLLV server. `BIFROST_SERVER_ID3` is accepted as a legacy fallback. The HLLV target uses Bifrost game type `HLLV` and the Guild OAuth v1 endpoints; grants and scheduled removals are tracked separately for each server.
 
 ## `applyroletomessage.py`
 

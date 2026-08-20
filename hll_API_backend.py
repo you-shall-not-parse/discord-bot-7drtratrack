@@ -387,6 +387,7 @@ class BifrostBackendClient:
                         "client_secret": client_secret,
                     },
                     timeout=15,
+                    allow_redirects=False,
                 )
                 return response.status_code, _parse_response_payload(response)
 
@@ -412,7 +413,7 @@ class BifrostBackendClient:
                     await asyncio.sleep(retry_after)
                     continue
 
-                if status_code >= 400:
+                if status_code >= 300:
                     raise HLLBackendError(f"Failed to fetch Bifrost access token: {_extract_error_message(payload)}")
 
                 if not isinstance(payload, dict):
@@ -438,6 +439,7 @@ class BifrostBackendClient:
                 },
                 json={"query": query, "variables": variables},
                 timeout=20,
+                allow_redirects=False,
             )
             return response.status_code, _parse_response_payload(response)
 
@@ -475,7 +477,7 @@ class BifrostBackendClient:
                 await asyncio.sleep(retry_after)
                 continue
 
-            if status_code >= 400:
+            if status_code >= 300:
                 raise HLLBackendError(
                     f"Bifrost HTTP {status_code}: {_extract_error_message(payload)}"
                 )
