@@ -59,6 +59,32 @@ class WarDiaryExportTests(unittest.TestCase):
             "https://frostbite.bifrostgaming.com/hll/leaderboards/servers/39384557d39d/crcon",
         )
 
+    def test_uses_direct_bifrost_uuid_match_endpoint(self) -> None:
+        match_url = (
+            "https://frostbite.bifrostgaming.com/hll/utahbeach_warfare/"
+            "923eed7b-6a86-57be-91e4-b5e4bc75c8cb/crcon"
+        )
+        self.assertEqual(WarDiaryCog._crcon_match_api_url(match_url), match_url)
+
+        payload = {
+            "result": {
+                "result": {"allied": 2, "axis": 3},
+                "player_stats": [
+                    {"player": "7DR Player", "team": {"side": "allies"}},
+                    {"player": "RMC Player", "team": {"side": "axis"}},
+                ],
+            }
+        }
+        self.assertEqual(
+            WarDiaryCog._determine_clan_sides(
+                payload,
+                clan_name="7DR",
+                opponent_clan_name="RMC",
+                is_clan_win=False,
+            ),
+            ("7DR", "RMC"),
+        )
+
     def test_rewrites_retired_rmc_events_link_to_bifrost_crcon(self) -> None:
         self.assertEqual(
             WarDiaryCog._crcon_match_api_url(

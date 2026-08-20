@@ -763,6 +763,13 @@ class WarDiaryCog(commands.Cog):
 			return None
 
 		path = parsed.path or ""
+		bifrost_match = re.fullmatch(
+			r"(?i)/hll/[a-z0-9_-]+/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/crcon/?",
+			path,
+		)
+		if bifrost_match:
+			return urlunparse((parsed.scheme, parsed.netloc, path.rstrip("/"), "", parsed.query, ""))
+
 		api_match = re.search(r"(?i)(.*?)/api/get_map_scoreboard/?$", path)
 		if api_match:
 			map_ids = parse_qs(parsed.query).get("map_id", [])
