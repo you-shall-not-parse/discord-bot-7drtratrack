@@ -134,7 +134,7 @@ class WarDiaryExportTests(unittest.TestCase):
                     "20/08/26",
                     "Carentan",
                     "7DR vs CROWS",
-                    "3-2",
+                    '=\"3-2\"',
                     "CROWS",
                     "7DR",
                     "https://stats.example.test/games/123",
@@ -159,6 +159,23 @@ class WarDiaryExportTests(unittest.TestCase):
 
         rows = list(csv.reader(io.StringIO(cog._build_export_csv().decode("utf-8-sig"))))
         self.assertEqual(rows[1][3], "Loss")
+
+    def test_csv_marks_score_as_spreadsheet_text(self) -> None:
+        cog = object.__new__(WarDiaryCog)
+        cog._state = {
+            "match_threads": [
+                {
+                    "match_date": "20/08/26",
+                    "map_name": "Carentan",
+                    "clan_name": "7DR",
+                    "opponent_clan_name": "CROWS",
+                    "result": "4-1",
+                }
+            ]
+        }
+
+        rows = list(csv.reader(io.StringIO(cog._build_export_csv().decode("utf-8-sig"))))
+        self.assertEqual(rows[1][3], '=\"4-1\"')
 
 
 class WarDiaryFetchTests(unittest.IsolatedAsyncioTestCase):

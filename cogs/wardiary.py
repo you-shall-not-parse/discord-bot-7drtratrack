@@ -210,6 +210,14 @@ def _normalize_recorded_result(value: Any) -> Optional[str]:
 	return f"{left}-{right}"
 
 
+def _spreadsheet_result(value: Any) -> str:
+	result = _normalize_recorded_result(value)
+	# CSV has no cell types. A formula containing only our validated numeric
+	# score forces Excel and Google Sheets to display it as text instead of
+	# auto-converting values such as 4-1 into a calendar date.
+	return f'="{result}"' if result else ""
+
+
 def _truncate_thread_name(name: str) -> str:
 	clean = " ".join(name.split())
 	if len(clean) <= 100:
@@ -949,7 +957,7 @@ class WarDiaryCog(commands.Cog):
 		for record in sorted(self._get_match_records(), key=sort_key):
 			clan_name = str(record.get("clan_name") or HOME_CLAN_NAME)
 			opponent = str(record.get("opponent_clan_name") or "")
-			result = _normalize_recorded_result(record.get("result")) or ""
+			result = _spreadsheet_result(record.get("result"))
 			if not result and isinstance(record.get("is_7dr_win"), bool):
 				result = "Win" if record["is_7dr_win"] else "Loss"
 			writer.writerow(
