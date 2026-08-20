@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from cogs.wardiary import WarDiaryCog, _normalize_stats_link
+from cogs.wardiary import WarDiaryCog, _display_stats_link, _normalize_stats_link
 
 
 class WarDiaryExportTests(unittest.TestCase):
@@ -49,6 +49,14 @@ class WarDiaryExportTests(unittest.TestCase):
                 "https://frostbite.bifrostgaming.com/hll/leaderboards/servers/abc123"
             ),
             "https://frostbite.bifrostgaming.com/hll/leaderboards/servers/abc123/crcon",
+        )
+
+    def test_bifrost_display_link_stops_at_crcon(self) -> None:
+        self.assertEqual(
+            _display_stats_link(
+                "https://frostbite.bifrostgaming.com/hll/leaderboards/servers/39384557d39d/crcon/games/11336"
+            ),
+            "https://frostbite.bifrostgaming.com/hll/leaderboards/servers/39384557d39d/crcon",
         )
 
     def test_rewrites_retired_rmc_events_link_to_bifrost_crcon(self) -> None:

@@ -188,6 +188,28 @@ def _normalize_stats_link(text: str) -> Optional[str]:
 	return _canonical_stats_link(text)
 
 
+def _display_stats_link(text: str) -> Optional[str]:
+	"""Return a browser-safe stats link while retaining match URLs internally."""
+	try:
+		canonical = _canonical_stats_link(text)
+	except ValueError:
+		return (text or "").strip() or None
+	if canonical is None:
+		return None
+	parsed = urlparse(canonical)
+	hostname = parsed.hostname.casefold() if parsed.hostname else ""
+	if hostname == "frostbite.bifrostgaming.com" or hostname.endswith(".bifrostgaming.com"):
+		server_match = re.match(
+			r"(?i)^(/hll/leaderboards/servers/[^/]+/crcon)(?:/.*)?$",
+			parsed.path or "",
+		)
+		if server_match:
+			return urlunparse(
+				(parsed.scheme, parsed.netloc, server_match.group(1), "", "", "")
+			)
+	return canonical
+
+
 def _normalize_match_date(text: str) -> str:
 	value = (text or "").strip()
 	if not value:
@@ -968,7 +990,7 @@ class WarDiaryCog(commands.Cog):
 					result,
 					str(record.get("allies_clan") or ""),
 					str(record.get("axis_clan") or ""),
-					str(record.get("stats_link") or ""),
+					_display_stats_link(str(record.get("stats_link") or "")) or "",
 				]
 			)
 		return output.getvalue().encode("utf-8-sig")
@@ -1289,7 +1311,8 @@ class WarDiaryCog(commands.Cog):
 		)
 		embed.add_field(name="Submitted by", value=submitter.mention, inline=False)
 		if stats_link:
-			embed.add_field(name="Stats link", value=f"[Open match stats]({stats_link})", inline=False)
+			display_link = _display_stats_link(stats_link) or stats_link
+			embed.add_field(name="Stats link", value=f"[Open match stats]({display_link})", inline=False)
 		embed.set_image(url=f"attachment://{filename}")
 		return embed
 
