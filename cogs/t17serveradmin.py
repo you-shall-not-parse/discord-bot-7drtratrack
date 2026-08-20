@@ -123,7 +123,7 @@ class T17ServerAdmin(commands.Cog, name="[API] T17ServerAdmin"):
 
         backend = get_hll_backend_client(HLLV_SERVER_NAME)
         for query in queries:
-            platform_id = await backend.resolve_player_id_by_name(query)
+            platform_id = await backend.resolve_live_player_id_by_name(query)
             if not platform_id:
                 continue
             now = time.time()

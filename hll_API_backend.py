@@ -508,13 +508,18 @@ class BifrostBackendClient:
         return data
 
     async def resolve_player_id_by_name(self, player_name: str) -> str | None:
-        # guildSearchPlayer requires an existing platform ID, so resolve names
-        # against the server's live roster instead. Callers persist successful
-        # results, allowing later grants while the player is offline.
+        # guildSearchPlayer requires an existing platform ID, not a player
+        # name. Do not issue speculative name queries here: this shared method
+        # is used by the normal HLL T17 index and invalid requests can trigger
+        # Bifrost's high-error-rate lockout.
+        return None
+
+    async def resolve_live_player_id_by_name(self, player_name: str) -> str | None:
+        """Resolve an HLLV platform ID from this server's live player roster."""
         if time.time() - self._live_players_fetched_at > 10:
             query = (
-                "query GetPlayers($serverId: ID!, $gameType: String!) {"
-                " getPlayers(serverId: $serverId, gameType: $gameType) {"
+                "query GuildGetPlayers($serverId: ID!, $gameType: String) {"
+                " guildGetPlayers(serverId: $serverId, gameType: $gameType) {"
                 " players totalCount timestamp"
                 " }"
                 "}"
@@ -526,7 +531,7 @@ class BifrostBackendClient:
                     "gameType": self.game_type,
                 },
             )
-            payload = data.get("getPlayers") or {}
+            payload = data.get("guildGetPlayers") or {}
             players = payload.get("players") if isinstance(payload, dict) else None
             if not isinstance(players, list):
                 return None
