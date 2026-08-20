@@ -257,6 +257,16 @@ How to use: Staff use `/t17_overwrite` when automatic matching is wrong, missing
 
 Rules and notes: This is a correction tool. Use it when data matching fails, not as the first option for every member.
 
+## `t17serveradmin.py`
+
+Overview: Grants temporary Bifrost Spectator/admin-cam access using a member's shared T17 ID and automatically removes it when the selected duration expires.
+
+Slash commands: `/t17admincam`, `/hll_backend_status`.
+
+How to use: Run `/t17admincam`, select the Discord member, choose Events, Public, or HLLV server, and enter a duration from 1 to 168 hours.
+
+Rules and notes: Set `BIFROST_HLLV_SERVER_ID` to the Vietnam server's Bifrost server ID before selecting HLLV server. `BIFROST_SERVER_ID3` is accepted as a legacy fallback. The HLLV target uses Bifrost game type `HLLV`; grants and scheduled removals are tracked separately for each server.
+
 ## `applyroletomessage.py`
 
 Overview: Applies one role to everyone who reacted to one specific message with one specific emoji.

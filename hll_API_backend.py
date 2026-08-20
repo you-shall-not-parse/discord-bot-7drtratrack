@@ -341,6 +341,7 @@ class BifrostBackendClient:
     def __init__(self, server_config: dict[str, Any]) -> None:
         bifrost_server = server_config.get("bifrost") or {}
         self.server_id = str(bifrost_server.get("server_id") or "").strip()
+        self.server_id_env = str(bifrost_server.get("server_id_env") or "BIFROST_SERVER_ID")
         self.game_type = str(bifrost_server.get("game_type") or "HLL").strip() or "HLL"
         self.oauth_url = str(bifrost_server.get("oauth_url") or BIFROST_OAUTH_URL).strip()
         self.graphql_url = str(bifrost_server.get("graphql_url") or BIFROST_GRAPHQL_URL).strip()
@@ -351,7 +352,9 @@ class BifrostBackendClient:
         self._token_lock = asyncio.Lock()
 
         if not self.server_id:
-            raise HLLBackendConfigError("BIFROST_SERVER_ID is not configured for the selected HLL backend")
+            raise HLLBackendConfigError(
+                f"{self.server_id_env} is not configured for the selected Bifrost server"
+            )
 
     def _client_credentials(self) -> tuple[str, str]:
         client_id = os.getenv(self.client_id_env, "").strip()

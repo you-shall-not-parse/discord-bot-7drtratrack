@@ -29,6 +29,7 @@ REMOVAL_RETRY_SECONDS = 300
 ADMIN_CAM_SERVER_CHOICES = [
     app_commands.Choice(name="Events", value="main"),
     app_commands.Choice(name="Public", value="server_2"),
+    app_commands.Choice(name="HLLV server", value="hllv"),
 ]
 
 
@@ -259,7 +260,7 @@ class T17ServerAdmin(commands.Cog, name="[API] T17ServerAdmin"):
     @app_commands.check(_can_manage_t17_server_admin)
     @app_commands.describe(
         member="Discord member to grant Spectator admin cam",
-        server="Bifrost server to grant access on",
+        server="Game server to grant access on",
         duration_hours="How long to grant access for, in hours",
     )
     @app_commands.choices(server=ADMIN_CAM_SERVER_CHOICES)
