@@ -1,6 +1,9 @@
 import csv
 import io
+import sys
+from types import SimpleNamespace
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from cogs.wardiary import WarDiaryCog, _normalize_stats_link
 
@@ -156,6 +159,32 @@ class WarDiaryExportTests(unittest.TestCase):
 
         rows = list(csv.reader(io.StringIO(cog._build_export_csv().decode("utf-8-sig"))))
         self.assertEqual(rows[1][3], "Loss")
+
+
+class WarDiaryFetchTests(unittest.IsolatedAsyncioTestCase):
+    async def test_connection_refused_is_logged_without_a_traceback(self) -> None:
+        class FakeRequestException(Exception):
+            pass
+
+        def refuse_connection(*args, **kwargs):
+            raise FakeRequestException("connection refused")
+
+        requests_stub = SimpleNamespace(
+            RequestException=FakeRequestException,
+            get=refuse_connection,
+        )
+        cog = object.__new__(WarDiaryCog)
+        cog._url_has_only_public_addresses = AsyncMock(return_value=True)
+
+        with patch.dict(sys.modules, {"requests": requests_stub}):
+            with self.assertLogs("cogs.wardiary", level="WARNING") as captured:
+                payload = await cog._fetch_crcon_match(
+                    "http://65.109.128.186:1110/api/get_map_scoreboard?map_id=9392"
+                )
+
+        self.assertIsNone(payload)
+        self.assertEqual(len(captured.output), 1)
+        self.assertIn("connection refused", captured.output[0])
 
 
 if __name__ == "__main__":

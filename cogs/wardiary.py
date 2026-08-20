@@ -873,15 +873,23 @@ class WarDiaryCog(commands.Cog):
 			except ImportError:
 				log.warning("The requests package is unavailable; CRCON side detection is disabled")
 				return None
-			response = requests.get(
-				api_url,
-				headers={"Accept": "application/json", "User-Agent": "7DR-WarDiaryBot/1.0"},
-				timeout=12,
-				allow_redirects=False,
-			)
+			try:
+				response = requests.get(
+					api_url,
+					headers={"Accept": "application/json", "User-Agent": "7DR-WarDiaryBot/1.0"},
+					timeout=12,
+					allow_redirects=False,
+				)
+			except requests.RequestException as exc:
+				log.warning("CRCON match endpoint is unavailable: %s (%s)", api_url, exc)
+				return None
 			if response.status_code != 200 or len(response.content) > MAX_CRCON_RESPONSE_BYTES:
 				return None
-			payload = response.json()
+			try:
+				payload = response.json()
+			except (ValueError, requests.RequestException) as exc:
+				log.warning("CRCON match endpoint returned invalid JSON: %s (%s)", api_url, exc)
+				return None
 			return payload if isinstance(payload, dict) else None
 
 		try:
