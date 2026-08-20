@@ -1,13 +1,19 @@
 import asyncio
+import csv
 import io
+import ipaddress
 import json
 import logging
 import os
+import re
+import socket
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 from state_io import atomic_json_dump
 
@@ -53,6 +59,7 @@ BACKGROUND_IMAGE_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboard
 GIF_WIN_INTERVAL: int = 5
 OTHER_MAP_OPTION: str = "Other"
 MATCH_TYPE_OPTIONS: list[str] = ["Competitive", "Friendly"]
+MAX_CRCON_RESPONSE_BYTES: int = 5 * 1024 * 1024
 
 WAR_DIARY_MAP_IMAGE_FILES: dict[str, str] = {
 	"Elsenborn Ridge": "Elsenborn Ridge.png",
@@ -177,6 +184,10 @@ class MatchThreadRecord:
 	clan_name: str
 	opponent_clan_name: str
 	match_date: str
+	map_name: str = OTHER_MAP_OPTION
+	stats_link: Optional[str] = None
+	allies_clan: Optional[str] = None
+	axis_clan: Optional[str] = None
 	is_7dr_win: bool = False
 
 
@@ -576,7 +587,17 @@ class WarDiaryCog(commands.Cog):
 		records[:] = [record for record in records if _safe_int(record.get("thread_id")) != thread_id]
 		return len(records) != original_len
 
-	def _store_match_record(self, *, thread_id: int, clan_name: str, opponent_clan_name: str, match_date: str, is_7dr_win: bool) -> None:
+	def _store_match_record(
+		self,
+		*,
+		thread_id: int,
+		clan_name: str,
+		opponent_clan_name: str,
+		match_date: str,
+		map_name: str,
+		stats_link: Optional[str],
+		is_7dr_win: bool,
+	) -> None:
 		records = self._get_match_records()
 		records[:] = [
 			record for record in records
@@ -592,9 +613,268 @@ class WarDiaryCog(commands.Cog):
 				"clan_name": clan_name,
 				"opponent_clan_name": opponent_clan_name,
 				"match_date": match_date,
+				"map_name": map_name,
+				"stats_link": stats_link,
 				"is_7dr_win": is_7dr_win,
 			}
 		)
+
+	async def _hydrate_export_record(self, record: dict[str, Any]) -> bool:
+		"""Backfill export fields that predate their addition to the state file."""
+		if "map_name" in record and "stats_link" in record:
+			return False
+
+		thread_id = _safe_int(record.get("thread_id"))
+		if thread_id is None:
+			return False
+		thread = await self._get_thread(thread_id)
+		if thread is None:
+			return False
+
+		try:
+			starter_message = await thread.fetch_message(thread.id)
+		except Exception:
+			log.warning("Failed to read war diary thread %s while building export", thread.id, exc_info=True)
+			return False
+
+		map_name = OTHER_MAP_OPTION
+		stats_link: Optional[str] = None
+		if starter_message.embeds:
+			embed = starter_message.embeds[0]
+			description = embed.description or ""
+			map_match = re.search(r"(?im)^\*\*Map:\*\*\s*(.+?)\s*$", description)
+			if map_match:
+				map_name = map_match.group(1).strip()
+			for field in embed.fields:
+				if field.name.casefold() != "stats link":
+					continue
+				link_match = re.search(r"https?://[^\s)>]+", field.value)
+				if link_match:
+					stats_link = link_match.group(0)
+				break
+
+		record.setdefault("map_name", map_name)
+		record.setdefault("stats_link", stats_link)
+		return True
+
+	@staticmethod
+	def _crcon_match_api_url(stats_link: str) -> Optional[str]:
+		parsed = urlparse(stats_link)
+		if parsed.scheme not in ("http", "https") or not parsed.hostname:
+			return None
+
+		path = parsed.path or ""
+		api_match = re.search(r"(?i)(.*?)/api/get_map_scoreboard/?$", path)
+		if api_match:
+			map_ids = parse_qs(parsed.query).get("map_id", [])
+			if not map_ids or not str(map_ids[0]).isdigit():
+				return None
+			api_path = f"{api_match.group(1)}/api/get_map_scoreboard"
+			game_id = str(map_ids[0])
+		else:
+			game_match = re.search(r"(?i)(.*?)/games/(\d+)(?:/|$)", path)
+			if not game_match:
+				return None
+			api_path = f"{game_match.group(1)}/api/get_map_scoreboard"
+			game_id = game_match.group(2)
+
+		return urlunparse(
+			(parsed.scheme, parsed.netloc, api_path, "", urlencode({"map_id": game_id}), "")
+		)
+
+	@staticmethod
+	def _side_from_player(player: dict[str, Any]) -> Optional[str]:
+		raw_team = player.get("team")
+		if isinstance(raw_team, dict):
+			raw_team = raw_team.get("side") or raw_team.get("name")
+		side = str(raw_team or player.get("side") or "").strip().casefold()
+		if side in ("allies", "allied"):
+			return "allies"
+		if side == "axis":
+			return "axis"
+		return None
+
+	@staticmethod
+	def _player_has_clan_tag(player_name: str, clan_name: str) -> bool:
+		tag = "".join(character for character in clan_name.casefold() if character.isalnum())
+		if not tag or tag == "other":
+			return False
+		name = player_name.casefold()
+		if re.search(rf"(?<![a-z0-9]){re.escape(tag)}(?![a-z0-9])", name):
+			return True
+		normalized_name = "".join(character for character in name if character.isalnum())
+		return normalized_name.startswith(tag)
+
+	@classmethod
+	def _determine_clan_sides(
+		cls,
+		payload: dict[str, Any],
+		*,
+		clan_name: str,
+		opponent_clan_name: str,
+		is_clan_win: Optional[bool],
+	) -> tuple[Optional[str], Optional[str]]:
+		result = payload.get("result", payload)
+		if not isinstance(result, dict):
+			return None, None
+
+		score = result.get("result")
+		if isinstance(score, dict) and is_clan_win is not None:
+			allied_score = _safe_int(score.get("allied"))
+			axis_score = _safe_int(score.get("axis"))
+			if allied_score is not None and axis_score is not None and allied_score != axis_score:
+				allies_won = allied_score > axis_score
+				clan_is_allies = allies_won == is_clan_win
+				if clan_is_allies:
+					return clan_name, opponent_clan_name
+				return opponent_clan_name, clan_name
+
+		players = result.get("player_stats")
+		if not isinstance(players, list):
+			return None, None
+
+		votes: dict[str, dict[str, int]] = {
+			clan_name: {"allies": 0, "axis": 0},
+			opponent_clan_name: {"allies": 0, "axis": 0},
+		}
+		for player in players:
+			if not isinstance(player, dict):
+				continue
+			side = cls._side_from_player(player)
+			if side is None:
+				continue
+			player_name = str(player.get("player") or player.get("name") or "")
+			for candidate in votes:
+				if cls._player_has_clan_tag(player_name, candidate):
+					votes[candidate][side] += 1
+
+		def voted_side(candidate: str) -> Optional[str]:
+			allies = votes[candidate]["allies"]
+			axis = votes[candidate]["axis"]
+			if allies == axis:
+				return None
+			return "allies" if allies > axis else "axis"
+
+		clan_side = voted_side(clan_name)
+		opponent_side = voted_side(opponent_clan_name)
+		if clan_side and opponent_side and clan_side == opponent_side:
+			return None, None
+		if clan_side is None and opponent_side is not None:
+			clan_side = "axis" if opponent_side == "allies" else "allies"
+		if opponent_side is None and clan_side is not None:
+			opponent_side = "axis" if clan_side == "allies" else "allies"
+		if clan_side is None or opponent_side is None:
+			return None, None
+		return (
+			clan_name if clan_side == "allies" else opponent_clan_name,
+			clan_name if clan_side == "axis" else opponent_clan_name,
+		)
+
+	@staticmethod
+	async def _url_has_only_public_addresses(url: str) -> bool:
+		hostname = urlparse(url).hostname
+		if not hostname:
+			return False
+
+		def resolve() -> list[tuple[Any, ...]]:
+			return socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
+
+		try:
+			addresses = await asyncio.to_thread(resolve)
+		except socket.gaierror:
+			return False
+		if not addresses:
+			return False
+		for address in addresses:
+			try:
+				if not ipaddress.ip_address(address[4][0]).is_global:
+					return False
+			except (ValueError, IndexError):
+				return False
+		return True
+
+	async def _fetch_crcon_match(self, api_url: str) -> Optional[dict[str, Any]]:
+		if not await self._url_has_only_public_addresses(api_url):
+			log.warning("Refusing non-public or unresolvable CRCON match URL: %s", api_url)
+			return None
+
+		def request() -> Optional[dict[str, Any]]:
+			try:
+				import requests
+			except ImportError:
+				log.warning("The requests package is unavailable; CRCON side detection is disabled")
+				return None
+			response = requests.get(
+				api_url,
+				headers={"Accept": "application/json", "User-Agent": "7DR-WarDiaryBot/1.0"},
+				timeout=12,
+				allow_redirects=False,
+			)
+			if response.status_code != 200 or len(response.content) > MAX_CRCON_RESPONSE_BYTES:
+				return None
+			payload = response.json()
+			return payload if isinstance(payload, dict) else None
+
+		try:
+			return await asyncio.to_thread(request)
+		except Exception:
+			log.info("Could not inspect CRCON match at %s", api_url, exc_info=True)
+			return None
+
+	async def _hydrate_crcon_sides(self, record: dict[str, Any]) -> bool:
+		if record.get("allies_clan") and record.get("axis_clan"):
+			return False
+		stats_link = str(record.get("stats_link") or "").strip()
+		api_url = self._crcon_match_api_url(stats_link)
+		if api_url is None:
+			return False
+		payload = await self._fetch_crcon_match(api_url)
+		if payload is None:
+			return False
+
+		is_clan_win_value = record.get("is_7dr_win")
+		is_clan_win = is_clan_win_value if isinstance(is_clan_win_value, bool) else None
+		allies_clan, axis_clan = self._determine_clan_sides(
+			payload,
+			clan_name=str(record.get("clan_name") or HOME_CLAN_NAME),
+			opponent_clan_name=str(record.get("opponent_clan_name") or ""),
+			is_clan_win=is_clan_win,
+		)
+		if not allies_clan or not axis_clan:
+			return False
+		record["allies_clan"] = allies_clan
+		record["axis_clan"] = axis_clan
+		return True
+
+	def _build_export_csv(self) -> bytes:
+		output = io.StringIO(newline="")
+		writer = csv.writer(output)
+		writer.writerow(
+			["match_date", "map", "clans_played", "allies_clan", "axis_clan", "stats_link"]
+		)
+
+		def sort_key(record: dict[str, Any]) -> tuple[datetime, str]:
+			match_date = str(record.get("match_date") or "")
+			try:
+				parsed = datetime.strptime(match_date, "%d/%m/%y")
+			except ValueError:
+				parsed = datetime.max
+			return parsed, str(record.get("opponent_clan_name") or "").casefold()
+
+		for record in sorted(self._get_match_records(), key=sort_key):
+			clan_name = str(record.get("clan_name") or HOME_CLAN_NAME)
+			opponent = str(record.get("opponent_clan_name") or "")
+			writer.writerow(
+				[
+					str(record.get("match_date") or ""),
+					str(record.get("map_name") or OTHER_MAP_OPTION),
+					f"{clan_name} vs {opponent}",
+					str(record.get("allies_clan") or ""),
+					str(record.get("axis_clan") or ""),
+					str(record.get("stats_link") or ""),
+				]
+			)
+		return output.getvalue().encode("utf-8-sig")
 
 	def _count_recorded_7dr_wins(self) -> int:
 		count = 0
@@ -1074,6 +1354,45 @@ class WarDiaryCog(commands.Cog):
 		out.seek(0)
 		return out.getvalue(), output_extension
 
+	@app_commands.command(
+		name="wardiary_export",
+		description="Download War Diary matches, clan sides, and stats links as CSV.",
+	)
+	@app_commands.guild_only()
+	async def wardiary_export(self, interaction: discord.Interaction) -> None:
+		if not isinstance(interaction.user, discord.Member) or not _can_submit_member(interaction.user):
+			await interaction.response.send_message(
+				"You do not have permission to export War Diary results.",
+				ephemeral=True,
+			)
+			return
+
+		await interaction.response.defer(ephemeral=True, thinking=True)
+		state_changed = False
+		for record in self._get_match_records():
+			if await self._hydrate_export_record(record):
+				state_changed = True
+
+		semaphore = asyncio.Semaphore(4)
+		async def hydrate_sides(record: dict[str, Any]) -> bool:
+			async with semaphore:
+				return await self._hydrate_crcon_sides(record)
+
+		side_results = await asyncio.gather(
+			*(hydrate_sides(record) for record in self._get_match_records())
+		)
+		state_changed = state_changed or any(side_results)
+		if state_changed:
+			self._save_state()
+
+		payload = self._build_export_csv()
+		filename = f"wardiary_export_{_utcnow().date().isoformat()}.csv"
+		await interaction.followup.send(
+			content=f"Exported {len(self._get_match_records())} War Diary match(es).",
+			file=discord.File(io.BytesIO(payload), filename=filename),
+			ephemeral=True,
+		)
+
 	async def create_result_post(
 		self,
 		*,
@@ -1164,6 +1483,8 @@ class WarDiaryCog(commands.Cog):
 				clan_name=clan_name,
 				opponent_clan_name=opponent_clan_name,
 				match_date=match_date,
+				map_name=map_name,
+				stats_link=stats_link,
 				is_7dr_win=is_7dr_win,
 			)
 			self._save_state()

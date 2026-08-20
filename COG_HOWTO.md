@@ -241,11 +241,11 @@ Rules and notes: This cog has important nuance. Short LOAs are one-off, daily, o
 
 Overview: Keeps a cleaner record of wars, events, or match history.
 
-Slash commands: none exposed here in the current bot loadout.
+Slash commands: `/wardiary_export`.
 
-How to use: Use it where the server wants a durable campaign or battle log rather than loose chat posts.
+How to use: Use the submission button in the War Diary forum to record results. Members with a configured War Diary role can run `/wardiary_export` to download a CSV containing the match date, map, clans played, Allied clan, Axis clan, and stats link. The download is only shown to the person who ran the command.
 
-Rules and notes: This works best when the people entering records follow one consistent standard for names, dates, and result wording.
+Rules and notes: Older saved matches are backfilled from their forum posts during export. For a public CRCON `/games/{id}` link, the exporter inspects the corresponding match API and compares its Allied/Axis score with the recorded War Diary result. Clan-tagged player names are used as a fallback. A missing link, inaccessible match, unsupported stats provider, or inconclusive result leaves the side cells blank rather than guessing.
 
 ## `t17lookup.py`
 
