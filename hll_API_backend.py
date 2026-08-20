@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 import urllib.parse
 from datetime import datetime
@@ -350,6 +351,8 @@ class BifrostBackendClient:
         self._access_token: str | None = None
         self._access_token_expires_at = 0.0
         self._token_lock = asyncio.Lock()
+        self._live_players: list[dict[str, Any]] = []
+        self._live_players_fetched_at = 0.0
 
         if not self.server_id:
             raise HLLBackendConfigError(
@@ -505,12 +508,73 @@ class BifrostBackendClient:
         return data
 
     async def resolve_player_id_by_name(self, player_name: str) -> str | None:
-        # Bifrost's guildSearchPlayer query accepts an existing playerId, not a
-        # player name. It therefore cannot be used to resolve a Discord name to
-        # a T17 ID. Returning no match prevents invalid requests from triggering
-        # Bifrost's high-error-rate lockout; callers use their shared ID mapping
-        # or a manual override instead.
-        return None
+        # guildSearchPlayer requires an existing platform ID, so resolve names
+        # against the server's live roster instead. Callers persist successful
+        # results, allowing later grants while the player is offline.
+        if time.time() - self._live_players_fetched_at > 10:
+            query = (
+                "query GetPlayers($serverId: ID!, $gameType: String!) {"
+                " getPlayers(serverId: $serverId, gameType: $gameType) {"
+                " players totalCount timestamp"
+                " }"
+                "}"
+            )
+            data = await self._graphql(
+                query,
+                {
+                    "serverId": self.server_id,
+                    "gameType": self.game_type,
+                },
+            )
+            payload = data.get("getPlayers") or {}
+            players = payload.get("players") if isinstance(payload, dict) else None
+            if not isinstance(players, list):
+                return None
+            self._live_players = [player for player in players if isinstance(player, dict)]
+            self._live_players_fetched_at = time.time()
+
+        target = " ".join(str(player_name or "").casefold().split())
+        if not target:
+            return None
+
+        exact_ids: list[str] = []
+        partial_ids: list[str] = []
+        for player in self._live_players:
+            raw_name = None
+            for key in ("player", "playerName", "name", "player.name"):
+                if player.get(key):
+                    raw_name = player[key]
+                    break
+            candidate_name = " ".join(str(raw_name or "").casefold().split())
+
+            raw_id = None
+            for key in (
+                "eos_id",
+                "eosId",
+                "player.id",
+                "player_id",
+                "playerId",
+                "steam_id_64",
+                "steam_id",
+            ):
+                if player.get(key):
+                    raw_id = player[key]
+                    break
+            candidate_id = str(raw_id or "").strip()
+            if not candidate_name or not candidate_id:
+                continue
+
+            if candidate_name == target:
+                exact_ids.append(candidate_id)
+                continue
+            if re.search(rf"(?<![a-z0-9]){re.escape(target)}(?![a-z0-9])", candidate_name):
+                partial_ids.append(candidate_id)
+
+        unique_exact = list(dict.fromkeys(exact_ids))
+        if len(unique_exact) == 1:
+            return unique_exact[0]
+        unique_partial = list(dict.fromkeys(partial_ids))
+        return unique_partial[0] if not unique_exact and len(unique_partial) == 1 else None
 
     async def get_mapvote_game_state(self) -> dict[str, Any] | None:
         query = (

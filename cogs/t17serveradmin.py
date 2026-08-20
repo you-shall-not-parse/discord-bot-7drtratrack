@@ -25,7 +25,9 @@ ADMIN_ROLE_IDS = {
 }
 ADMIN_CAM_ROLE = "Spectator"
 STATE_FILE = data_path("t17_admin_cam_grants.json")
+HLLV_PLATFORM_MAP_FILE = data_path("hllv_platform_ids.json")
 REMOVAL_RETRY_SECONDS = 300
+HLLV_SERVER_NAME = "hllv"
 ADMIN_CAM_SERVER_CHOICES = [
     app_commands.Choice(name="Events", value="main"),
     app_commands.Choice(name="Public", value="server_2"),
@@ -74,6 +76,76 @@ class T17ServerAdmin(commands.Cog, name="[API] T17ServerAdmin"):
 
     def _save_state(self, state: dict[str, Any]) -> None:
         atomic_json_dump(STATE_FILE, state, sort_keys=True)
+
+    def _load_hllv_platform_map(self) -> dict[str, Any]:
+        try:
+            with open(HLLV_PLATFORM_MAP_FILE, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {"members": {}, "names": {}}
+        if not isinstance(payload, dict):
+            return {"members": {}, "names": {}}
+        if not isinstance(payload.get("members"), dict):
+            payload["members"] = {}
+        if not isinstance(payload.get("names"), dict):
+            payload["names"] = {}
+        return payload
+
+    def _save_hllv_platform_map(self, mapping: dict[str, Any]) -> None:
+        mapping["updated_at"] = time.time()
+        atomic_json_dump(HLLV_PLATFORM_MAP_FILE, mapping, sort_keys=True)
+
+    async def _resolve_hllv_platform_id(
+        self,
+        member: discord.Member,
+    ) -> tuple[str | None, str, list[str]]:
+        queries = self.lookup.build_lookup_queries(member)
+        mapping = self._load_hllv_platform_map()
+        member_key = self._grant_key(member.guild.id, member.id, HLLV_SERVER_NAME)
+        existing = mapping["members"].get(member_key)
+        if isinstance(existing, dict) and existing.get("platform_id"):
+            return str(existing["platform_id"]), "hllv_member_cache", queries
+
+        for query in queries:
+            cached = mapping["names"].get(query.casefold())
+            if isinstance(cached, dict) and cached.get("platform_id"):
+                platform_id = str(cached["platform_id"])
+                mapping["members"][member_key] = {
+                    "guild_id": member.guild.id,
+                    "user_id": member.id,
+                    "display_name": member.display_name,
+                    "platform_id": platform_id,
+                    "source": "hllv_name_cache",
+                    "updated_at": time.time(),
+                }
+                self._save_hllv_platform_map(mapping)
+                return platform_id, "hllv_name_cache", queries
+
+        backend = get_hll_backend_client(HLLV_SERVER_NAME)
+        for query in queries:
+            platform_id = await backend.resolve_player_id_by_name(query)
+            if not platform_id:
+                continue
+            now = time.time()
+            mapping["members"][member_key] = {
+                "guild_id": member.guild.id,
+                "user_id": member.id,
+                "display_name": member.display_name,
+                "username": member.name,
+                "platform_id": platform_id,
+                "source": "bifrost_hllv_live",
+                "lookup_queries": queries,
+                "updated_at": now,
+            }
+            for candidate in queries:
+                mapping["names"][candidate.casefold()] = {
+                    "platform_id": platform_id,
+                    "updated_at": now,
+                }
+            self._save_hllv_platform_map(mapping)
+            return platform_id, "bifrost_hllv_live", queries
+
+        return None, "hllv_live_unresolved", queries
 
     def _upsert_grant(self, grant: dict[str, Any]) -> None:
         state = self._load_state()
@@ -254,7 +326,7 @@ class T17ServerAdmin(commands.Cog, name="[API] T17ServerAdmin"):
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="t17admincam", description="Grant temporary Spectator admin cam using a member's T17 ID.")
+    @app_commands.command(name="t17admincam", description="Grant temporary Spectator admin cam using a member's game platform ID.")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.guild_only()
     @app_commands.check(_can_manage_t17_server_admin)
@@ -277,15 +349,45 @@ class T17ServerAdmin(commands.Cog, name="[API] T17ServerAdmin"):
 
         await interaction.response.defer(thinking=True)
 
-        t17_id, source, queries = await self.lookup.resolve_member_for_role(member, role_name="t17serveradmin")
-        if not t17_id:
+        selected_server = server.value
+        try:
+            if selected_server == HLLV_SERVER_NAME:
+                identity_label = "HLLV EOS ID"
+                player_id, source, queries = await self._resolve_hllv_platform_id(member)
+            else:
+                identity_label = "T17 ID"
+                player_id, source, queries = await self.lookup.resolve_member_for_role(
+                    member,
+                    role_name="t17serveradmin",
+                )
+        except HLLBackendError as exc:
+            self.logger.exception(
+                "t17admincam_identity_lookup_failed server=%s member_id=%s error=%s",
+                selected_server,
+                member.id,
+                exc,
+            )
             await interaction.followup.send(
-                f"No T17 ID could be resolved for {member.mention}. Add or correct it in the shared T17 lookup first.",
+                f"Failed to resolve the player's {identity_label}: {exc}",
                 ephemeral=True,
             )
             return
 
-        selected_server = server.value
+        if not player_id:
+            if selected_server == HLLV_SERVER_NAME:
+                message = (
+                    f"No HLLV EOS ID could be resolved for {member.mention}. "
+                    "For the first lookup, the player must be connected to the HLLV server "
+                    "with an in-game name matching their Discord display name, username, or global name."
+                )
+            else:
+                message = (
+                    f"No T17 ID could be resolved for {member.mention}. "
+                    "Add or correct it in the shared T17 lookup first."
+                )
+            await interaction.followup.send(message, ephemeral=True)
+            return
+
         description = self._description_for_member(member, queries)
 
         try:
@@ -293,7 +395,7 @@ class T17ServerAdmin(commands.Cog, name="[API] T17ServerAdmin"):
                 guild_id=interaction.guild.id,
                 user_id=member.id,
                 member_display_name=member.display_name,
-                player_id=t17_id,
+                player_id=player_id,
                 description=description,
                 server_name=selected_server,
                 server_label=server.name,
@@ -305,20 +407,20 @@ class T17ServerAdmin(commands.Cog, name="[API] T17ServerAdmin"):
             )
         except HLLBackendError as exc:
             self.logger.exception(
-                "t17admincam_add_failed server=%s member_id=%s t17_id=%s error=%s",
+                "t17admincam_add_failed server=%s member_id=%s player_id=%s error=%s",
                 selected_server,
                 member.id,
-                t17_id,
+                player_id,
                 exc,
             )
             await interaction.followup.send(f"Failed to grant Spectator admin cam: {exc}", ephemeral=True)
             return
         except Exception as exc:
             self.logger.exception(
-                "t17admincam_add_failed server=%s member_id=%s t17_id=%s error=%s",
+                "t17admincam_add_failed server=%s member_id=%s player_id=%s error=%s",
                 selected_server,
                 member.id,
-                t17_id,
+                player_id,
                 exc,
             )
             await interaction.followup.send(f"Failed to grant Spectator admin cam: {exc}", ephemeral=True)
@@ -327,7 +429,7 @@ class T17ServerAdmin(commands.Cog, name="[API] T17ServerAdmin"):
         await interaction.followup.send(
             f"Granted {ADMIN_CAM_ROLE} admin cam to {member.mention}.\n"
             f"Server: **{server.name}**\n"
-            f"T17 ID: `{t17_id}`\n"
+            f"{identity_label}: `{player_id}`\n"
             f"Description sent to backend: `{description}`\n"
             f"Resolved via: `{source}`\n"
             f"Expires: <t:{int(grant['expires_at'])}:F> (<t:{int(grant['expires_at'])}:R>)",
