@@ -2,7 +2,7 @@ import csv
 import io
 import unittest
 
-from cogs.wardiary import WarDiaryCog
+from cogs.wardiary import WarDiaryCog, _normalize_stats_link
 
 
 class WarDiaryExportTests(unittest.TestCase):
@@ -10,6 +10,50 @@ class WarDiaryExportTests(unittest.TestCase):
         self.assertEqual(
             WarDiaryCog._crcon_match_api_url("https://stats.example.test/games/123/charts"),
             "https://stats.example.test/api/get_map_scoreboard?map_id=123",
+        )
+
+    def test_bifrost_game_link_uses_crcon_proxy(self) -> None:
+        self.assertEqual(
+            WarDiaryCog._crcon_match_api_url(
+                "https://frostbite.bifrostgaming.com/hll/leaderboards/servers/abc123/games/456"
+            ),
+            "https://frostbite.bifrostgaming.com/hll/leaderboards/servers/abc123/crcon/api/get_map_scoreboard?map_id=456",
+        )
+
+    def test_existing_bifrost_crcon_prefix_is_not_duplicated(self) -> None:
+        self.assertEqual(
+            WarDiaryCog._crcon_match_api_url(
+                "https://frostbite.bifrostgaming.com/hll/leaderboards/servers/abc123/crcon/games/456"
+            ),
+            "https://frostbite.bifrostgaming.com/hll/leaderboards/servers/abc123/crcon/api/get_map_scoreboard?map_id=456",
+        )
+
+    def test_rewrites_retired_7dr_stats_hostname(self) -> None:
+        self.assertEqual(
+            _normalize_stats_link("https://7dr-stats.hlladmin.com/games/2572"),
+            "https://7drhistostats.hllfrontline.com/games/2572",
+        )
+        self.assertEqual(
+            WarDiaryCog._crcon_match_api_url(
+                "https://7dr-stats.hlladmin.com/api/get_map_scoreboard?map_id=2572"
+            ),
+            "https://7drhistostats.hllfrontline.com/api/get_map_scoreboard?map_id=2572",
+        )
+
+    def test_bifrost_server_link_gets_crcon_suffix(self) -> None:
+        self.assertEqual(
+            _normalize_stats_link(
+                "https://frostbite.bifrostgaming.com/hll/leaderboards/servers/abc123"
+            ),
+            "https://frostbite.bifrostgaming.com/hll/leaderboards/servers/abc123/crcon",
+        )
+
+    def test_rewrites_retired_rmc_events_link_to_bifrost_crcon(self) -> None:
+        self.assertEqual(
+            WarDiaryCog._crcon_match_api_url(
+                "https://rmcevents-stats.hlladmin.com/api/get_map_scoreboard?map_id=11854"
+            ),
+            "https://frostbite.bifrostgaming.com/hll/leaderboards/servers/39384557d39d/crcon/api/get_map_scoreboard?map_id=11854",
         )
 
     def test_uses_score_and_recorded_result_to_assign_sides(self) -> None:
@@ -63,6 +107,7 @@ class WarDiaryExportTests(unittest.TestCase):
                     "map_name": "Carentan",
                     "clan_name": "7DR",
                     "opponent_clan_name": "CROWS",
+                    "result": "3-2",
                     "allies_clan": "CROWS",
                     "axis_clan": "7DR",
                     "stats_link": "https://stats.example.test/games/123",
@@ -77,6 +122,7 @@ class WarDiaryExportTests(unittest.TestCase):
                     "match_date",
                     "map",
                     "clans_played",
+                    "result",
                     "allies_clan",
                     "axis_clan",
                     "stats_link",
@@ -85,6 +131,7 @@ class WarDiaryExportTests(unittest.TestCase):
                     "20/08/26",
                     "Carentan",
                     "7DR vs CROWS",
+                    "3-2",
                     "CROWS",
                     "7DR",
                     "https://stats.example.test/games/123",

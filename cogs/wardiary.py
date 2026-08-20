@@ -60,6 +60,12 @@ GIF_WIN_INTERVAL: int = 5
 OTHER_MAP_OPTION: str = "Other"
 MATCH_TYPE_OPTIONS: list[str] = ["Competitive", "Friendly"]
 MAX_CRCON_RESPONSE_BYTES: int = 5 * 1024 * 1024
+LEGACY_STATS_BASE_URLS: dict[str, str] = {
+	"7dr-stats.hlladmin.com": "https://7drhistostats.hllfrontline.com",
+	"rmcevents-stats.hlladmin.com": (
+		"https://frostbite.bifrostgaming.com/hll/leaderboards/servers/39384557d39d/crcon"
+	),
+}
 
 WAR_DIARY_MAP_IMAGE_FILES: dict[str, str] = {
 	"Elsenborn Ridge": "Elsenborn Ridge.png",
@@ -143,13 +149,43 @@ def _parse_score(text: str) -> tuple[int, int]:
 	return left, right
 
 
-def _normalize_stats_link(text: str) -> Optional[str]:
+def _canonical_stats_link(text: str) -> Optional[str]:
 	value = (text or "").strip()
 	if not value:
 		return None
-	if not (value.startswith("http://") or value.startswith("https://")):
+	parsed = urlparse(value)
+	if parsed.scheme not in ("http", "https") or not parsed.hostname:
 		raise ValueError("Stats link must start with http:// or https://")
-	return value
+
+	hostname = parsed.hostname.casefold()
+	legacy_base_url = LEGACY_STATS_BASE_URLS.get(hostname)
+	if legacy_base_url:
+		legacy_base = urlparse(legacy_base_url)
+		parsed = parsed._replace(
+			scheme=legacy_base.scheme,
+			netloc=legacy_base.netloc,
+			path=f"{legacy_base.path.rstrip('/')}/{parsed.path.lstrip('/')}",
+		)
+		hostname = parsed.hostname.casefold()
+
+	netloc = parsed.netloc
+	path = parsed.path or ""
+	if hostname == "frostbite.bifrostgaming.com" or hostname.endswith(".bifrostgaming.com"):
+		server_match = re.match(
+			r"(?i)^(/hll/leaderboards/servers/[^/]+)(/.*)?$",
+			path,
+		)
+		if server_match:
+			server_path = server_match.group(1)
+			remainder = server_match.group(2) or ""
+			if not re.match(r"(?i)^/crcon(?:/|$)", remainder):
+				path = f"{server_path}/crcon{remainder}"
+
+	return urlunparse((parsed.scheme, netloc, path, parsed.params, parsed.query, parsed.fragment))
+
+
+def _normalize_stats_link(text: str) -> Optional[str]:
+	return _canonical_stats_link(text)
 
 
 def _normalize_match_date(text: str) -> str:
@@ -597,6 +633,8 @@ class WarDiaryCog(commands.Cog):
 		map_name: str,
 		stats_link: Optional[str],
 		is_7dr_win: bool,
+		submitter_score: int,
+		opponent_score: int,
 	) -> None:
 		records = self._get_match_records()
 		records[:] = [
@@ -616,12 +654,13 @@ class WarDiaryCog(commands.Cog):
 				"map_name": map_name,
 				"stats_link": stats_link,
 				"is_7dr_win": is_7dr_win,
+				"result": f"{submitter_score}-{opponent_score}",
 			}
 		)
 
 	async def _hydrate_export_record(self, record: dict[str, Any]) -> bool:
 		"""Backfill export fields that predate their addition to the state file."""
-		if "map_name" in record and "stats_link" in record:
+		if "map_name" in record and "stats_link" in record and "result" in record:
 			return False
 
 		thread_id = _safe_int(record.get("thread_id"))
@@ -639,9 +678,16 @@ class WarDiaryCog(commands.Cog):
 
 		map_name = OTHER_MAP_OPTION
 		stats_link: Optional[str] = None
+		result: Optional[str] = None
 		if starter_message.embeds:
 			embed = starter_message.embeds[0]
 			description = embed.description or ""
+			result_match = re.search(
+				r"(?im)^\*\*[^*]+\*\*\s*(\d+\s*[-:]\s*\d+)\s*\*\*",
+				description,
+			)
+			if result_match:
+				result = re.sub(r"\s+", "", result_match.group(1)).replace(":", "-")
 			map_match = re.search(r"(?im)^\*\*Map:\*\*\s*(.+?)\s*$", description)
 			if map_match:
 				map_name = map_match.group(1).strip()
@@ -655,11 +701,19 @@ class WarDiaryCog(commands.Cog):
 
 		record.setdefault("map_name", map_name)
 		record.setdefault("stats_link", stats_link)
+		if result:
+			record.setdefault("result", result)
 		return True
 
 	@staticmethod
 	def _crcon_match_api_url(stats_link: str) -> Optional[str]:
-		parsed = urlparse(stats_link)
+		try:
+			canonical_link = _canonical_stats_link(stats_link)
+		except ValueError:
+			return None
+		if canonical_link is None:
+			return None
+		parsed = urlparse(canonical_link)
 		if parsed.scheme not in ("http", "https") or not parsed.hostname:
 			return None
 
@@ -850,7 +904,15 @@ class WarDiaryCog(commands.Cog):
 		output = io.StringIO(newline="")
 		writer = csv.writer(output)
 		writer.writerow(
-			["match_date", "map", "clans_played", "allies_clan", "axis_clan", "stats_link"]
+			[
+				"match_date",
+				"map",
+				"clans_played",
+				"result",
+				"allies_clan",
+				"axis_clan",
+				"stats_link",
+			]
 		)
 
 		def sort_key(record: dict[str, Any]) -> tuple[datetime, str]:
@@ -864,11 +926,15 @@ class WarDiaryCog(commands.Cog):
 		for record in sorted(self._get_match_records(), key=sort_key):
 			clan_name = str(record.get("clan_name") or HOME_CLAN_NAME)
 			opponent = str(record.get("opponent_clan_name") or "")
+			result = str(record.get("result") or "")
+			if not result and isinstance(record.get("is_7dr_win"), bool):
+				result = "Win" if record["is_7dr_win"] else "Loss"
 			writer.writerow(
 				[
 					str(record.get("match_date") or ""),
 					str(record.get("map_name") or OTHER_MAP_OPTION),
 					f"{clan_name} vs {opponent}",
+					result,
 					str(record.get("allies_clan") or ""),
 					str(record.get("axis_clan") or ""),
 					str(record.get("stats_link") or ""),
@@ -1372,6 +1438,15 @@ class WarDiaryCog(commands.Cog):
 		for record in self._get_match_records():
 			if await self._hydrate_export_record(record):
 				state_changed = True
+			stats_link = str(record.get("stats_link") or "").strip()
+			if stats_link:
+				try:
+					canonical_link = _canonical_stats_link(stats_link)
+				except ValueError:
+					canonical_link = None
+				if canonical_link and canonical_link != stats_link:
+					record["stats_link"] = canonical_link
+					state_changed = True
 
 		semaphore = asyncio.Semaphore(4)
 		async def hydrate_sides(record: dict[str, Any]) -> bool:
@@ -1486,6 +1561,8 @@ class WarDiaryCog(commands.Cog):
 				map_name=map_name,
 				stats_link=stats_link,
 				is_7dr_win=is_7dr_win,
+				submitter_score=submitter_score,
+				opponent_score=opponent_score,
 			)
 			self._save_state()
 			return thread, None
