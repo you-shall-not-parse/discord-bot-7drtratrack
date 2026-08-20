@@ -520,7 +520,7 @@ class BifrostBackendClient:
             query = (
                 "query GuildGetPlayers($serverId: ID!, $gameType: String) {"
                 " guildGetPlayers(serverId: $serverId, gameType: $gameType) {"
-                " players totalCount timestamp"
+                " players { playerId playerName } totalCount timestamp"
                 " }"
                 "}"
             )
