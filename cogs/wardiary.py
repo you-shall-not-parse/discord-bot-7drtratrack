@@ -171,6 +171,13 @@ def _canonical_stats_link(text: str) -> Optional[str]:
 	netloc = parsed.netloc
 	path = parsed.path or ""
 	if hostname == "frostbite.bifrostgaming.com" or hostname.endswith(".bifrostgaming.com"):
+		direct_match = re.fullmatch(
+			r"(?i)(/hll/[a-z0-9_-]+/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:/crcon)?/?",
+			path,
+		)
+		if direct_match:
+			path = f"{direct_match.group(1)}/crcon"
+
 		server_match = re.match(
 			r"(?i)^(/hll/leaderboards/servers/[^/]+)(/.*)?$",
 			path,

@@ -65,6 +65,16 @@ class WarDiaryExportTests(unittest.TestCase):
             "923eed7b-6a86-57be-91e4-b5e4bc75c8cb/crcon"
         )
         self.assertEqual(WarDiaryCog._crcon_match_api_url(match_url), match_url)
+        self.assertEqual(
+            WarDiaryCog._crcon_match_api_url(match_url.removesuffix("/crcon")),
+            match_url,
+        )
+        self.assertEqual(
+            WarDiaryCog._crcon_match_api_url(
+                match_url.replace("https://frostbite", "https://www.frostbite").removesuffix("/crcon")
+            ),
+            match_url.replace("https://frostbite", "https://www.frostbite"),
+        )
 
         payload = {
             "result": {
