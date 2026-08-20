@@ -199,6 +199,17 @@ def _normalize_match_date(text: str) -> str:
 	return parsed.strftime("%d/%m/%y")
 
 
+def _normalize_recorded_result(value: Any) -> Optional[str]:
+	match = re.fullmatch(r"\s*(\d+)\s*[-:]\s*(\d+)\s*", str(value or ""))
+	if not match:
+		return None
+	left = int(match.group(1))
+	right = int(match.group(2))
+	if left == right or left + right != 5:
+		return None
+	return f"{left}-{right}"
+
+
 def _truncate_thread_name(name: str) -> str:
 	clean = " ".join(name.split())
 	if len(clean) <= 100:
@@ -660,7 +671,11 @@ class WarDiaryCog(commands.Cog):
 
 	async def _hydrate_export_record(self, record: dict[str, Any]) -> bool:
 		"""Backfill export fields that predate their addition to the state file."""
-		if "map_name" in record and "stats_link" in record and "result" in record:
+		if (
+			"map_name" in record
+			and "stats_link" in record
+			and _normalize_recorded_result(record.get("result")) is not None
+		):
 			return False
 
 		thread_id = _safe_int(record.get("thread_id"))
@@ -687,7 +702,7 @@ class WarDiaryCog(commands.Cog):
 				description,
 			)
 			if result_match:
-				result = re.sub(r"\s+", "", result_match.group(1)).replace(":", "-")
+				result = _normalize_recorded_result(result_match.group(1))
 			map_match = re.search(r"(?im)^\*\*Map:\*\*\s*(.+?)\s*$", description)
 			if map_match:
 				map_name = map_match.group(1).strip()
@@ -702,7 +717,7 @@ class WarDiaryCog(commands.Cog):
 		record.setdefault("map_name", map_name)
 		record.setdefault("stats_link", stats_link)
 		if result:
-			record.setdefault("result", result)
+			record["result"] = result
 		return True
 
 	@staticmethod
@@ -926,7 +941,7 @@ class WarDiaryCog(commands.Cog):
 		for record in sorted(self._get_match_records(), key=sort_key):
 			clan_name = str(record.get("clan_name") or HOME_CLAN_NAME)
 			opponent = str(record.get("opponent_clan_name") or "")
-			result = str(record.get("result") or "")
+			result = _normalize_recorded_result(record.get("result")) or ""
 			if not result and isinstance(record.get("is_7dr_win"), bool):
 				result = "Win" if record["is_7dr_win"] else "Loss"
 			writer.writerow(

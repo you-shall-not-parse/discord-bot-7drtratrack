@@ -139,6 +139,24 @@ class WarDiaryExportTests(unittest.TestCase):
             ],
         )
 
+    def test_csv_does_not_treat_legacy_date_as_result(self) -> None:
+        cog = object.__new__(WarDiaryCog)
+        cog._state = {
+            "match_threads": [
+                {
+                    "match_date": "20/08/26",
+                    "map_name": "Carentan",
+                    "clan_name": "7DR",
+                    "opponent_clan_name": "CROWS",
+                    "result": "20/08/26",
+                    "is_7dr_win": False,
+                }
+            ]
+        }
+
+        rows = list(csv.reader(io.StringIO(cog._build_export_csv().decode("utf-8-sig"))))
+        self.assertEqual(rows[1][3], "Loss")
+
 
 if __name__ == "__main__":
     unittest.main()
