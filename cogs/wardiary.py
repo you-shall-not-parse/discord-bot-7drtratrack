@@ -60,6 +60,10 @@ GIF_WIN_INTERVAL: int = 5
 OTHER_MAP_OPTION: str = "Other"
 MATCH_TYPE_OPTIONS: list[str] = ["Competitive", "Friendly"]
 MAX_CRCON_RESPONSE_BYTES: int = 5 * 1024 * 1024
+CRCON_USER_AGENT: str = (
+	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+	"(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+)
 LEGACY_STATS_BASE_URLS: dict[str, str] = {
 	"7dr-stats.hlladmin.com": "https://7drhistostats.hllfrontline.com",
 	"rmcevents-stats.hlladmin.com": (
@@ -920,14 +924,25 @@ class WarDiaryCog(commands.Cog):
 			try:
 				response = requests.get(
 					api_url,
-					headers={"Accept": "application/json", "User-Agent": "7DR-WarDiaryBot/1.0"},
+					headers={
+						"Accept": "application/json,text/plain,*/*",
+						"User-Agent": CRCON_USER_AGENT,
+					},
 					timeout=12,
 					allow_redirects=False,
 				)
 			except requests.RequestException as exc:
 				log.warning("CRCON match endpoint is unavailable: %s (%s)", api_url, exc)
 				return None
-			if response.status_code != 200 or len(response.content) > MAX_CRCON_RESPONSE_BYTES:
+			if response.status_code != 200:
+				log.warning(
+					"CRCON match endpoint returned HTTP %s: %s",
+					response.status_code,
+					api_url,
+				)
+				return None
+			if len(response.content) > MAX_CRCON_RESPONSE_BYTES:
+				log.warning("CRCON match response is too large: %s", api_url)
 				return None
 			try:
 				payload = response.json()

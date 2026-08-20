@@ -223,6 +223,35 @@ class WarDiaryExportTests(unittest.TestCase):
 
 
 class WarDiaryFetchTests(unittest.IsolatedAsyncioTestCase):
+    async def test_frostbite_fetch_uses_browser_headers(self) -> None:
+        class FakeRequestException(Exception):
+            pass
+
+        captured: dict[str, object] = {}
+
+        def successful_get(url, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                status_code=200,
+                content=b'{"result": {}}',
+                json=lambda: {"result": {}},
+            )
+
+        requests_stub = SimpleNamespace(
+            RequestException=FakeRequestException,
+            get=successful_get,
+        )
+        cog = object.__new__(WarDiaryCog)
+        cog._url_has_only_public_addresses = AsyncMock(return_value=True)
+
+        with patch.dict(sys.modules, {"requests": requests_stub}):
+            payload = await cog._fetch_crcon_match("https://frostbite.bifrostgaming.com/match/crcon")
+
+        self.assertEqual(payload, {"result": {}})
+        headers = captured["headers"]
+        self.assertIn("Mozilla/5.0", headers["User-Agent"])
+        self.assertIn("application/json", headers["Accept"])
+
     async def test_connection_refused_is_logged_without_a_traceback(self) -> None:
         class FakeRequestException(Exception):
             pass
