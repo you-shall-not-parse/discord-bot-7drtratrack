@@ -24,6 +24,7 @@ EXTENSIONS = (
     "cogs.event_map_requests",
     "cogs.contentfeed",
     "cogs.discordgreeting",
+    "cogs.infantry_trainee_alert",
     "cogs.echo",
     "cogs.HLLInfLeaderboard",
     "cogs.HLLArmLeaderboard",

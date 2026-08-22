@@ -137,6 +137,16 @@ How to use: New members experience it automatically. Staff mainly maintain the c
 
 Rules and notes: Keep the greeting flow clear and short. If too much information lands at once, new members will miss the important bits.
 
+## `infantry_trainee_alert.py`
+
+Overview: Alerts the Infantry School team when a newly joined member receives the Infantry Trainee role.
+
+Slash commands: `/test_infantry_trainee_alert`.
+
+How to use: The bot posts automatically in the configured trainer channel and pings the trainee and Infantry School Trainer role. A trainer or member with Manage Server permission can use `/test_infantry_trainee_alert` to post a clearly labelled test alert using themselves as the trainee.
+
+Rules and notes: The role names must exactly match **Infantry Trainee** and **Infantry School Trainer**. The bot must be able to view and send messages in the configured channel. The trainer role must be mentionable, or the bot must have permission to mention it.
+
 ## `echo.py`
 
 Overview: Lets approved users send a controlled message through the bot.

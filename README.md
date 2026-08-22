@@ -132,6 +132,7 @@ features from starting. Slash commands are synchronized once during startup.
 - `event_map_requests`
 - `contentfeed`
 - `discordgreeting`
+- `infantry_trainee_alert`
 - `echo`
 - `HLLInfLeaderboard`
 - `HLLArmLeaderboard`
