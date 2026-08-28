@@ -118,22 +118,66 @@ def is_role_based(post: dict) -> bool:
         post.get("multi") and post.get("squads") and isinstance(next(iter(post["squads"].values())), dict)
     )
 
+
+def add_users_to_squads(post: dict, user_ids: List[int]) -> tuple[int, int]:
+    """Add unique, new users to the first available squad slots.
+
+    Returns (users_added, users_without_room). No users are added when the post
+    cannot fit the whole selection.
+    """
+    squads = post.get("squads", {})
+    max_per_squad = post.get("max_per_squad", 0)
+    existing_ids = {user_id for members in squads.values() for user_id in members}
+    new_user_ids = []
+    for user_id in user_ids:
+        if user_id not in existing_ids and user_id not in new_user_ids:
+            new_user_ids.append(user_id)
+
+    available_slots = sum(max(0, max_per_squad - len(members)) for members in squads.values())
+    if len(new_user_ids) > available_slots:
+        return 0, len(new_user_ids) - available_slots
+
+    remaining = list(new_user_ids)
+    for members in squads.values():
+        while remaining and len(members) < max_per_squad:
+            members.append(remaining.pop(0))
+        if not remaining:
+            break
+
+    return len(new_user_ids), 0
+
 def get_or_create_view(bot, message_id, op_id, multi=False, squad_names=None, post_data=None):
     """Get cached view or create a new one"""
-    cache_key = f"{message_id}"
+    allow_add_players = (
+        multi
+        and len(squad_names or []) <= 21
+        and (post_data is None or not is_role_based(post_data))
+    )
+
+    # Unsaved posts do not have a stable cache key yet. Sharing the old "None"
+    # cache entry caused separate signup messages to operate on the same view.
+    if message_id is None:
+        return SquadSignupView(
+            bot, message_id, op_id, multi, squad_names, allow_add_players
+        )
+
+    cache_key = str(message_id)
     
     # Check if view exists and is still valid
     if cache_key in VIEW_CACHE:
         view = VIEW_CACHE[cache_key]
         # Update the view if squad names changed
-        if multi and squad_names and view.squad_names != squad_names:
+        if multi and squad_names and (
+            view.squad_names != squad_names
+            or view.allow_add_players != allow_add_players
+        ):
             # Need to create a new view since we can't easily modify existing one
-            view = SquadSignupView(bot, message_id, op_id, multi, squad_names)
+            view = SquadSignupView(bot, message_id, op_id, multi, squad_names, allow_add_players)
             VIEW_CACHE[cache_key] = view
         return view
     
     # Create new view if not in cache
-    view = SquadSignupView(bot, message_id, op_id, multi, squad_names)
+    view = SquadSignupView(bot, message_id, op_id, multi, squad_names, allow_add_players)
     VIEW_CACHE[cache_key] = view
     return view
 
@@ -342,6 +386,91 @@ class CloseButton(discord.ui.Button):
         await interaction.message.edit(view=view)
         await interaction.response.send_message("✅ Signups closed.", ephemeral=True)
 
+
+class AddPlayersSelect(discord.ui.UserSelect):
+    def __init__(self, message_id: int):
+        super().__init__(
+            placeholder="Select players to add",
+            min_values=1,
+            max_values=25,
+            custom_id=f"squadup_add_players_select_{message_id}"
+        )
+        self.message_id = message_id
+
+    async def callback(self, interaction: discord.Interaction):
+        post = get_post_data(self.message_id)
+        if not post:
+            return await interaction.response.send_message("Post not found.", ephemeral=True)
+        if interaction.user.id != post["op_id"]:
+            return await interaction.response.send_message(
+                "Only the organizer can add players.", ephemeral=True
+            )
+        if post.get("closed", False):
+            return await interaction.response.send_message("Signups are closed.", ephemeral=True)
+        if not post.get("multi") or is_role_based(post):
+            return await interaction.response.send_message(
+                "Players cannot be added this way on this post.", ephemeral=True
+            )
+
+        added, without_room = add_users_to_squads(post, [user.id for user in self.values])
+        if without_room:
+            return await interaction.response.send_message(
+                "There are not enough open squad slots for all the selected players.",
+                ephemeral=True
+            )
+        if not added:
+            return await interaction.response.send_message(
+                "All selected players are already in a squad.", ephemeral=True
+            )
+
+        await interaction.response.defer(ephemeral=True)
+        update_post_data(self.message_id, post)
+        cog = interaction.client.get_cog("SquadUp")
+        try:
+            message = await interaction.channel.fetch_message(self.message_id)
+            await message.edit(embed=cog.build_embed(post))
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            return await interaction.followup.send(
+                "The players were added, but I could not refresh the signup post.",
+                ephemeral=True
+            )
+
+        noun = "player" if added == 1 else "players"
+        await interaction.followup.send(f"Added {added} {noun}.", ephemeral=True)
+
+
+class AddPlayersSelectView(discord.ui.View):
+    def __init__(self, message_id: int):
+        super().__init__(timeout=60)
+        self.add_item(AddPlayersSelect(message_id))
+
+
+class AddPlayersButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="Add Players",
+            style=discord.ButtonStyle.secondary,
+            custom_id="squadup_add_players"
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        post = get_post_data(view.message_id)
+        if not post:
+            return await interaction.response.send_message("Post not found.", ephemeral=True)
+        if interaction.user.id != post["op_id"]:
+            return await interaction.response.send_message(
+                "Only the organizer can add players.", ephemeral=True
+            )
+        if post.get("closed", False):
+            return await interaction.response.send_message("Signups are closed.", ephemeral=True)
+
+        await interaction.response.send_message(
+            "Choose the players to add:",
+            view=AddPlayersSelectView(view.message_id),
+            ephemeral=True
+        )
+
 class AddMoreSquadsButton(discord.ui.Button):
     def __init__(self):
         super().__init__(label="Add More Squads", style=discord.ButtonStyle.primary, custom_id="squadup_add_more_squads")
@@ -412,6 +541,11 @@ class AddMoreSquadsModal(discord.ui.Modal, title="Add More Squads"):
         # Get current squads and find unused NATO squad names
         current_squads = list(post["squads"].keys())
         available_names = [name for name in NATO_SQUAD_NAMES if name not in current_squads]
+
+        if len(current_squads) + num_to_add > 21:
+            return await interaction.response.send_message(
+                "SquadUp posts can have at most 21 squads.", ephemeral=True
+            )
         
         if len(available_names) < num_to_add:
             return await interaction.response.send_message(f"Cannot add {num_to_add} squads. Only {len(available_names)} names available.", ephemeral=True)
@@ -433,7 +567,8 @@ class AddMoreSquadsModal(discord.ui.Modal, title="Add More Squads"):
             self.message_id, 
             post["op_id"], 
             multi=True, 
-            squad_names=list(post["squads"].keys())
+            squad_names=list(post["squads"].keys()),
+            post_data=post
         )
         
         try:
@@ -551,7 +686,8 @@ class AddMoreTanksModal(discord.ui.Modal, title="Add More Tanks"):
             self.message_id, 
             post["op_id"], 
             multi=True, 
-            squad_names=list(post["squads"].keys())
+            squad_names=list(post["squads"].keys()),
+            post_data=post
         )
         
         try:
@@ -563,13 +699,14 @@ class AddMoreTanksModal(discord.ui.Modal, title="Add More Tanks"):
             await interaction.response.send_message(f"Error updating message: {str(e)}", ephemeral=True)
 
 class SquadSignupView(discord.ui.View):
-    def __init__(self, bot, message_id, op_id, multi=False, squad_names=None):
+    def __init__(self, bot, message_id, op_id, multi=False, squad_names=None, allow_add_players=False):
         super().__init__(timeout=None)
         self.bot = bot
         self.message_id = message_id
         self.op_id = op_id
         self.multi = multi
         self.squad_names = squad_names or []
+        self.allow_add_players = allow_add_players
 
         if self.multi and self.squad_names:
             for squad in self.squad_names:
@@ -584,6 +721,8 @@ class SquadSignupView(discord.ui.View):
         # Add the "Add More Squads" button that only the OP can see
         if multi:
             self.add_item(AddMoreSquadsButton())
+        if allow_add_players:
+            self.add_item(AddPlayersButton())
 
 class SquadUp(commands.Cog):
     def __init__(self, bot):
@@ -607,7 +746,10 @@ class SquadUp(commands.Cog):
             if not post.get("closed", False):
                 if post.get("multi"):
                     squad_names = list(post["squads"].keys())
-                    view = get_or_create_view(self.bot, int(msg_id), post["op_id"], multi=True, squad_names=squad_names)
+                    view = get_or_create_view(
+                        self.bot, int(msg_id), post["op_id"], multi=True,
+                        squad_names=squad_names, post_data=post
+                    )
                 else:
                     view = get_or_create_view(self.bot, int(msg_id), post["op_id"], multi=False)
                 self.bot.add_view(view, message_id=int(msg_id))
@@ -724,8 +866,8 @@ class SquadUp(commands.Cog):
     async def squadupmulti(self, 
                           interaction: discord.Interaction, 
                           title: str, 
-                          number_of_squads: int, 
-                          players_per_squad: int = 6, 
+                          number_of_squads: app_commands.Range[int, 1, 21],
+                          players_per_squad: app_commands.Range[int, 1, 50] = 6,
                           details: Optional[str] = None,
                           image: Optional[discord.Attachment] = None):
         if not self.user_has_allowed_role(interaction.user):
@@ -745,7 +887,10 @@ class SquadUp(commands.Cog):
         }
 
         embed = self.build_embed(post_data)
-        view = get_or_create_view(self.bot, None, interaction.user.id, multi=True, squad_names=squad_names)
+        view = get_or_create_view(
+            self.bot, None, interaction.user.id, multi=True,
+            squad_names=squad_names, post_data=post_data
+        )
         
         # Handle image attachment if provided
         if image:
@@ -822,7 +967,10 @@ class SquadUp(commands.Cog):
         }
 
         embed = self.build_embed(post_data)
-        view = get_or_create_view(self.bot, None, interaction.user.id, multi=True, squad_names=squad_names)
+        view = get_or_create_view(
+            self.bot, None, interaction.user.id, multi=True,
+            squad_names=squad_names, post_data=post_data
+        )
         
         # Handle image attachment if provided
         if image:
