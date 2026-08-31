@@ -5,7 +5,8 @@ This bot runs from `main.py` and loads feature cogs from `cogs/`.
 This README is the short summary version and is suitable for a single Discord devguide forum thread called `Ratbot Guide`.
 For more detailed usage notes, see `COG_HOWTO.md`.
 
-This repo also contains the reverse-proxy configuration for the separately hosted historic-stats site.
+This repo also contains the HLL Frontline personnel dashboard and reverse-proxy
+configuration for the dashboard and separately hosted historic-stats site.
 
 ## Code Location
 
@@ -65,13 +66,14 @@ discord-bot-7drtratrack/
 What each part is for:
 
 - `main.py`: the entrypoint you run; loads the bot and its cogs
+- `liberationapp/frontend/`: the no-build HLL Frontline website served by the bot
 - `.env`: local secrets such as the bot token; not for public sharing
 - `config/`: shared static config and common constants
 - `cogs/`: modular Discord features
 - `data/`: state files, logs, mappings, fonts, and generated bot data
 - `README.md`: public-safe summary and structure overview
 - `COG_HOWTO.md`: longer user/staff guide for each cog
-- `liberationapp/`: Caddy configuration and deployment notes for the historic-stats subdomain
+- `liberationapp/`: HLL Frontline frontend, Caddy configuration, and deployment notes
 
 ## Hosting Model
 
@@ -140,6 +142,7 @@ features from starting. Slash commands are synchronized once during startup.
 - `multi_trainee_tracker`
 - `t17_role_index`
 - `rollcall`
+- `frontline_web`
 - `nameshame`
 - `outofoffice`
 - `wardiary`
@@ -158,15 +161,17 @@ Currently disabled in `main.py`:
 
 ## Other Repo Content
 
-- `liberationapp/`: reverse-proxy configuration for the historic-stats subdomain
+- `liberationapp/`: personnel dashboard frontend and reverse-proxy configuration
 - `cogs/`: Discord bot features loaded by `main.py`
 - `config/`: shared config files and shared constant definitions
 - `data/`: bot state, logs, fonts, and generated files
 - `state_io.py`: shared atomic JSON persistence for runtime state
 - `requirements.txt`: pinned Python dependencies
 
-## Historic Stats Deployment
+## HLL Frontline Website
 
-The former HLL Frontline/Liberation website has been retired. Only
-`7drhistostats.hllfrontline.com` remains, proxied to its existing service on
-`127.0.0.1:7010`. See `liberationapp/DEPLOYMENT.md` for the retained setup.
+The bot serves a read-only, live personnel dashboard on `127.0.0.1:7020` by
+default. It mirrors roll-call attendance and Infantry, Recon, and Armour trainee
+progress while the existing Discord features remain active. Caddy publishes it
+at `hllfrontline.com`; historic stats remain at
+`7drhistostats.hllfrontline.com`. See `liberationapp/DEPLOYMENT.md`.

@@ -32,6 +32,7 @@ EXTENSIONS = (
     "cogs.multi_trainee_tracker",
     "cogs.t17_role_index",
     "cogs.rollcall",
+    "cogs.frontline_web",
     "cogs.nameshame",
     "cogs.outofoffice",
     "cogs.wardiary",

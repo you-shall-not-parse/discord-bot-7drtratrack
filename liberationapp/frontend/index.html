@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#151711">
+  <meta name="description" content="7th Division roll calls and trainee readiness.">
+  <title>HLL Frontline — 7th Division Operations</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/app.css">
+  <script defer src="/assets/app.js"></script>
+</head>
+<body>
+  <div class="grain" aria-hidden="true"></div>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="HLL Frontline home">
+      <span class="brand-mark">7</span>
+      <span><b>HLL</b> FRONTLINE<small>7TH DIVISION OPERATIONS</small></span>
+    </a>
+    <div class="status"><span class="status-dot"></span><span id="sync-status">Connecting to command</span></div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div>
+        <p class="eyebrow">PERSONNEL COMMAND · LIVE OVERVIEW</p>
+        <h1>Readiness,<br><em>at a glance.</em></h1>
+        <p class="hero-copy">Weekly attendance and trainee progression for the 7th Division, kept in step with Discord.</p>
+      </div>
+      <div class="hero-stamp" aria-hidden="true"><span>7DR</span><small>EST. 2020</small></div>
+    </section>
+
+    <nav class="section-tabs" aria-label="Dashboard sections">
+      <button class="tab active" data-view="rollcalls">Roll calls <span id="rollcall-count">—</span></button>
+      <button class="tab" data-view="trainees">Trainee tracker <span id="trainee-count">—</span></button>
+    </nav>
+
+    <section id="loading" class="loading-state">
+      <span class="loader"></span>
+      <p>Receiving field report…</p>
+    </section>
+    <section id="error" class="error-state" hidden>
+      <p class="eyebrow">CONNECTION INTERRUPTED</p>
+      <h2>Field report unavailable</h2>
+      <p id="error-message">The live service could not be reached.</p>
+      <button id="retry">Try again</button>
+    </section>
+
+    <section id="rollcalls" class="dashboard-view" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">WEEKLY MUSTER</p><h2>Roll calls</h2></div>
+        <p>Attendance remains managed through Discord reactions during this first web release.</p>
+      </div>
+      <div id="rollcall-grid" class="card-grid"></div>
+    </section>
+
+    <section id="trainees" class="dashboard-view" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">TRAINING PIPELINE</p><h2>Trainee tracker</h2></div>
+        <p>Role qualifications update automatically from the live Discord roster.</p>
+      </div>
+      <div id="trainee-grid" class="card-grid"></div>
+    </section>
+  </main>
+
+  <dialog id="detail-modal">
+    <button class="modal-close" aria-label="Close details">×</button>
+    <div id="modal-content"></div>
+  </dialog>
+
+  <footer><span>HLL FRONTLINE</span><span id="last-updated">Awaiting sync</span></footer>
+</body>
+</html>

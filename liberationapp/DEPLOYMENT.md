@@ -1,11 +1,13 @@
-# Historic Stats Deployment
+# HLL Frontline Deployment
 
-The Liberation frontend, API, PostgreSQL, and Redis stack has been retired.
-Only the independently hosted historic-stats service remains.
+The original Liberation frontend, API, PostgreSQL, and Redis stack has been
+retired. The Discord bot now hosts the HLL Frontline personnel dashboard on
+`127.0.0.1:7020`, while the independently hosted historic-stats service remains
+on `127.0.0.1:7010`.
 
-`Caddyfile.production` exposes `7drhistostats.hllfrontline.com` and proxies it
-to the existing service on `127.0.0.1:7010`. The `www` form redirects to the
-canonical subdomain.
+`Caddyfile.production` exposes the new dashboard at `hllfrontline.com` and
+historic stats at `7drhistostats.hllfrontline.com`. Both `www` forms redirect
+to their canonical address.
 
 Install and validate the configuration on the host:
 
@@ -18,9 +20,12 @@ sudo systemctl reload caddy
 Verify both the local service and public endpoint:
 
 ```bash
+curl http://127.0.0.1:7020/api/health
+curl -I https://hllfrontline.com
 curl -I http://127.0.0.1:7010
 curl -I https://7drhistostats.hllfrontline.com
 ```
 
-The apex `hllfrontline.com` and the former Liberation containers are
-intentionally not configured here.
+The bind address and port can be changed with `FRONTLINE_WEB_HOST` and
+`FRONTLINE_WEB_PORT`. Keep the bind address on loopback when Caddy and the bot
+run on the same host.

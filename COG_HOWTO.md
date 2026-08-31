@@ -227,6 +227,24 @@ How to use: Use `/forcerollcall` when a roll call needs to run immediately or a 
 
 Rules and notes: Manual forcing should be the exception. If you use it too often, members stop trusting the schedule.
 
+## `frontline_web.py`
+
+Overview: Serves the HLL Frontline website and its live, read-only roll-call and
+trainee-tracker API. The site reads directly from `rollcall.py` and
+`multi_trainee_tracker.py`, so Discord remains the source of truth.
+
+Slash commands: none.
+
+How to use: Start the bot normally, then open `http://127.0.0.1:7020` on the
+host. In production, Caddy publishes that service at `https://hllfrontline.com`.
+The bind address and port can be overridden with `FRONTLINE_WEB_HOST` and
+`FRONTLINE_WEB_PORT`.
+
+Rules and notes: This first release is display-only. Members continue to mark
+attendance with Discord reactions, and trainee qualifications continue to come
+from Discord roles. The website refreshes its live view every minute without
+changing either cog's existing posts, schedules, state, or commands.
+
 ## `nameshame.py`
 
 Overview: Handles the name-and-shame process and moderation-adjacent admin actions.
