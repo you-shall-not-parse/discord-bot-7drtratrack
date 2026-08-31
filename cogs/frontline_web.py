@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import os
 import re
@@ -9,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from aiohttp import web
+from openpyxl import Workbook
 
 from clan_t17_lookup import DEFAULT_RANK_ORDER
 from config import MAIN_GUILD_ID
@@ -34,6 +36,10 @@ class FrontlineWeb:
         app.router.add_get("/api/health", self.health)
         app.router.add_get("/api/dashboard", self.dashboard)
         app.router.add_get("/assets/{filename}", self.asset)
+        app.router.add_get("/exports/rollcalls/{key}.html", self.rollcall_html_export)
+        app.router.add_get("/exports/rollcalls/{key}.xlsx", self.rollcall_excel_export)
+        app.router.add_get("/exports/trainees/{key}.html", self.trainee_html_export)
+        app.router.add_get("/exports/trainees/{key}.xlsx", self.trainee_excel_export)
         app.router.add_get("/rollcalls/{key}", self.report_page)
         app.router.add_get("/trainees/{key}", self.report_page)
         app.router.add_get("/", self.index)
@@ -63,7 +69,7 @@ class FrontlineWeb:
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-        if request.path.startswith("/api/"):
+        if request.path.startswith(("/api/", "/exports/")):
             response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -333,6 +339,100 @@ class FrontlineWeb:
         if not path.is_file():
             raise web.HTTPNotFound(text="Report frontend is missing.")
         return web.FileResponse(path)
+
+    def _require_guild_and_cog(self, cog_name: str):
+        guild = self.bot.get_guild(MAIN_GUILD_ID)
+        cog = self.bot.get_cog(cog_name)
+        if guild is None or cog is None:
+            raise web.HTTPServiceUnavailable(text="Report data is not ready yet.")
+        return guild, cog
+
+    @staticmethod
+    def _rollcall_config(key: str):
+        from cogs.rollcall import ROLLCALLS
+
+        config = next((cfg for cfg in ROLLCALLS if cfg.key == key), None)
+        if config is None:
+            raise web.HTTPNotFound()
+        return config
+
+    @staticmethod
+    def _trainee_config(key: str):
+        from cogs.multi_trainee_tracker import TRACKS
+
+        config = next((cfg for cfg in TRACKS if cfg.key == key), None)
+        if config is None:
+            raise web.HTTPNotFound()
+        return config
+
+    async def rollcall_html_export(self, request: web.Request) -> web.Response:
+        guild, cog = self._require_guild_and_cog("RollCallCog")
+        config = self._rollcall_config(request.match_info["key"])
+        async with cog._lock:
+            workbook = await asyncio.to_thread(cog._load_or_create_workbook)
+            worksheet = cog._get_or_create_sheet(workbook, config)
+            state = cog._rc_state(config.key)
+            week = state.get("current_week") or cog._week_label(cog._rollcall_date_for_now())
+            document = cog._render_html(guild, worksheet, config, highlight_week=week)
+        return web.Response(text=document, content_type="text/html", charset="utf-8")
+
+    async def rollcall_excel_export(self, request: web.Request) -> web.Response:
+        _guild, cog = self._require_guild_and_cog("RollCallCog")
+        config = self._rollcall_config(request.match_info["key"])
+        async with cog._lock:
+            workbook = await asyncio.to_thread(cog._load_or_create_workbook)
+            cog._get_or_create_sheet(workbook, config)
+            output = io.BytesIO()
+            await asyncio.to_thread(workbook.save, output)
+        return self._excel_response(output.getvalue(), "rollcall.xlsx")
+
+    async def trainee_html_export(self, request: web.Request) -> web.Response:
+        guild, cog = self._require_guild_and_cog("MultiTraineeTracker")
+        config = self._trainee_config(request.match_info["key"])
+        rows = cog._collect_rows(guild, config)
+        document = cog._render_html(config, rows)
+        return web.Response(text=document, content_type="text/html", charset="utf-8")
+
+    async def trainee_excel_export(self, request: web.Request) -> web.Response:
+        guild, cog = self._require_guild_and_cog("MultiTraineeTracker")
+        config = self._trainee_config(request.match_info["key"])
+        rows = cog._collect_rows(guild, config)
+
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.title = config.title[:31]
+        headers = ["Name", "Username", "Join Date", "+14 Days"] + [label for label, _ in config.check_roles]
+        worksheet.append(headers)
+        for row in rows:
+            worksheet.append(
+                [
+                    row["display_name"],
+                    row["username"],
+                    row["join_date"].date(),
+                    row["plus_14"].date(),
+                    *("Yes" if row["checks"].get(label) else "No" for label, _ in config.check_roles),
+                ]
+            )
+        worksheet.freeze_panes = "A2"
+        worksheet.auto_filter.ref = worksheet.dimensions
+        for column in worksheet.columns:
+            letter = column[0].column_letter
+            worksheet.column_dimensions[letter].width = min(
+                42,
+                max(12, max(len(str(cell.value or "")) for cell in column) + 2),
+            )
+
+        output = io.BytesIO()
+        await asyncio.to_thread(workbook.save, output)
+        return self._excel_response(output.getvalue(), f"{config.key}_trainee_tracker.xlsx")
+
+    @staticmethod
+    def _excel_response(content: bytes, filename: str) -> web.Response:
+        return web.Response(
+            body=content,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
 
 
 async def setup(bot) -> None:

@@ -81,7 +81,12 @@ td { padding: 12px 14px; border-top: 1px solid var(--line); }
 .back-link:hover { color: var(--ink); }
 .report-heading { display: flex; justify-content: space-between; align-items: end; gap: 28px; margin: 38px 0 30px; }
 .report-heading h1 { font-size: clamp(48px, 7vw, 82px); line-height: .85; }
-.report-heading p:last-child { color: var(--muted); max-width: 470px; line-height: 1.6; font-size: 12px; margin: 0; }
+#report-description { color: var(--muted); max-width: 470px; line-height: 1.6; font-size: 12px; margin: 0; }
+.report-summary { display: grid; justify-items: start; gap: 17px; max-width: 470px; }
+.report-actions { display: flex; flex-wrap: wrap; gap: 9px; }
+.export-button { padding: 10px 13px; border: 1px solid var(--line); color: var(--ink); text-decoration: none; text-transform: uppercase; letter-spacing: .1em; font: 600 9px Inter; }
+.export-button:hover { border-color: var(--olive); }
+.export-button.primary { color: #151711; background: var(--olive); border-color: var(--olive); }
 .report-section { margin-top: 38px; }
 .report-section-title { display: flex; align-items: baseline; gap: 10px; margin-bottom: 13px; }
 .report-section-title h2 { margin: 0; font-size: 27px; }
@@ -113,4 +118,9 @@ footer { padding: 28px clamp(22px, 5vw, 72px); border-top: 1px solid var(--line)
   .stats { grid-template-columns: repeat(3, 1fr); }
   .stat { padding: 12px 9px; }
   .report-heading { align-items: start; flex-direction: column; }
+  .report-main { padding-left: 12px; padding-right: 12px; }
+  .report-table { min-width: 650px; font-size: 10px; }
+  .sort-button { padding: 9px 8px; font-size: 8px; }
+  .report-table td { padding: 9px 8px; }
+  .check { padding: 3px 5px; font-size: 8px; }
 }

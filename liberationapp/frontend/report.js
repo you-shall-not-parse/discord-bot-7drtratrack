@@ -121,6 +121,14 @@ function renderReport() {
   else renderTrainees(reportState.item);
 }
 
+function renderExportActions(locationInfo) {
+  const collection = locationInfo.kind === "rollcall" ? "rollcalls" : "trainees";
+  const base = `/exports/${collection}/${encodeURIComponent(locationInfo.key)}`;
+  $("#report-actions").innerHTML = `
+    <a class="export-button" href="${base}.html" target="_blank" rel="noopener">Open HTML</a>
+    <a class="export-button primary" href="${base}.xlsx" download>Download Excel</a>`;
+}
+
 document.addEventListener("click", event => {
   const button = event.target.closest("[data-sort]");
   if (!button) return;
@@ -141,6 +149,7 @@ async function loadReport() {
     reportState.item = collection.find(entry => entry.key === locationInfo.key);
     if (!reportState.item) throw new Error("That report does not exist.");
     renderReport();
+    renderExportActions(locationInfo);
     $("#loading").hidden = true;
     $("#report").hidden = false;
     $("#sync-status").textContent = "Live from Discord";
