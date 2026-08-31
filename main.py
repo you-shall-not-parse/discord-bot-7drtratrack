@@ -46,6 +46,7 @@ EXTENSIONS = (
     "cogs.raid",
     "cogs.strategic_review_note",
     "cogs.bulkdelete",
+    "cogs.hllv_names",
 )
 
 DISABLED_EXTENSIONS = (

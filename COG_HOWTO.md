@@ -7,6 +7,16 @@ Each section explains three things:
 - how members or staff normally use it
 - rules or limitations that matter in practice
 
+## `hllv_names.py`
+
+Overview: Maintains a public directory that maps Discord members to their HLLV in-game names.
+
+Slash commands: none.
+
+How to use: In channel `1544114339609575475`, choose **Add or update my HLLV name** from the dropdown and enter the name in the private form. Choose **Delete my HLLV name** to remove it. Use **Search users** to privately search the directory by Discord nickname, username, user ID, or HLLV name. The directory refreshes automatically after each change.
+
+Rules and notes: Each Discord account can save one HLLV name. Re-entering a name replaces the existing value. Names are limited to 64 characters, and all controls and confirmation messages are private to the member using them. The main directory embed uses `data/map_images/HLLV Image2.webp` as its image.
+
 ## `botadmin.py`
 
 Overview: Bot control for the owner or bot admins.

@@ -10,6 +10,7 @@ data/*_state.json
 data/yt_*.json
 data/squadup_posts.json
 data/hllv_platform_ids.json
+data/hllv_names_message.json
 DEPLOYMENT.md
 
 # C extensions
