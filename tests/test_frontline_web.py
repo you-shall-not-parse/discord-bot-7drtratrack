@@ -8,8 +8,10 @@ def test_frontend_assets_exist_and_are_wired() -> None:
     css = (FRONTEND_DIR / "app.css").read_text(encoding="utf-8")
     javascript = (FRONTEND_DIR / "app.js").read_text(encoding="utf-8")
 
-    assert '<link rel="stylesheet" href="/assets/app.css">' in index
-    assert '<script defer src="/assets/app.js"></script>' in index
+    assert '<link rel="stylesheet" href="/assets/app.css?v=3">' in index
+    assert '<script defer src="/assets/app.js?v=3"></script>' in index
+    assert 'src="/assets/emblem_7dr.png"' in index
+    assert "7th Armoured Division" in index
     assert "--olive:" in css
     assert "[hidden] { display: none !important; }" in css
     assert 'fetch("/api/dashboard"' in javascript

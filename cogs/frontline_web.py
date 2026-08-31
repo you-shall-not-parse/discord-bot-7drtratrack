@@ -14,6 +14,7 @@ from config import MAIN_GUILD_ID
 logger = logging.getLogger(__name__)
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "liberationapp" / "frontend"
+CLAN_EMBLEM_PATH = Path(__file__).resolve().parent.parent / "data" / "emblem_7dr.png"
 WEB_HOST = os.getenv("FRONTLINE_WEB_HOST", "127.0.0.1")
 WEB_PORT = int(os.getenv("FRONTLINE_WEB_PORT", "7020"))
 
@@ -239,9 +240,12 @@ class FrontlineWeb:
 
     async def asset(self, request: web.Request) -> web.StreamResponse:
         filename = request.match_info["filename"]
-        if filename not in {"app.css", "app.js"}:
+        if filename == "emblem_7dr.png":
+            path = CLAN_EMBLEM_PATH
+        elif filename in {"app.css", "app.js"}:
+            path = FRONTEND_DIR / filename
+        else:
             raise web.HTTPNotFound()
-        path = FRONTEND_DIR / filename
         if not path.is_file():
             raise web.HTTPNotFound()
         return web.FileResponse(path)
