@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote
 
-from aiohttp import web
+from aiohttp import ClientSession, ClientTimeout, web
 from openpyxl import Workbook
 
 from config import MAIN_GUILD_ID
@@ -27,9 +27,10 @@ CLAN_EMBLEM_PATH = Path(__file__).resolve().parent.parent / "data" / "emblem_7dr
 WEB_HOST = os.getenv("FRONTLINE_WEB_HOST", "127.0.0.1")
 WEB_PORT = int(os.getenv("FRONTLINE_WEB_PORT", "7020"))
 SESSION_COOKIE = "hll_frontline_session"
-SESSION_SECONDS = 7 * 24 * 60 * 60
+SESSION_SECONDS = 24 * 60 * 60
 LOGIN_WINDOW_SECONDS = 15 * 60
 LOGIN_MAX_FAILURES = 5
+TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
 
 class FrontlineWeb:
@@ -40,12 +41,19 @@ class FrontlineWeb:
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
         self._app_pin = os.getenv("APPPIN", "")
+        self._turnstile_site_key = os.getenv("TURNSTILE_SITE_KEY", "").strip()
+        self._turnstile_secret_key = os.getenv("TURNSTILE_SECRET_KEY", "").strip()
+        self._turnstile_hostname = os.getenv("TURNSTILE_HOSTNAME", "hllfrontline.com").strip().casefold()
         self._sessions: dict[str, int] = {}
         self._login_failures: dict[str, list[float]] = {}
 
     async def start(self) -> None:
         if len(self._app_pin) < 8:
             raise RuntimeError("APPPIN must be set to at least 8 characters in the environment or .env file")
+        if bool(self._turnstile_site_key) != bool(self._turnstile_secret_key):
+            raise RuntimeError("TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY must either both be set or both be omitted")
+        if not self._turnstile_enabled:
+            logger.warning("HLL Frontline Turnstile protection is disabled because no Turnstile keys are configured")
 
         app = web.Application(middlewares=[self._security_headers, self._pin_auth], client_max_size=64 * 1024)
         app.router.add_get("/api/health", self.health)
@@ -87,9 +95,11 @@ class FrontlineWeb:
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        turnstile_script = " https://challenges.cloudflare.com" if self._turnstile_enabled else ""
+        turnstile_frame = "frame-src https://challenges.cloudflare.com; " if self._turnstile_enabled else ""
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; "
-            "script-src 'self'; connect-src 'self'; img-src 'self' data:; "
+            f"script-src 'self'{turnstile_script}; {turnstile_frame}connect-src 'self'; img-src 'self' data:; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
             "font-src 'self' https://fonts.gstatic.com"
         )
@@ -175,12 +185,44 @@ class FrontlineWeb:
             self._login_failures.pop(key, None)
         return recent
 
+    @property
+    def _turnstile_enabled(self) -> bool:
+        return bool(self._turnstile_site_key and self._turnstile_secret_key)
+
+    @staticmethod
+    def _valid_turnstile_result(result: object, expected_hostname: str) -> bool:
+        if not isinstance(result, dict) or result.get("success") is not True:
+            return False
+        hostname = str(result.get("hostname") or "").casefold()
+        action = str(result.get("action") or "")
+        return hmac.compare_digest(hostname, expected_hostname.casefold()) and action == "login"
+
+    async def _verify_turnstile(self, request: web.Request, token: str) -> bool:
+        if not self._turnstile_enabled or not token:
+            return False
+        payload = {
+            "secret": self._turnstile_secret_key,
+            "response": token,
+            "remoteip": self._client_key(request),
+        }
+        try:
+            async with ClientSession(timeout=ClientTimeout(total=8)) as session:
+                async with session.post(TURNSTILE_VERIFY_URL, data=payload) as response:
+                    if response.status != 200:
+                        logger.warning("Turnstile Siteverify returned HTTP %s", response.status)
+                        return False
+                    result = await response.json(content_type=None)
+        except Exception:
+            logger.warning("Turnstile Siteverify request failed", exc_info=True)
+            return False
+        return self._valid_turnstile_result(result, self._turnstile_hostname)
+
     async def login_page(self, request: web.Request) -> web.Response:
         if self._valid_session(request.cookies.get(SESSION_COOKIE, "")):
             return web.HTTPSeeOther(location=self._safe_next(request.query.get("next")))
         return self._login_document(
             next_url=self._safe_next(request.query.get("next")),
-            error=request.query.get("error") == "1",
+            error_code=str(request.query.get("error") or ""),
         )
 
     async def login(self, request: web.Request) -> web.Response:
@@ -196,6 +238,14 @@ class FrontlineWeb:
 
         form = await request.post()
         next_url = self._safe_next(str(form.get("next") or next_url))
+        if self._turnstile_enabled:
+            turnstile_token = str(form.get("cf-turnstile-response") or "")
+            if not await self._verify_turnstile(request, turnstile_token):
+                logger.warning(
+                    "Rejected HLL Frontline login after failed Turnstile verification from %s",
+                    self._client_key(request),
+                )
+                return web.HTTPSeeOther(location=f"/login?error=turnstile&next={quote(next_url, safe='')}")
         supplied_pin = str(form.get("pin") or "")
         if not hmac.compare_digest(supplied_pin.encode("utf-8"), self._app_pin.encode("utf-8")):
             self._login_failures.setdefault(self._client_key(request), []).append(time.monotonic())
@@ -221,13 +271,31 @@ class FrontlineWeb:
         response.del_cookie(SESSION_COOKIE, path="/")
         return response
 
-    def _login_document(self, *, next_url: str, error: bool) -> web.Response:
+    def _login_document(self, *, next_url: str, error_code: str) -> web.Response:
         path = FRONTEND_DIR / "login.html"
         if not path.is_file():
             raise web.HTTPNotFound(text="Login frontend is missing.")
         document = path.read_text(encoding="utf-8")
         document = document.replace("{{NEXT}}", html.escape(next_url, quote=True))
-        document = document.replace("{{ERROR}}", "The PIN was not recognised." if error else "")
+        if self._turnstile_enabled:
+            turnstile_head = (
+                '<link rel="preconnect" href="https://challenges.cloudflare.com">\n'
+                '  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>'
+            )
+            turnstile_widget = (
+                f'<div class="cf-turnstile" data-sitekey="{html.escape(self._turnstile_site_key, quote=True)}" '
+                'data-action="login" data-theme="dark"></div>'
+            )
+        else:
+            turnstile_head = ""
+            turnstile_widget = ""
+        error_messages = {
+            "1": "The PIN was not recognised.",
+            "turnstile": "The security check was not completed. Please try again.",
+        }
+        document = document.replace("{{TURNSTILE_HEAD}}", turnstile_head)
+        document = document.replace("{{TURNSTILE_WIDGET}}", turnstile_widget)
+        document = document.replace("{{ERROR}}", error_messages.get(error_code, ""))
         return web.Response(text=document, content_type="text/html", charset="utf-8")
 
     async def health(self, _request: web.Request) -> web.Response:

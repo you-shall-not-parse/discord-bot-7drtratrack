@@ -10,6 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/assets/app.css?v=6">
+  {{TURNSTILE_HEAD}}
 </head>
 <body class="login-page">
   <div class="grain" aria-hidden="true"></div>
@@ -23,6 +24,7 @@
         <input type="hidden" name="next" value="{{NEXT}}">
         <label for="pin">Access PIN</label>
         <input id="pin" name="pin" type="password" minlength="8" maxlength="128" autocomplete="current-password" autofocus required>
+        {{TURNSTILE_WIDGET}}
         <p class="login-error" aria-live="polite">{{ERROR}}</p>
         <button type="submit">Authenticate</button>
       </form>

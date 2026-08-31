@@ -34,6 +34,8 @@ def test_frontend_assets_exist_and_are_wired() -> None:
     assert 'Open HTML' in report_javascript
     assert 'Download Excel' in report_javascript
     assert 'name="pin"' in login
+    assert "{{TURNSTILE_HEAD}}" in login
+    assert "{{TURNSTILE_WIDGET}}" in login
     assert 'method="post" action="/login"' in login
     assert 'action="/logout"' in index
 
@@ -48,6 +50,15 @@ def test_pin_sessions_are_random_and_open_redirects_are_rejected(monkeypatch) ->
     assert service._safe_next("/rollcalls/22nd") == "/rollcalls/22nd"
     assert service._safe_next("//example.com") == "/"
     assert service._safe_next("https://example.com") == "/"
+
+
+def test_turnstile_result_requires_success_matching_hostname_and_login_action() -> None:
+    valid = {"success": True, "hostname": "hllfrontline.com", "action": "login"}
+
+    assert FrontlineWeb._valid_turnstile_result(valid, "hllfrontline.com")
+    assert not FrontlineWeb._valid_turnstile_result({**valid, "success": False}, "hllfrontline.com")
+    assert not FrontlineWeb._valid_turnstile_result({**valid, "hostname": "example.com"}, "hllfrontline.com")
+    assert not FrontlineWeb._valid_turnstile_result({**valid, "action": "other"}, "hllfrontline.com")
 
 
 def test_sensitive_file_probes_are_rejected_before_login() -> None:

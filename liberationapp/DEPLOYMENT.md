@@ -26,8 +26,24 @@ chmod 600 .env
 ```
 
 Restart the bot after adding or changing `APPPIN`. Changing it invalidates all
-existing website sessions. Sessions last for up to seven days or until the bot
+existing website sessions. Sessions last for up to 24 hours or until the bot
 restarts. Five failed PIN attempts from one client are blocked for 15 minutes.
+
+## Optional Cloudflare Turnstile protection
+
+Create a Managed Turnstile widget restricted to `hllfrontline.com`, then add
+both keys to `.env`:
+
+```dotenv
+TURNSTILE_SITE_KEY="public-widget-site-key"
+TURNSTILE_SECRET_KEY="private-widget-secret-key"
+```
+
+When both values are present, the login page displays Turnstile and the server
+requires a successful Siteverify response for the `hllfrontline.com` hostname
+and `login` action before checking the PIN. If only one value is present, the
+web service refuses to start. If both are omitted, Turnstile remains disabled
+and the service logs a warning.
 
 Install and validate the configuration on the host:
 
