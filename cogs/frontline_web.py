@@ -1,19 +1,24 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
+import html
 import io
 import logging
 import os
 import re
+import secrets
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from aiohttp import web
 from openpyxl import Workbook
 
-from clan_t17_lookup import DEFAULT_RANK_ORDER
 from config import MAIN_GUILD_ID
+from rank_order import DEFAULT_RANK_ORDER
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +26,10 @@ FRONTEND_DIR = Path(__file__).resolve().parent.parent / "liberationapp" / "front
 CLAN_EMBLEM_PATH = Path(__file__).resolve().parent.parent / "data" / "emblem_7dr.png"
 WEB_HOST = os.getenv("FRONTLINE_WEB_HOST", "127.0.0.1")
 WEB_PORT = int(os.getenv("FRONTLINE_WEB_PORT", "7020"))
+SESSION_COOKIE = "hll_frontline_session"
+SESSION_SECONDS = 7 * 24 * 60 * 60
+LOGIN_WINDOW_SECONDS = 15 * 60
+LOGIN_MAX_FAILURES = 5
 
 
 class FrontlineWeb:
@@ -30,10 +39,19 @@ class FrontlineWeb:
         self.bot = bot
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
+        self._app_pin = os.getenv("APPPIN", "")
+        self._sessions: dict[str, int] = {}
+        self._login_failures: dict[str, list[float]] = {}
 
     async def start(self) -> None:
-        app = web.Application(middlewares=[self._security_headers])
+        if len(self._app_pin) < 8:
+            raise RuntimeError("APPPIN must be set to at least 8 characters in the environment or .env file")
+
+        app = web.Application(middlewares=[self._security_headers, self._pin_auth], client_max_size=64 * 1024)
         app.router.add_get("/api/health", self.health)
+        app.router.add_get("/login", self.login_page)
+        app.router.add_post("/login", self.login)
+        app.router.add_post("/logout", self.logout)
         app.router.add_get("/api/dashboard", self.dashboard)
         app.router.add_get("/assets/{filename}", self.asset)
         app.router.add_get("/exports/rollcalls/{key}.html", self.rollcall_html_export)
@@ -69,9 +87,123 @@ class FrontlineWeb:
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-        if request.path.startswith(("/api/", "/exports/")):
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; "
+            "script-src 'self'; connect-src 'self'; img-src 'self' data:; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com"
+        )
+        if request.secure or request.headers.get("X-Forwarded-Proto", "").casefold() == "https":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000"
+        if request.path.startswith(("/api/", "/exports/")) or request.path == "/login":
             response.headers["Cache-Control"] = "no-store"
         return response
+
+    @web.middleware
+    async def _pin_auth(self, request: web.Request, handler):
+        if request.path in {"/login", "/api/health"} or request.path.startswith("/assets/"):
+            return await handler(request)
+        if self._valid_session(request.cookies.get(SESSION_COOKIE, "")):
+            return await handler(request)
+        if request.path.startswith("/api/"):
+            return web.json_response({"error": "Authentication required", "login_url": "/login"}, status=401)
+        next_url = quote(self._safe_next(str(request.rel_url)), safe="")
+        return web.HTTPSeeOther(location=f"/login?next={next_url}")
+
+    @staticmethod
+    def _safe_next(value: str | None) -> str:
+        candidate = str(value or "/")
+        return candidate if candidate.startswith("/") and not candidate.startswith("//") else "/"
+
+    def _new_session(self) -> str:
+        now = int(time.time())
+        self._sessions = {token: expiry for token, expiry in self._sessions.items() if expiry >= now}
+        token = secrets.token_urlsafe(32)
+        self._sessions[token] = now + SESSION_SECONDS
+        return token
+
+    def _valid_session(self, token: str) -> bool:
+        expiry = self._sessions.get(token)
+        if expiry is None:
+            return False
+        if expiry < int(time.time()):
+            self._sessions.pop(token, None)
+            return False
+        return True
+
+    @staticmethod
+    def _client_key(request: web.Request) -> str:
+        forwarded = (
+            request.headers.get("CF-Connecting-IP")
+            or request.headers.get("X-Real-IP")
+            or request.headers.get("X-Forwarded-For", "").split(",", 1)[0].strip()
+        )
+        return forwarded or request.remote or "unknown"
+
+    def _recent_failures(self, request: web.Request) -> list[float]:
+        key = self._client_key(request)
+        cutoff = time.monotonic() - LOGIN_WINDOW_SECONDS
+        recent = [attempt for attempt in self._login_failures.get(key, []) if attempt >= cutoff]
+        if recent:
+            self._login_failures[key] = recent
+        else:
+            self._login_failures.pop(key, None)
+        return recent
+
+    async def login_page(self, request: web.Request) -> web.Response:
+        if self._valid_session(request.cookies.get(SESSION_COOKIE, "")):
+            return web.HTTPSeeOther(location=self._safe_next(request.query.get("next")))
+        return self._login_document(
+            next_url=self._safe_next(request.query.get("next")),
+            error=request.query.get("error") == "1",
+        )
+
+    async def login(self, request: web.Request) -> web.Response:
+        next_url = self._safe_next(request.query.get("next"))
+        failures = self._recent_failures(request)
+        if len(failures) >= LOGIN_MAX_FAILURES:
+            return web.Response(
+                text="Too many login attempts. Try again in 15 minutes.",
+                status=429,
+                content_type="text/plain",
+                headers={"Retry-After": str(LOGIN_WINDOW_SECONDS)},
+            )
+
+        form = await request.post()
+        next_url = self._safe_next(str(form.get("next") or next_url))
+        supplied_pin = str(form.get("pin") or "")
+        if not hmac.compare_digest(supplied_pin.encode("utf-8"), self._app_pin.encode("utf-8")):
+            self._login_failures.setdefault(self._client_key(request), []).append(time.monotonic())
+            logger.warning("Rejected HLL Frontline PIN login from %s", self._client_key(request))
+            return web.HTTPSeeOther(location=f"/login?error=1&next={quote(next_url, safe='')}")
+
+        self._login_failures.pop(self._client_key(request), None)
+        response = web.HTTPSeeOther(location=next_url)
+        response.set_cookie(
+            SESSION_COOKIE,
+            self._new_session(),
+            max_age=SESSION_SECONDS,
+            httponly=True,
+            secure=True,
+            samesite="Strict",
+            path="/",
+        )
+        return response
+
+    async def logout(self, request: web.Request) -> web.Response:
+        self._sessions.pop(request.cookies.get(SESSION_COOKIE, ""), None)
+        response = web.HTTPSeeOther(location="/login")
+        response.del_cookie(SESSION_COOKIE, path="/")
+        return response
+
+    def _login_document(self, *, next_url: str, error: bool) -> web.Response:
+        path = FRONTEND_DIR / "login.html"
+        if not path.is_file():
+            raise web.HTTPNotFound(text="Login frontend is missing.")
+        document = path.read_text(encoding="utf-8")
+        document = document.replace("{{NEXT}}", html.escape(next_url, quote=True))
+        document = document.replace("{{ERROR}}", "The PIN was not recognised." if error else "")
+        return web.Response(text=document, content_type="text/html", charset="utf-8")
 
     async def health(self, _request: web.Request) -> web.Response:
         guild = self.bot.get_guild(MAIN_GUILD_ID)

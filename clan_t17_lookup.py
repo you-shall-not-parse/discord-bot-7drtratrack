@@ -12,37 +12,13 @@ import discord
 
 from data_paths import data_path
 from hll_API_backend import HLLBackendClient, HLLBackendConfigError, get_hll_backend_client
+from rank_order import DEFAULT_RANK_ORDER, DEFAULT_RANK_PREFIXES
 from state_io import atomic_json_dump
 
 CLAN_T17_MAP_FILE = data_path("clan_t17_map.json")
 T17_LOG_FILE = data_path("t17_lookup.log")
 PLAYER_LOOKUP_CACHE_TTL_SECONDS = 3600
 PLAYER_LOOKUP_NEGATIVE_CACHE_TTL_SECONDS = 120
-
-DEFAULT_RANK_ORDER: list[tuple[str, list[str]]] = [
-    ("FM", ["Field Marshal", "FM"]),
-    ("GEN", ["General", "Gen"]),
-    ("LTGEN", ["Lieutenant General", "Lt Gen", "Lt.Gen", "LtGen", "Lt-Gen"]),
-    ("MAJGEN", ["Major General", "Maj Gen", "Maj.Gen", "MajGen", "Maj-Gen"]),
-    ("BRIG", ["Brigadier", "Brig"]),
-    ("COL", ["Colonel", "Col"]),
-    ("LTCOL", ["Lieutenant Colonel", "Lt Col", "Lt. Col", "Lt.Col", "LtCol", "Lt-Col"]),
-    ("MAJ", ["Major", "Maj"]),
-    ("CPT", ["Captain", "Cpt"]),
-    ("LT", ["Lieutenant", "Lt", "Lt."]),
-    ("2LT", ["2nd Lieutenant", "2Lt", "2Lt.", "2ndLt", "2nd Lt", "2 Lt"]),
-    ("RSM", ["Regimental Sergeant Major", "Regimental Sargent Major", "RSM"]),
-    ("WO1", ["Warrant Officer 1st Class", "Warrant Officer 1", "WO1"]),
-    ("WO2", ["Warrant Officer 2nd Class", "Warrant Officer 2", "WO2"]),
-    ("SGM", ["Sergeant Major", "Sergeant major", "SGM"]),
-    ("SSG", ["Staff Sergeant", "Staff Sargent", "SSG"]),
-    ("SGT", ["Sergeant", "Sgt"]),
-    ("CPL", ["Corporal", "Cpl"]),
-    ("LCPL", ["Lance Corporal", "L.Cpl", "LCpl", "L Cpl"]),
-    ("PTE", ["Private", "Pte", "Pte."]),
-]
-DEFAULT_RANK_PREFIXES: list[str] = [variant for _code, variants in DEFAULT_RANK_ORDER for variant in variants]
-
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)

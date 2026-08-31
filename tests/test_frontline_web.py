@@ -11,8 +11,10 @@ def test_frontend_assets_exist_and_are_wired() -> None:
     report = (FRONTEND_DIR / "report.html").read_text(encoding="utf-8")
     report_javascript = (FRONTEND_DIR / "report.js").read_text(encoding="utf-8")
 
-    assert '<link rel="stylesheet" href="/assets/app.css?v=5">' in index
-    assert '<script defer src="/assets/app.js?v=4"></script>' in index
+    login = (FRONTEND_DIR / "login.html").read_text(encoding="utf-8")
+
+    assert '<link rel="stylesheet" href="/assets/app.css?v=6">' in index
+    assert '<script defer src="/assets/app.js?v=5"></script>' in index
     assert 'src="/assets/emblem_7dr.png"' in index
     assert "7th Armoured Division" in index
     assert "<dialog" not in index
@@ -20,7 +22,7 @@ def test_frontend_assets_exist_and_are_wired() -> None:
     assert "[hidden] { display: none !important; }" in css
     assert 'fetch("/api/dashboard"' in javascript
     assert "AbortSignal.timeout(20_000)" in javascript
-    assert 'src="/assets/report.js?v=2"' in report
+    assert 'src="/assets/report.js?v=3"' in report
     assert 'href="/rollcalls/${encodeURIComponent(rollcall.key)}"' in javascript
     assert 'href="/trainees/${encodeURIComponent(track.key)}"' in javascript
     assert 'label: "Current status"' in report_javascript
@@ -30,6 +32,21 @@ def test_frontend_assets_exist_and_are_wired() -> None:
     assert 'data-sort=' in report_javascript
     assert 'Open HTML' in report_javascript
     assert 'Download Excel' in report_javascript
+    assert 'name="pin"' in login
+    assert 'method="post" action="/login"' in login
+    assert 'action="/logout"' in index
+
+
+def test_pin_sessions_are_random_and_open_redirects_are_rejected(monkeypatch) -> None:
+    monkeypatch.setenv("APPPIN", "a-long-test-pin")
+    service = FrontlineWeb(SimpleNamespace())
+    token = service._new_session()
+
+    assert service._valid_session(token)
+    assert not service._valid_session(token + "tampered")
+    assert service._safe_next("/rollcalls/22nd") == "/rollcalls/22nd"
+    assert service._safe_next("//example.com") == "/"
+    assert service._safe_next("https://example.com") == "/"
 
 
 def test_rollcall_status_is_normalised_for_the_public_api() -> None:

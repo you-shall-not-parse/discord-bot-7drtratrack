@@ -137,15 +137,15 @@ How to use: New members experience it automatically. Staff mainly maintain the c
 
 Rules and notes: Keep the greeting flow clear and short. If too much information lands at once, new members will miss the important bits.
 
-## `infantry_trainee_alert.py`
+## `trainee_alert.py`
 
-Overview: Alerts the Infantry School team when a newly joined member receives the Infantry Trainee role.
+Overview: Alerts the appropriate training team when a newly joined member receives the Infantry Trainee or Tank Crew Trainee role.
 
-Slash commands: `/test_infantry_trainee_alert`.
+Slash commands: `/test_trainee_alert` with an Infantry or Tank Crew choice.
 
-How to use: The bot posts automatically in the configured trainer channel and pings the trainee and Infantry School Trainer role. A trainer or member with Manage Server permission can use `/test_infantry_trainee_alert` to post a clearly labelled test alert using themselves as the trainee.
+How to use: The bot posts automatically in the configured trainer channel and pings the trainee and matching trainer role. A matching trainer or member with Manage Server permission can use `/test_trainee_alert` to post a clearly labelled test alert using themselves as the trainee.
 
-Rules and notes: The role names must exactly match **Infantry Trainee** and **Infantry School Trainer**. The bot must be able to view and send messages in the configured channel. The trainer role must be mentionable, or the bot must have permission to mention it.
+Rules and notes: Infantry continues to use the exact role names **Infantry Trainee** and **Infantry School Trainer**. Tank Crew uses configured Discord role IDs. The bot must be able to view and send messages in both configured channels and must have permission to mention the trainer roles.
 
 ## `echo.py`
 
@@ -238,7 +238,8 @@ Slash commands: none.
 How to use: Start the bot normally, then open `http://127.0.0.1:7020` on the
 host. In production, Caddy publishes that service at `https://hllfrontline.com`.
 The bind address and port can be overridden with `FRONTLINE_WEB_HOST` and
-`FRONTLINE_WEB_PORT`.
+`FRONTLINE_WEB_PORT`. Set `APPPIN` to a random value of at least eight
+characters in `.env`; changing it and restarting logs out every website user.
 
 Rules and notes: This first release is display-only. Members continue to mark
 attendance with Discord reactions, and trainee qualifications continue to come

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#151711">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Secure Access — HLL Frontline</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/app.css?v=6">
+</head>
+<body class="login-page">
+  <div class="grain" aria-hidden="true"></div>
+  <main class="login-shell">
+    <section class="login-card">
+      <img class="login-emblem" src="/assets/emblem_7dr.png" alt="7th Armoured Division emblem">
+      <p class="eyebrow">RESTRICTED PERSONNEL SYSTEM</p>
+      <h1>Frontline<br><em>access.</em></h1>
+      <p class="login-copy">Enter the current 7th Armoured Division access PIN to continue.</p>
+      <form class="login-form" method="post" action="/login">
+        <input type="hidden" name="next" value="{{NEXT}}">
+        <label for="pin">Access PIN</label>
+        <input id="pin" name="pin" type="password" minlength="8" maxlength="128" autocomplete="current-password" autofocus required>
+        <p class="login-error" aria-live="polite">{{ERROR}}</p>
+        <button type="submit">Authenticate</button>
+      </form>
+      <small class="login-note">Authorised clan personnel only</small>
+    </section>
+  </main>
+</body>
+</html>

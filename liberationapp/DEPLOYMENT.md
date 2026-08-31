@@ -9,6 +9,26 @@ on `127.0.0.1:7010`.
 historic stats at `7drhistostats.hllfrontline.com`. Both `www` forms redirect
 to their canonical address.
 
+## Required PIN configuration
+
+The dashboard fails closed unless `APPPIN` contains at least eight characters.
+Add a long, random value to the bot's existing `.env` file:
+
+```dotenv
+APPPIN="replace-this-with-a-long-random-value"
+```
+
+Keep `.env` out of Git (the repository `.gitignore` already excludes it) and
+restrict it to the service account on Linux:
+
+```bash
+chmod 600 .env
+```
+
+Restart the bot after adding or changing `APPPIN`. Changing it invalidates all
+existing website sessions. Sessions last for up to seven days or until the bot
+restarts. Five failed PIN attempts from one client are blocked for 15 minutes.
+
 Install and validate the configuration on the host:
 
 ```bash
@@ -26,6 +46,29 @@ curl -I http://127.0.0.1:7010
 curl -I https://7drhistostats.hllfrontline.com
 ```
 
+`/api/health` remains unauthenticated for service monitoring. The homepage,
+dashboard API, report pages, and HTML/Excel exports all require a valid PIN
+session. A request to `/` should redirect to `/login` before authentication.
+
 The bind address and port can be changed with `FRONTLINE_WEB_HOST` and
 `FRONTLINE_WEB_PORT`. Keep the bind address on loopback when Caddy and the bot
 run on the same host.
+
+## Security hardening checklist
+
+1. Keep `FRONTLINE_WEB_HOST=127.0.0.1`; never expose port 7020 publicly.
+2. Keep Cloudflare SSL/TLS mode on Full (strict) and Always Use HTTPS enabled.
+3. If a Cloudflare Access application currently covers `hllfrontline.com`,
+   remove or disable it when switching to this PIN-only login, otherwise users
+   will see both authentication layers.
+4. Prevent direct-origin bypass. The preferred end state is a Cloudflare Tunnel
+   pointing `hllfrontline.com` to `http://127.0.0.1:7020`, with the public Caddy
+   site block for that hostname removed. Alternatively, restrict origin HTTPS
+   traffic to Cloudflare IP ranges or configure Authenticated Origin Pulls.
+5. Add a Cloudflare rate-limiting rule for `POST /login` as an outer layer in
+   addition to the application's built-in lockout.
+6. Apply Ubuntu, Caddy, Python dependency, and bot updates regularly. Back up
+   `data/rollcall.xlsx` and the bot's state files.
+7. Review rejected-login warnings and Caddy access logs. Change `APPPIN`
+   immediately if it is posted publicly or shared with someone who should no
+   longer have access.

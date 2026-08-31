@@ -18,6 +18,10 @@ async function loadDashboard() {
       headers: { Accept: "application/json" },
       signal: AbortSignal.timeout(20_000)
     });
+    if (response.status === 401) {
+      location.assign(`/login?next=${encodeURIComponent(location.pathname + location.search)}`);
+      return;
+    }
     if (!response.ok) throw new Error(response.status === 503 ? "The bot is still connecting to Discord." : `Service returned ${response.status}.`);
     state.data = await response.json();
     render();

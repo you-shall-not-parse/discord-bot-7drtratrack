@@ -143,6 +143,10 @@ async function loadReport() {
   reportState.kind = locationInfo.kind;
   try {
     const response = await fetch("/api/dashboard", { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(20_000) });
+    if (response.status === 401) {
+      location.assign(`/login?next=${encodeURIComponent(location.pathname + location.search)}`);
+      return;
+    }
     if (!response.ok) throw new Error(`Service returned ${response.status}.`);
     const data = await response.json();
     const collection = locationInfo.kind === "rollcall" ? data.rollcalls : data.trainee_tracks;
