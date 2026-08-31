@@ -49,6 +49,16 @@ def test_pin_sessions_are_random_and_open_redirects_are_rejected(monkeypatch) ->
     assert service._safe_next("https://example.com") == "/"
 
 
+def test_sensitive_file_probes_are_rejected_before_login() -> None:
+    assert FrontlineWeb._is_sensitive_path("/.env")
+    assert FrontlineWeb._is_sensitive_path("/config/.env.backup")
+    assert FrontlineWeb._is_sensitive_path("/%2e%2egit/HEAD")
+    assert FrontlineWeb._is_sensitive_path("/.git/HEAD")
+    assert FrontlineWeb._is_sensitive_path("/wp-config.php")
+    assert not FrontlineWeb._is_sensitive_path("/assets/app.css")
+    assert not FrontlineWeb._is_sensitive_path("/rollcalls/22nd")
+
+
 def test_rollcall_status_is_normalised_for_the_public_api() -> None:
     assert FrontlineWeb._normalise_rollcall_status("✅") == "attending"
     assert FrontlineWeb._normalise_rollcall_status("🅾️") == "other-rollcall"

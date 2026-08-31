@@ -12,7 +12,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from aiohttp import web
 from openpyxl import Workbook
@@ -101,6 +101,8 @@ class FrontlineWeb:
 
     @web.middleware
     async def _pin_auth(self, request: web.Request, handler):
+        if self._is_sensitive_path(request.raw_path.split("?", 1)[0]):
+            return web.Response(text="Not found.", status=404, content_type="text/plain")
         if request.path in {"/login", "/api/health"} or request.path.startswith("/assets/"):
             return await handler(request)
         if self._valid_session(request.cookies.get(SESSION_COOKIE, "")):
@@ -109,6 +111,29 @@ class FrontlineWeb:
             return web.json_response({"error": "Authentication required", "login_url": "/login"}, status=401)
         next_url = quote(self._safe_next(str(request.rel_url)), safe="")
         return web.HTTPSeeOther(location=f"/login?next={next_url}")
+
+    @staticmethod
+    def _is_sensitive_path(value: str) -> bool:
+        path = str(value or "")
+        # Decode twice to catch common encoded-dot probes without interpreting
+        # the path as a filesystem location.
+        for _ in range(2):
+            decoded = unquote(path)
+            if decoded == path:
+                break
+            path = decoded
+        segments = [segment.casefold() for segment in path.replace("\\", "/").split("/") if segment]
+        if any(segment.startswith(".") for segment in segments):
+            return True
+        sensitive_names = {
+            "config.php",
+            "credentials.json",
+            "docker-compose.yml",
+            "id_rsa",
+            "secrets.json",
+            "wp-config.php",
+        }
+        return any(segment in sensitive_names for segment in segments)
 
     @staticmethod
     def _safe_next(value: str | None) -> str:

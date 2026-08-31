@@ -72,3 +72,27 @@ run on the same host.
 7. Review rejected-login warnings and Caddy access logs. Change `APPPIN`
    immediately if it is posted publicly or shared with someone who should no
    longer have access.
+
+### Cloudflare dotfile block rule
+
+The application returns `404` before authentication for hidden files and known
+secret filenames. Stop the same automated probes before they reach Caddy by
+opening Cloudflare **Security > Security rules > Create rule > Custom rules**
+(shown as **Security > WAF > Custom rules** in the older dashboard), choosing
+action **Block**, and using this expression:
+
+```text
+http.host eq "hllfrontline.com" and (
+  http.request.uri.path contains "/." or
+  lower(http.request.uri.path) contains "/wp-config.php" or
+  lower(http.request.uri.path) contains "/config.php" or
+  lower(http.request.uri.path) contains "/credentials.json" or
+  lower(http.request.uri.path) contains "/secrets.json" or
+  lower(http.request.uri.path) contains "/docker-compose.yml" or
+  lower(http.request.uri.path) contains "/id_rsa"
+)
+```
+
+Name it `Block hidden-file probes`. This intentionally blocks `.well-known`
+paths on this hostname; HLL Frontline does not use them because Caddy handles
+TLS and the application exposes no `.well-known` route.
