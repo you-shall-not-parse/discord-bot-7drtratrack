@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#151711">
+  <title>Personnel Report — HLL Frontline</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/app.css?v=4">
+  <script defer src="/assets/report.js?v=1"></script>
+</head>
+<body>
+  <div class="grain" aria-hidden="true"></div>
+  <header class="topbar">
+    <a class="brand" href="/">
+      <img class="brand-mark" src="/assets/emblem_7dr.png" alt="7th Armoured Division emblem">
+      <span><b>HLL</b> FRONTLINE<small>7TH ARMOURED DIVISION OPERATIONS</small></span>
+    </a>
+    <div class="status"><span class="status-dot"></span><span id="sync-status">Loading report</span></div>
+  </header>
+
+  <main class="report-main">
+    <a class="back-link" href="/">← Back to overview</a>
+    <section id="loading" class="loading-state"><span class="loader"></span><p>Receiving field report…</p></section>
+    <section id="error" class="error-state" hidden>
+      <p class="eyebrow">REPORT UNAVAILABLE</p><h2>Unable to load report</h2><p id="error-message"></p>
+    </section>
+    <section id="report" hidden>
+      <div class="report-heading">
+        <div><p class="eyebrow" id="report-kicker"></p><h1 id="report-title"></h1></div>
+        <p id="report-description"></p>
+      </div>
+      <div id="report-content"></div>
+    </section>
+  </main>
+
+  <footer><span>HLL FRONTLINE</span><span id="last-updated">Awaiting sync</span></footer>
+</body>
+</html>

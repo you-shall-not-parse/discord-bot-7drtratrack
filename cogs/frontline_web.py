@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from aiohttp import web
 
+from clan_t17_lookup import DEFAULT_RANK_ORDER
 from config import MAIN_GUILD_ID
 
 logger = logging.getLogger(__name__)
@@ -32,6 +34,8 @@ class FrontlineWeb:
         app.router.add_get("/api/health", self.health)
         app.router.add_get("/api/dashboard", self.dashboard)
         app.router.add_get("/assets/{filename}", self.asset)
+        app.router.add_get("/rollcalls/{key}", self.report_page)
+        app.router.add_get("/trainees/{key}", self.report_page)
         app.router.add_get("/", self.index)
 
         self._runner = web.AppRunner(app, access_log=logger)
@@ -133,13 +137,13 @@ class FrontlineWeb:
             member = guild.get_member(user_id)
             return member.display_name if member else stored or str(user_id)
 
-        row_names: dict[int, str] = {}
+        workbook_members: dict[int, str] = {}
         for row in range(2, ws.max_row + 1):
             try:
                 user_id = int(str(ws.cell(row=row, column=1).value))
             except (TypeError, ValueError):
                 continue
-            row_names[user_id] = str(ws.cell(row=row, column=2).value or "")
+            workbook_members[user_id] = str(ws.cell(row=row, column=2).value or "")
 
         current_people = []
         for member in expected:
@@ -151,9 +155,9 @@ class FrontlineWeb:
                 }
             )
 
-        history = []
         headers = cog._sheet_headers(ws)
         week_headers = [header for header in headers[2:] if cog._parse_week_header(header)]
+        history = []
         for header in reversed(week_headers[-12:]):
             values = cog._get_week_status(ws, header)
             active_values = [values.get(user_id, "") for user_id in expected_ids]
@@ -166,11 +170,28 @@ class FrontlineWeb:
                 }
             )
 
-        left = [
-            {"name": display_name(user_id, name), "status": "left"}
-            for user_id, name in row_names.items()
-            if user_id not in expected_ids and guild.get_member(user_id) is None
-        ]
+        report_members = []
+        report_user_ids = list(workbook_members)
+        report_user_ids.extend(user_id for user_id in expected_ids if user_id not in workbook_members)
+        week_statuses = {header: cog._get_week_status(ws, header) for header in week_headers}
+        for user_id in report_user_ids:
+            member = guild.get_member(user_id)
+            rank, rank_order = self._member_rank(member)
+            report_members.append(
+                {
+                    "name": display_name(user_id, workbook_members.get(user_id, "")),
+                    "rank": rank,
+                    "rank_order": rank_order,
+                    "flags": [] if member else ["LEFT"],
+                    "active": member is not None,
+                    "attendance": {
+                        header: week_statuses[header].get(user_id, "")
+                        for header in week_headers
+                    },
+                }
+            )
+
+        departed_count = sum(not member["active"] for member in report_members)
         attending = sum(person["status"] == "attending" for person in current_people)
 
         return {
@@ -186,8 +207,47 @@ class FrontlineWeb:
             },
             "members": current_people,
             "history": history,
-            "departed_count": len(left),
+            "report_columns": week_headers,
+            "report_members": report_members,
+            "departed_count": departed_count,
         }
+
+    @staticmethod
+    def _member_rank(member) -> tuple[str, int]:
+        if member is None:
+            return "Former member", len(DEFAULT_RANK_ORDER) + 1
+
+        display_name = " ".join(str(getattr(member, "display_name", "") or "").strip().split())
+        if "#" in display_name:
+            display_name = display_name.split("#", 1)[0].strip()
+        display_name_folded = display_name.casefold()
+
+        # Clan ranks are normally prefixes in Discord display names. Prefer the
+        # longest matching variant so "Lt Gen" is not mistaken for "Lt".
+        display_matches: list[tuple[int, int, str]] = []
+        for order, (code, variants) in enumerate(DEFAULT_RANK_ORDER):
+            for variant in variants:
+                prefix = variant.casefold().strip()
+                if (
+                    display_name_folded == prefix
+                    or display_name_folded.startswith(prefix + " ")
+                    or display_name_folded.startswith(prefix + ".")
+                ):
+                    display_matches.append((len(prefix), order, code))
+        if display_matches:
+            _length, order, code = max(display_matches, key=lambda match: match[0])
+            return code, order
+
+        # Retain role matching as a fallback for members whose nickname omits rank.
+        def normalise(value: str) -> str:
+            return re.sub(r"[^a-z0-9]", "", str(value).casefold())
+
+        member_roles = {normalise(role.name) for role in getattr(member, "roles", [])}
+        for order, (code, variants) in enumerate(DEFAULT_RANK_ORDER):
+            accepted = {normalise(code), *(normalise(variant) for variant in variants)}
+            if member_roles & accepted:
+                return code, order
+        return "Unranked", len(DEFAULT_RANK_ORDER)
 
     @staticmethod
     def _normalise_rollcall_status(value: str) -> str:
@@ -242,7 +302,7 @@ class FrontlineWeb:
         filename = request.match_info["filename"]
         if filename == "emblem_7dr.png":
             path = CLAN_EMBLEM_PATH
-        elif filename in {"app.css", "app.js"}:
+        elif filename in {"app.css", "app.js", "report.js"}:
             path = FRONTEND_DIR / filename
         else:
             raise web.HTTPNotFound()
@@ -254,6 +314,24 @@ class FrontlineWeb:
         path = FRONTEND_DIR / "index.html"
         if not path.is_file():
             raise web.HTTPNotFound(text="Frontend assets are missing.")
+        return web.FileResponse(path)
+
+    async def report_page(self, request: web.Request) -> web.StreamResponse:
+        key = request.match_info["key"]
+        if request.path.startswith("/rollcalls/"):
+            from cogs.rollcall import ROLLCALLS
+
+            valid_keys = {cfg.key for cfg in ROLLCALLS}
+        else:
+            from cogs.multi_trainee_tracker import TRACKS
+
+            valid_keys = {cfg.key for cfg in TRACKS}
+        if key not in valid_keys:
+            raise web.HTTPNotFound()
+
+        path = FRONTEND_DIR / "report.html"
+        if not path.is_file():
+            raise web.HTTPNotFound(text="Report frontend is missing.")
         return web.FileResponse(path)
 
 

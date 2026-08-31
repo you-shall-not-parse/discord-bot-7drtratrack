@@ -5,10 +5,6 @@ const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, char => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
 }[char]));
 
-const dateLabel = (iso) => new Intl.DateTimeFormat("en-GB", {
-  day: "2-digit", month: "short", year: "numeric"
-}).format(new Date(`${iso}T00:00:00Z`));
-
 async function loadDashboard() {
   const initialLoad = state.data === null;
   $("#loading").hidden = !initialLoad;
@@ -59,7 +55,7 @@ function renderRollcalls() {
         <div class="stat"><strong>${rollcall.summary.missing}</strong><small>Missing</small></div>
       </div>
       <div class="progress"><span style="width:${rollcall.summary.rate}%"></span></div>
-      <div class="card-footer"><span>${rollcall.summary.rate}% response · ${rollcall.departed_count} archived</span><button class="detail-button" data-kind="rollcall" data-key="${escapeHtml(rollcall.key)}">Full report</button></div>
+      <div class="card-footer"><span>${rollcall.summary.rate}% response · ${rollcall.departed_count} archived</span><a class="detail-button" href="/rollcalls/${encodeURIComponent(rollcall.key)}">Full report</a></div>
     </article>`).join("");
 }
 
@@ -78,7 +74,7 @@ function renderTrainees() {
           <div class="stat"><strong>${track.summary.behind}</strong><small>Behind</small></div>
         </div>
         <div class="progress"><span style="width:${rate}%"></span></div>
-        <div class="card-footer"><span>${track.check_labels.map(escapeHtml).join(" · ")}</span><button class="detail-button" data-kind="trainee" data-key="${escapeHtml(track.key)}">Open tracker</button></div>
+        <div class="card-footer"><span>${track.check_labels.map(escapeHtml).join(" · ")}</span><a class="detail-button" href="/trainees/${encodeURIComponent(track.key)}">Open tracker</a></div>
       </article>`;
   }).join("");
 }
@@ -89,46 +85,10 @@ function showView(view) {
   document.querySelectorAll(".tab").forEach(tab => tab.classList.toggle("active", tab.dataset.view === view));
 }
 
-function openDetail(kind, key) {
-  const item = kind === "rollcall"
-    ? state.data.rollcalls.find(entry => entry.key === key)
-    : state.data.trainee_tracks.find(entry => entry.key === key);
-  if (!item) return;
-  $("#modal-content").innerHTML = kind === "rollcall" ? rollcallDetail(item) : traineeDetail(item);
-  $("#detail-modal").showModal();
-}
-
-function rollcallDetail(item) {
-  const rows = [...item.members].sort((a, b) => a.name.localeCompare(b.name)).map(member => `
-    <tr><td>${escapeHtml(member.name)}</td><td><span class="state ${member.status}">${escapeHtml(member.status.replace("other-rollcall", "attending elsewhere"))}</span></td></tr>`).join("");
-  const history = item.history.map(week => `<tr><td>${escapeHtml(week.week)}</td><td>${week.attending}</td><td>${week.partial}</td><td>${week.missing}</td></tr>`).join("");
-  return `<p class="eyebrow">${escapeHtml(item.week)} · ${item.locked ? "FINAL" : "IN PROGRESS"}</p>
-    <h2>${escapeHtml(item.title)}</h2>
-    <div class="table-wrap"><table><thead><tr><th>Member</th><th>Current status</th></tr></thead><tbody>${rows || '<tr><td colspan="2">No members found.</td></tr>'}</tbody></table></div>
-    <p class="eyebrow" style="margin-top:30px">12-WEEK HISTORY</p>
-    <div class="table-wrap"><table><thead><tr><th>Week</th><th>Attending</th><th>Elsewhere</th><th>Missing</th></tr></thead><tbody>${history || '<tr><td colspan="4">No history yet.</td></tr>'}</tbody></table></div>`;
-}
-
-function traineeDetail(item) {
-  const rows = item.members.map(member => `
-    <tr>
-      <td>${escapeHtml(member.name)}<br><small style="color:var(--muted)">@${escapeHtml(member.username)}</small></td>
-      <td>${dateLabel(member.joined)}</td><td>${dateLabel(member.review_due)}</td>
-      <td><span class="state ${member.behind ? "behind" : "current"}">${member.behind ? `Behind · ${member.days} days` : `Current · ${member.days} days`}</span></td>
-      <td><div class="checks">${item.check_labels.map(label => `<span class="check ${member.checks[label] ? "done" : ""}">${member.checks[label] ? "✓" : "○"} ${escapeHtml(label.replace(" Role", ""))}</span>`).join("")}</div></td>
-    </tr>`).join("");
-  return `<p class="eyebrow">${item.behind_after_days}-DAY TRAINING WINDOW</p><h2>${escapeHtml(item.title)}</h2>
-    <div class="table-wrap"><table><thead><tr><th>Trainee</th><th>Joined</th><th>Review due</th><th>Status</th><th>Qualifications</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No trainees currently assigned.</td></tr>'}</tbody></table></div>`;
-}
-
 document.addEventListener("click", event => {
   const tab = event.target.closest(".tab");
   if (tab) showView(tab.dataset.view);
-  const detail = event.target.closest(".detail-button");
-  if (detail) openDetail(detail.dataset.kind, detail.dataset.key);
 });
-$(".modal-close").addEventListener("click", () => $("#detail-modal").close());
-$("#detail-modal").addEventListener("click", event => { if (event.target === event.currentTarget) event.currentTarget.close(); });
 $("#retry").addEventListener("click", loadDashboard);
 loadDashboard();
 setInterval(loadDashboard, 60_000);
