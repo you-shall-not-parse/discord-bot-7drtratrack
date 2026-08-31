@@ -1,7 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from cogs.frontline_web import FRONTEND_DIR, FrontlineWeb
+from cogs.frontline_web import FRONTEND_DIR, TURNSTILE_SITE_KEY, FrontlineWeb
 
 
 def test_frontend_assets_exist_and_are_wired() -> None:
@@ -59,6 +59,7 @@ def test_turnstile_result_requires_success_matching_hostname_and_login_action() 
     assert not FrontlineWeb._valid_turnstile_result({**valid, "success": False}, "hllfrontline.com")
     assert not FrontlineWeb._valid_turnstile_result({**valid, "hostname": "example.com"}, "hllfrontline.com")
     assert not FrontlineWeb._valid_turnstile_result({**valid, "action": "other"}, "hllfrontline.com")
+    assert TURNSTILE_SITE_KEY == "0x4AAAAAAEjLElnYaILQaVYk"
 
 
 def test_sensitive_file_probes_are_rejected_before_login() -> None:

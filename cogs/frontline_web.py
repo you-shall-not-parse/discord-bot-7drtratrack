@@ -31,6 +31,8 @@ SESSION_SECONDS = 24 * 60 * 60
 LOGIN_WINDOW_SECONDS = 15 * 60
 LOGIN_MAX_FAILURES = 5
 TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+TURNSTILE_SITE_KEY = "0x4AAAAAAEjLElnYaILQaVYk"
+TURNSTILE_HOSTNAME = "hllfrontline.com"
 
 
 class FrontlineWeb:
@@ -41,19 +43,20 @@ class FrontlineWeb:
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
         self._app_pin = os.getenv("APPPIN", "")
-        self._turnstile_site_key = os.getenv("TURNSTILE_SITE_KEY", "").strip()
-        self._turnstile_secret_key = os.getenv("TURNSTILE_SECRET_KEY", "").strip()
-        self._turnstile_hostname = os.getenv("TURNSTILE_HOSTNAME", "hllfrontline.com").strip().casefold()
+        self._turnstile_site_key = TURNSTILE_SITE_KEY
+        self._turnstile_secret_key = (
+            os.getenv("TURNSTILE_SECRET", "").strip()
+            or os.getenv("TURNSTILE_SECRET_KEY", "").strip()
+        )
+        self._turnstile_hostname = TURNSTILE_HOSTNAME
         self._sessions: dict[str, int] = {}
         self._login_failures: dict[str, list[float]] = {}
 
     async def start(self) -> None:
         if len(self._app_pin) < 8:
             raise RuntimeError("APPPIN must be set to at least 8 characters in the environment or .env file")
-        if bool(self._turnstile_site_key) != bool(self._turnstile_secret_key):
-            raise RuntimeError("TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY must either both be set or both be omitted")
-        if not self._turnstile_enabled:
-            logger.warning("HLL Frontline Turnstile protection is disabled because no Turnstile keys are configured")
+        if not self._turnstile_secret_key:
+            raise RuntimeError("TURNSTILE_SECRET must be set in the environment or .env file")
 
         app = web.Application(middlewares=[self._security_headers, self._pin_auth], client_max_size=64 * 1024)
         app.router.add_get("/api/health", self.health)
@@ -198,7 +201,7 @@ class FrontlineWeb:
         return hmac.compare_digest(hostname, expected_hostname.casefold()) and action == "login"
 
     async def _verify_turnstile(self, request: web.Request, token: str) -> bool:
-        if not self._turnstile_enabled or not token:
+        if not self._turnstile_enabled or not token or len(token) > 2048:
             return False
         payload = {
             "secret": self._turnstile_secret_key,
@@ -206,7 +209,7 @@ class FrontlineWeb:
             "remoteip": self._client_key(request),
         }
         try:
-            async with ClientSession(timeout=ClientTimeout(total=8)) as session:
+            async with ClientSession(timeout=ClientTimeout(total=10)) as session:
                 async with session.post(TURNSTILE_VERIFY_URL, data=payload) as response:
                     if response.status != 200:
                         logger.warning("Turnstile Siteverify returned HTTP %s", response.status)
