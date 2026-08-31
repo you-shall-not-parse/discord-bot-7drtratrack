@@ -339,18 +339,22 @@ class FrontlineWeb:
         week_statuses = {header: cog._get_week_status(ws, header) for header in week_headers}
         for user_id in report_user_ids:
             member = guild.get_member(user_id)
-            rank, rank_order = self._member_rank(member)
+            is_former = cog._is_former_member(member)
+            rank, rank_order = self._member_rank(None if is_former else member)
+            flags = ["LEFT"] if member is None else (["FORMER"] if is_former else [])
+            attendance = {
+                header: week_statuses[header].get(user_id, "")
+                for header in week_headers
+            }
             report_members.append(
                 {
                     "name": display_name(user_id, workbook_members.get(user_id, "")),
                     "rank": rank,
                     "rank_order": rank_order,
-                    "flags": [] if member else ["LEFT"],
-                    "active": member is not None,
-                    "attendance": {
-                        header: week_statuses[header].get(user_id, "")
-                        for header in week_headers
-                    },
+                    "flags": flags,
+                    "active": not is_former,
+                    "missed_streak": self._missed_rollcall_streak(attendance, week_headers),
+                    "attendance": attendance,
                 }
             )
 
@@ -419,6 +423,16 @@ class FrontlineWeb:
         if value == "🅾️":
             return "other-rollcall"
         return "missing"
+
+    @staticmethod
+    def _missed_rollcall_streak(attendance: dict[str, str], week_headers: list[str]) -> int:
+        """Count consecutive explicit misses, starting with the newest roll call."""
+        streak = 0
+        for header in reversed(week_headers):
+            if attendance.get(header) != "❌":
+                break
+            streak += 1
+        return streak
 
     def _trainee_payload(self, cog, guild) -> list[dict[str, Any]]:
         from cogs.multi_trainee_tracker import BEHIND_AFTER_DAYS, TRACKS

@@ -22,12 +22,13 @@ def test_frontend_assets_exist_and_are_wired() -> None:
     assert "[hidden] { display: none !important; }" in css
     assert 'fetch("/api/dashboard"' in javascript
     assert "AbortSignal.timeout(20_000)" in javascript
-    assert 'src="/assets/report.js?v=3"' in report
+    assert 'src="/assets/report.js?v=4"' in report
     assert 'href="/rollcalls/${encodeURIComponent(rollcall.key)}"' in javascript
     assert 'href="/trainees/${encodeURIComponent(track.key)}"' in javascript
     assert 'label: "Current status"' in report_javascript
     assert 'label: "Qualifications"' in report_javascript
     assert 'key: "current_status"' in report_javascript
+    assert 'key: "missed_streak"' in report_javascript
     assert 'class="trainee-name"' in report_javascript
     assert 'data-sort=' in report_javascript
     assert 'Open HTML' in report_javascript
@@ -78,6 +79,20 @@ def test_rollcall_rank_uses_the_clan_hierarchy() -> None:
     assert FrontlineWeb._member_rank(no_rank)[0] == "Unranked"
     assert FrontlineWeb._member_rank(role_rank)[0] == "MAJ"
     assert FrontlineWeb._member_rank(None)[0] == "Former member"
+
+
+def test_missed_rollcall_streak_counts_only_consecutive_explicit_misses() -> None:
+    weeks = ["W01 05/01/2026", "W02 12/01/2026", "W03 19/01/2026", "W04 26/01/2026"]
+
+    assert FrontlineWeb._missed_rollcall_streak(
+        {weeks[0]: "✅", weeks[1]: "✅", weeks[2]: "❌", weeks[3]: "❌"}, weeks
+    ) == 2
+    assert FrontlineWeb._missed_rollcall_streak(
+        {weeks[0]: "❌", weeks[1]: "❌", weeks[2]: "✅", weeks[3]: "❌"}, weeks
+    ) == 1
+    assert FrontlineWeb._missed_rollcall_streak(
+        {weeks[0]: "❌", weeks[1]: "❌", weeks[2]: "❌", weeks[3]: "🅾️"}, weeks
+    ) == 0
 
 
 def test_caddyfile_publishes_apex_without_replacing_historic_stats() -> None:

@@ -52,6 +52,14 @@ function rollcallColumns(item) {
     { key: "rank", label: "Rank", value: row => row.rank_order, render: row => `<span class="rank-cell">${escapeHtml(row.rank)}</span>` },
     { key: "name", label: "Nickname", value: row => row.name, render: row => escapeHtml(row.name) },
     {
+      key: "missed_streak",
+      label: "Missed streak",
+      value: row => row.missed_streak,
+      render: row => row.missed_streak
+        ? `<span class="state missing">${row.missed_streak} week${row.missed_streak === 1 ? "" : "s"}</span>`
+        : '<span class="empty-cell">—</span>'
+    },
+    {
       key: "current_status",
       label: "Current status",
       value: row => rollcallStatus(row.attendance[item.week]).order,
@@ -76,10 +84,10 @@ function renderRollcall(item) {
   const inactive = item.report_members.filter(member => !member.active);
   $("#report-kicker").textContent = `${item.week} · ${item.locked ? "FINAL" : "IN PROGRESS"}`;
   $("#report-title").textContent = item.title;
-  $("#report-description").textContent = "Select any column heading to reorder the full attendance record. Rank follows the 7th Armoured Division hierarchy.";
+  $("#report-description").textContent = "Select any column heading to reorder the full attendance record. Missed streak counts consecutive unticked roll calls, newest first.";
   $("#report-content").innerHTML = `
     <section class="report-section"><div class="report-section-title"><h2>Roll call</h2><span>${active.length} active members</span></div>${sortableTable(active, columns, "No active members found.")}</section>
-    <section class="report-section"><div class="report-section-title"><h2>Inactive</h2><span>${inactive.length} archived members</span></div>${sortableTable(inactive, columns, "No inactive members.")}</section>`;
+    <section class="report-section"><div class="report-section-title"><h2>Former members</h2><span>${inactive.length} archived members</span></div>${sortableTable(inactive, columns, "No former members.")}</section>`;
 }
 
 function traineeColumns(item) {

@@ -88,6 +88,10 @@ STATE_PATH = data_path("rollcall_state.json")
 # Role allowed to use /forcerollcall
 FORCE_ROLLCALL_ROLE_ID = 1213495462632361994
 
+# Members moved into the community-only Blueberry role are no longer active
+# clan members and should be archived in roll-call reports.
+BLUEBERRY_ROLE_ID = 1440120995171012699
+
 @dataclass(frozen=True)
 class RollCallConfig:
 	key: str
@@ -884,10 +888,17 @@ class RollCallCog(commands.Cog):
 				if not role:
 					continue
 				for m in role.members:
-					members[m.id] = m
+					if not self._is_former_member(m):
+						members[m.id] = m
 			return sorted(members.values(), key=lambda m: (m.display_name or "").lower())
 		# fallback: nobody "expected" (we'll still record reactions)
 		return []
+
+	@staticmethod
+	def _is_former_member(member: Optional[discord.Member]) -> bool:
+		if member is None:
+			return True
+		return any(getattr(role, "id", None) == BLUEBERRY_ROLE_ID for role in getattr(member, "roles", []))
 
 	async def _update_outputs_for_cfg(
 		self,
@@ -1117,6 +1128,8 @@ class RollCallCog(commands.Cog):
 			m = guild.get_member(uid_int)
 			if not m:
 				return ["LEFT"]
+			if self._is_former_member(m):
+				return ["FORMER"]
 			return []
 
 		main_rows: list[str] = []
@@ -1141,7 +1154,7 @@ class RollCallCog(commands.Cog):
 
 			# Decide which table
 			is_excluded = False
-			if "LEFT" in flags:
+			if "LEFT" in flags or "FORMER" in flags:
 				is_excluded = True
 			if is_excluded:
 				excluded_rows.append(row_html)
@@ -1178,7 +1191,7 @@ class RollCallCog(commands.Cog):
 </head>
 <body>
   <h1>{html.escape(cfg.title)}</h1>
-	  <p><strong>Flags:</strong> LEFT = left server</p>
+	  <p><strong>Flags:</strong> LEFT = left server; FORMER = former clan member</p>
   <p>Last updated: {datetime.utcnow().strftime('%d/%m/%Y %H:%M UTC')}</p>
 	  <h2>Roll call</h2>
 	  <table>
@@ -1186,7 +1199,7 @@ class RollCallCog(commands.Cog):
 	    <tbody>{main_table}</tbody>
 	  </table>
 
-	  <h2 style="margin-top: 24px;">Inactive</h2>
+	  <h2 style="margin-top: 24px;">Former members</h2>
 	  <table>
 	    <thead><tr>{head_html}</tr></thead>
 	    <tbody>{excluded_table}</tbody>
