@@ -18,7 +18,10 @@ async function loadDashboard() {
     $("#trainees").hidden = true;
   }
   try {
-    const response = await fetch("/api/dashboard", { headers: { Accept: "application/json" } });
+    const response = await fetch("/api/dashboard", {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(20_000)
+    });
     if (!response.ok) throw new Error(response.status === 503 ? "The bot is still connecting to Discord." : `Service returned ${response.status}.`);
     state.data = await response.json();
     render();
@@ -27,7 +30,9 @@ async function loadDashboard() {
   } catch (error) {
     $("#loading").hidden = true;
     $("#error").hidden = !initialLoad;
-    $("#error-message").textContent = error.message;
+    $("#error-message").textContent = error.name === "TimeoutError"
+      ? "The live report took too long to respond. Please try again."
+      : error.message;
     $("#sync-status").textContent = initialLoad ? "Connection interrupted" : "Showing last field report";
   }
 }

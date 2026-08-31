@@ -11,6 +11,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html { background: var(--paper); color-scheme: dark; }
 body { margin: 0; color: var(--ink); background: var(--paper); font-family: Inter, sans-serif; min-height: 100vh; }
 body::before { content: ""; position: fixed; inset: 0; pointer-events: none; background: radial-gradient(circle at 76% 8%, #43483044, transparent 35%), linear-gradient(115deg, transparent 0 47%, #ffffff04 47% 48%, transparent 48%); }

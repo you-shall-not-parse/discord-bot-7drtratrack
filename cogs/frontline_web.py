@@ -31,7 +31,7 @@ class FrontlineWeb:
         app.router.add_get("/api/health", self.health)
         app.router.add_get("/api/dashboard", self.dashboard)
         app.router.add_get("/assets/{filename}", self.asset)
-        app.router.add_get("/{tail:.*}", self.index)
+        app.router.add_get("/", self.index)
 
         self._runner = web.AppRunner(app, access_log=logger)
         await self._runner.setup()

@@ -11,7 +11,9 @@ def test_frontend_assets_exist_and_are_wired() -> None:
     assert '<link rel="stylesheet" href="/assets/app.css">' in index
     assert '<script defer src="/assets/app.js"></script>' in index
     assert "--olive:" in css
+    assert "[hidden] { display: none !important; }" in css
     assert 'fetch("/api/dashboard"' in javascript
+    assert "AbortSignal.timeout(20_000)" in javascript
 
 
 def test_rollcall_status_is_normalised_for_the_public_api() -> None:
