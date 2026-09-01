@@ -110,6 +110,7 @@ features from starting. Slash commands are synchronized once during startup.
 ## Logs
 
 - Main bot log: `bot.log.txt`
+- Website access and claimed-name login audit log: `bot_web.log` (5 MB rotation, three backups)
 - Hellor leaderboard log/state files: `data/hellor_leaderboard.log`, `data/hellor_leaderboard_state.json`, `data/hellor_t17_map.json`
 
 ## What The Bot Covers

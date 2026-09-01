@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from cogs.frontline_web import FRONTEND_DIR, TURNSTILE_SITE_KEY, FrontlineWeb
+from config import WEB_LOG_PATH
 
 
 def test_frontend_assets_exist_and_are_wired() -> None:
@@ -34,6 +35,8 @@ def test_frontend_assets_exist_and_are_wired() -> None:
     assert 'Open HTML' in report_javascript
     assert 'Download Excel' in report_javascript
     assert 'name="pin"' in login
+    assert 'name="name"' in login
+    assert 'maxlength="80"' in login
     assert "{{TURNSTILE_HEAD}}" in login
     assert "{{TURNSTILE_WIDGET}}" in login
     assert 'method="post" action="/login"' in login
@@ -43,13 +46,22 @@ def test_frontend_assets_exist_and_are_wired() -> None:
 def test_pin_sessions_are_random_and_open_redirects_are_rejected(monkeypatch) -> None:
     monkeypatch.setenv("APPPIN", "a-long-test-pin")
     service = FrontlineWeb(SimpleNamespace())
-    token = service._new_session()
+    token = service._new_session("Example User")
 
     assert service._valid_session(token)
     assert not service._valid_session(token + "tampered")
     assert service._safe_next("/rollcalls/22nd") == "/rollcalls/22nd"
     assert service._safe_next("//example.com") == "/"
     assert service._safe_next("https://example.com") == "/"
+    assert service._sessions[token].claimed_name == "Example User"
+
+
+def test_login_name_is_normalised_and_rejects_log_injection() -> None:
+    assert FrontlineWeb._normalise_login_name("  Example   User  ") == "Example User"
+    assert FrontlineWeb._normalise_login_name("") is None
+    assert FrontlineWeb._normalise_login_name("Example\nForged log line") is None
+    assert FrontlineWeb._normalise_login_name("x" * 81) is None
+    assert WEB_LOG_PATH.endswith("bot_web.log")
 
 
 def test_turnstile_result_requires_success_matching_hostname_and_login_action() -> None:

@@ -20,6 +20,7 @@ CRCON_PANEL_URL = "https://7dr.hlladmin.com/api/"
 
 # Shared log locations.
 BOT_LOG_PATH = str(PROJECT_ROOT / "bot.log.txt")
+WEB_LOG_PATH = str(PROJECT_ROOT / "bot_web.log")
 
 # Shared static/config assets.
 CLAN_NAMES_PATH = str(CONFIG_DIR / "clannames.json")

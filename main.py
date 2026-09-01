@@ -8,10 +8,19 @@ import asyncio
 
 load_dotenv()
 
-from config import BOT_LOG_PATH, MAIN_GUILD_ID
+from config import BOT_LOG_PATH, MAIN_GUILD_ID, WEB_LOG_PATH
 from config.hll_API_config import get_hll_backend_status
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+
+
+class PrivateRotatingFileHandler(RotatingFileHandler):
+    """Rotating log handler that keeps every active log owner-readable only."""
+
+    def _open(self):
+        stream = super()._open()
+        os.chmod(self.baseFilename, 0o600)
+        return stream
 
 EXTENSIONS = (
     "cogs.quick_exit",
@@ -102,6 +111,21 @@ file_handler.setFormatter(formatter)
 logger.handlers.clear()
 logger.addHandler(console_handler)
 logger.addHandler(file_handler)
+
+# Keep HTTP access and authentication events in their own rotating log. Disable
+# propagation so names and request metadata are not duplicated into the bot log.
+web_logger = logging.getLogger("cogs.frontline_web")
+web_logger.setLevel(logging.INFO)
+web_logger.handlers.clear()
+web_file_handler = PrivateRotatingFileHandler(
+    WEB_LOG_PATH,
+    maxBytes=5 * 1024 * 1024,
+    backupCount=3,
+    encoding="utf-8",
+)
+web_file_handler.setFormatter(formatter)
+web_logger.addHandler(web_file_handler)
+web_logger.propagate = False
 
 # Intents setup
 intents = discord.Intents.default()

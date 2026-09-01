@@ -9,6 +9,7 @@ import os
 import re
 import secrets
 import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,13 @@ LOGIN_MAX_FAILURES = 5
 TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 TURNSTILE_SITE_KEY = "0x4AAAAAAEjLElnYaILQaVYk"
 TURNSTILE_HOSTNAME = "hllfrontline.com"
+LOGIN_NAME_MAX_LENGTH = 80
+
+
+@dataclass(frozen=True)
+class WebSession:
+    expires_at: int
+    claimed_name: str
 
 
 class FrontlineWeb:
@@ -50,7 +58,7 @@ class FrontlineWeb:
             or os.getenv("TURNSTILE_SECRET_KEY", "").strip()
         )
         self._turnstile_hostname = TURNSTILE_HOSTNAME
-        self._sessions: dict[str, int] = {}
+        self._sessions: dict[str, WebSession] = {}
         self._login_failures: dict[str, list[float]] = {}
 
     async def start(self) -> None:
@@ -154,21 +162,36 @@ class FrontlineWeb:
         candidate = str(value or "/")
         return candidate if candidate.startswith("/") and not candidate.startswith("//") else "/"
 
-    def _new_session(self) -> str:
+    def _new_session(self, claimed_name: str) -> str:
         now = int(time.time())
-        self._sessions = {token: expiry for token, expiry in self._sessions.items() if expiry >= now}
+        self._sessions = {
+            token: session
+            for token, session in self._sessions.items()
+            if session.expires_at >= now
+        }
         token = secrets.token_urlsafe(32)
-        self._sessions[token] = now + SESSION_SECONDS
+        self._sessions[token] = WebSession(
+            expires_at=now + SESSION_SECONDS,
+            claimed_name=claimed_name,
+        )
         return token
 
     def _valid_session(self, token: str) -> bool:
-        expiry = self._sessions.get(token)
-        if expiry is None:
+        session = self._sessions.get(token)
+        if session is None:
             return False
-        if expiry < int(time.time()):
+        if session.expires_at < int(time.time()):
             self._sessions.pop(token, None)
             return False
         return True
+
+    @staticmethod
+    def _normalise_login_name(value: object) -> str | None:
+        raw = str(value or "")
+        if len(raw) > LOGIN_NAME_MAX_LENGTH or any(not character.isprintable() for character in raw):
+            return None
+        name = " ".join(raw.split())
+        return name if name and len(name) <= LOGIN_NAME_MAX_LENGTH else None
 
     @staticmethod
     def _client_key(request: web.Request) -> str:
@@ -242,25 +265,35 @@ class FrontlineWeb:
 
         form = await request.post()
         next_url = self._safe_next(str(form.get("next") or next_url))
+        claimed_name = self._normalise_login_name(form.get("name"))
+        if claimed_name is None:
+            return web.HTTPSeeOther(location=f"/login?error=name&next={quote(next_url, safe='')}")
         if self._turnstile_enabled:
             turnstile_token = str(form.get("cf-turnstile-response") or "")
             if not await self._verify_turnstile(request, turnstile_token):
                 logger.warning(
-                    "Rejected HLL Frontline login after failed Turnstile verification from %s",
+                    "Rejected HLL Frontline login after failed Turnstile verification claimed_name=%r client_ip=%s",
+                    claimed_name,
                     self._client_key(request),
                 )
                 return web.HTTPSeeOther(location=f"/login?error=turnstile&next={quote(next_url, safe='')}")
         supplied_pin = str(form.get("pin") or "")
         if not hmac.compare_digest(supplied_pin.encode("utf-8"), self._app_pin.encode("utf-8")):
             self._login_failures.setdefault(self._client_key(request), []).append(time.monotonic())
-            logger.warning("Rejected HLL Frontline PIN login from %s", self._client_key(request))
+            logger.warning(
+                "Rejected HLL Frontline PIN login claimed_name=%r client_ip=%s",
+                claimed_name,
+                self._client_key(request),
+            )
             return web.HTTPSeeOther(location=f"/login?error=1&next={quote(next_url, safe='')}")
 
-        self._login_failures.pop(self._client_key(request), None)
+        client_ip = self._client_key(request)
+        self._login_failures.pop(client_ip, None)
+        logger.info("Successful HLL Frontline login claimed_name=%r client_ip=%s", claimed_name, client_ip)
         response = web.HTTPSeeOther(location=next_url)
         response.set_cookie(
             SESSION_COOKIE,
-            self._new_session(),
+            self._new_session(claimed_name),
             max_age=SESSION_SECONDS,
             httponly=True,
             secure=True,
@@ -270,7 +303,13 @@ class FrontlineWeb:
         return response
 
     async def logout(self, request: web.Request) -> web.Response:
-        self._sessions.pop(request.cookies.get(SESSION_COOKIE, ""), None)
+        session = self._sessions.pop(request.cookies.get(SESSION_COOKIE, ""), None)
+        if session is not None:
+            logger.info(
+                "HLL Frontline logout claimed_name=%r client_ip=%s",
+                session.claimed_name,
+                self._client_key(request),
+            )
         response = web.HTTPSeeOther(location="/login")
         response.del_cookie(SESSION_COOKIE, path="/")
         return response
@@ -295,6 +334,7 @@ class FrontlineWeb:
             turnstile_widget = ""
         error_messages = {
             "1": "The PIN was not recognised.",
+            "name": "Enter a valid name of no more than 80 characters.",
             "turnstile": "The security check was not completed. Please try again.",
         }
         document = document.replace("{{TURNSTILE_HEAD}}", turnstile_head)

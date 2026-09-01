@@ -19,11 +19,13 @@
       <img class="login-emblem" src="/assets/emblem_7dr.png" alt="7th Armoured Division emblem">
       <p class="eyebrow">RESTRICTED PERSONNEL SYSTEM</p>
       <h1>Frontline<br><em>access.</em></h1>
-      <p class="login-copy">Enter the current 7th Armoured Division access PIN to continue.</p>
+      <p class="login-copy">Enter your name and the current 7th Armoured Division access PIN to continue.</p>
       <form class="login-form" method="post" action="/login">
         <input type="hidden" name="next" value="{{NEXT}}">
+        <label for="name">Your name</label>
+        <input id="name" name="name" type="text" minlength="1" maxlength="80" autocomplete="name" autofocus required>
         <label for="pin">Access PIN</label>
-        <input id="pin" name="pin" type="password" minlength="8" maxlength="128" autocomplete="current-password" autofocus required>
+        <input id="pin" name="pin" type="password" minlength="8" maxlength="128" autocomplete="current-password" required>
         {{TURNSTILE_WIDGET}}
         <p class="login-error" aria-live="polite">{{ERROR}}</p>
         <button type="submit">Authenticate</button>
