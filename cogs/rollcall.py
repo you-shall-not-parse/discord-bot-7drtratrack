@@ -19,6 +19,7 @@ from state_io import atomic_json_dump
 
 from config import MAIN_GUILD_ID
 from data_paths import data_path
+from spreadsheet_security import safe_spreadsheet_value
 
 logger = logging.getLogger(__name__)
 
@@ -712,11 +713,11 @@ class RollCallCog(commands.Cog):
 		key = str(user_id)
 		if key in idx:
 			row = idx[key]
-			ws.cell(row=row, column=2, value=nickname)
+			ws.cell(row=row, column=2, value=safe_spreadsheet_value(nickname))
 			return row
 		row = ws.max_row + 1
 		ws.cell(row=row, column=1, value=key)
-		ws.cell(row=row, column=2, value=nickname)
+		ws.cell(row=row, column=2, value=safe_spreadsheet_value(nickname))
 		return row
 
 	def _set_cell(self, ws, row: int, col: int, value: str) -> None:

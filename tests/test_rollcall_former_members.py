@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+from openpyxl import Workbook
+
 from cogs.rollcall import BLUEBERRY_ROLE_ID, RollCallCog
 
 
@@ -29,3 +31,15 @@ def test_blueberry_is_excluded_from_expected_rollcall_members() -> None:
     cog = object.__new__(RollCallCog)
 
     assert cog._expected_members(guild, config) == [active]
+
+
+def test_rollcall_stores_formula_like_nickname_as_text() -> None:
+    worksheet = Workbook().active
+    worksheet.append(["User ID", "Nickname"])
+    cog = object.__new__(RollCallCog)
+
+    row = cog._upsert_member_row(worksheet, 123, "=HYPERLINK(\"https://example.com\")")
+
+    cell = worksheet.cell(row=row, column=2)
+    assert cell.value == "'=HYPERLINK(\"https://example.com\")"
+    assert cell.data_type == "s"

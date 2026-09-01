@@ -1,7 +1,7 @@
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
-from PyPDF2 import PdfReader
+from pypdf import PdfReader
 from pdf2image import convert_from_path
 from datetime import datetime, timedelta
 import os

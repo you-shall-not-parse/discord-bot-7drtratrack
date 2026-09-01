@@ -265,6 +265,8 @@ class EmbedManager(commands.Cog):
 
     # ---------------- OPTIONAL MANUAL COMMAND ----------------
     @commands.command(name="sync_embeds")
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
     async def sync_embeds_cmd(self, ctx):
         """Manually sync all embeds to their channels"""
         await self.sync_all_embeds()

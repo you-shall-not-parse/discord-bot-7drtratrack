@@ -93,7 +93,7 @@ Overview: Keeps important static embeds up to date.
 
 Slash commands: none. Text command: `!sync_embeds`.
 
-How to use: Use `!sync_embeds` after changing managed embed text, layout, or destinations.
+How to use: A member with **Manage Server** can use `!sync_embeds` in the guild after changing managed embed text, layout, or destinations.
 
 Rules and notes: This is mainly a maintenance tool. Members usually read the embeds rather than interact with this cog directly.
 

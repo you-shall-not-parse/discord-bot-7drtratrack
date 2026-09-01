@@ -19,6 +19,7 @@ from openpyxl import Workbook
 
 from config import MAIN_GUILD_ID
 from rank_order import DEFAULT_RANK_ORDER
+from spreadsheet_security import safe_spreadsheet_value
 
 logger = logging.getLogger(__name__)
 
@@ -648,8 +649,8 @@ class FrontlineWeb:
         for row in rows:
             worksheet.append(
                 [
-                    row["display_name"],
-                    row["username"],
+                    safe_spreadsheet_value(row["display_name"]),
+                    safe_spreadsheet_value(row["username"]),
                     row["join_date"].date(),
                     row["plus_14"].date(),
                     *("Yes" if row["checks"].get(label) else "No" for label, _ in config.check_roles),
