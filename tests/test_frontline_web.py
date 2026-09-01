@@ -15,8 +15,8 @@ def test_frontend_assets_exist_and_are_wired() -> None:
 
     login = (FRONTEND_DIR / "login.html").read_text(encoding="utf-8")
 
-    assert '<link rel="stylesheet" href="/assets/app.css?v=7">' in index
-    assert '<script defer src="/assets/app.js?v=6"></script>' in index
+    assert '<link rel="stylesheet" href="/assets/app.css?v=8">' in index
+    assert '<script defer src="/assets/app.js?v=7"></script>' in index
     assert 'src="/assets/emblem_7dr.png"' in index
     assert "7th Armoured Division" in index
     assert "<dialog" not in index
@@ -25,10 +25,13 @@ def test_frontend_assets_exist_and_are_wired() -> None:
     assert 'fetch("/api/dashboard"' in javascript
     assert 'fetch(`/api/hllv-search?q=' in javascript
     assert "AbortSignal.timeout(20_000)" in javascript
-    assert 'rel="noopener noreferrer"' in index
+    assert 'rel="noopener noreferrer"' in javascript
     assert 'data-view="overview"' in index
-    assert 'data-view="matches"' in index
-    assert 'data-view="community"' in index
+    assert 'data-view="server-status"' in index
+    assert 'data-view="upcoming"' in index
+    assert 'data-view="war-diary"' in index
+    assert 'data-view="community"' not in index
+    assert 'id="server-grid"' in index
     assert 'src="/assets/report.js?v=5"' in report
     assert 'href="/rollcalls/${encodeURIComponent(rollcall.key)}"' in javascript
     assert 'href="/trainees/${encodeURIComponent(track.key)}"' in javascript
@@ -197,6 +200,37 @@ def test_server_status_normalises_bifrost_data_without_exposing_credentials() ->
     assert payload["players"] == 78
     assert payload["time_remaining_seconds"] == 1800
     assert "token" not in payload
+
+
+def test_discord_server_status_embed_keeps_fields_and_only_discord_images() -> None:
+    embed = SimpleNamespace(
+        title="7DR Public Server",
+        description="Players and current map",
+        fields=[SimpleNamespace(name="Players", value="78/100", inline=True)],
+        author=SimpleNamespace(name="Status feed"),
+        footer=SimpleNamespace(text="Updated every minute"),
+        colour=SimpleNamespace(value=0xA8AD73),
+        image=SimpleNamespace(proxy_url="https://media.discordapp.net/attachments/1/2/map.png", url=""),
+        thumbnail=SimpleNamespace(proxy_url="", url=""),
+    )
+
+    payload = FrontlineWeb._discord_status_embed(
+        embed,
+        content="Server online",
+        updated_at=datetime(2026, 9, 2, tzinfo=timezone.utc),
+    )
+
+    assert payload["source"] == "discord_webhook"
+    assert payload["name"] == "7DR Public Server"
+    assert payload["fields"] == [{"name": "Players", "value": "78/100", "inline": True}]
+    assert payload["image_url"] == "https://media.discordapp.net/attachments/1/2/map.png"
+    assert FrontlineWeb._discord_media_url("https://example.com/untrusted.png") == ""
+
+
+def test_server_status_channel_ids_are_read_from_environment(monkeypatch) -> None:
+    monkeypatch.setenv("FRONTLINE_SERVER_STATUS_CHANNEL_IDS", "123, 456,123,invalid")
+
+    assert FrontlineWeb._server_status_channel_ids() == (123, 456)
 
 
 def test_caddyfile_does_not_reopen_tunnel_origins() -> None:

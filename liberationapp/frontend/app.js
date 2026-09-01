@@ -1,4 +1,4 @@
-const VIEWS = new Set(["overview", "personnel", "matches", "statistics", "directory", "community"]);
+const VIEWS = new Set(["overview", "personnel", "server-status", "upcoming", "war-diary", "statistics", "directory"]);
 const requestedView = location.hash.replace(/^#/, "");
 const state = { data: null, view: VIEWS.has(requestedView) ? requestedView : "overview" };
 const $ = selector => document.querySelector(selector);
@@ -14,6 +14,15 @@ function safeExternalUrl(value) {
   } catch {
     return "";
   }
+}
+
+function safeDiscordMediaUrl(value) {
+  const safeUrl = safeExternalUrl(value);
+  if (!safeUrl) return "";
+  const hostname = new URL(safeUrl).hostname.toLowerCase();
+  return hostname === "cdn.discordapp.com" || hostname === "media.discordapp.net" || hostname.endsWith(".discordapp.net")
+    ? safeUrl
+    : "";
 }
 
 function externalLink(url, label, className = "detail-button") {
@@ -80,27 +89,16 @@ function render() {
   $("#event-count").textContent = state.data.events.length;
   $("#match-event-count").textContent = state.data.events.length;
   renderOverview();
+  renderServerStatus();
   renderRollcalls();
   renderTrainees();
   renderEvents();
   renderWarDiary();
   renderLeaderboards();
-  const merchUrl = safeExternalUrl(state.data.external_links.merch);
-  if (merchUrl) $("#community-merch-link").href = merchUrl;
   showView(state.view, false);
 }
 
 function renderOverview() {
-  const servers = state.data.server_status.length
-    ? state.data.server_status.map(server => `
-      <article class="feature-card server-card">
-        <div class="feature-card-top"><span class="card-kicker">SERVER STATUS</span><span class="badge ${server.available ? "online" : "warn"}">${server.available ? "Online" : "Unavailable"}</span></div>
-        <h3>${escapeHtml(server.name)}</h3>
-        <p>${server.available ? escapeHtml(server.map) : "Live data could not be reached."}</p>
-        <div class="mini-stats"><span><strong>${server.players ?? "—"}</strong> players</span><span><strong>${formatDuration(server.time_remaining_seconds)}</strong> remaining</span></div>
-      </article>`).join("")
-    : `<article class="feature-card"><span class="card-kicker">SERVER STATUS</span><h3>Not configured</h3><p>No configured public HLL server was returned.</p></article>`;
-
   const nextEvent = state.data.events[0];
   const eventCard = nextEvent ? `
     <article class="feature-card">
@@ -109,19 +107,58 @@ function renderOverview() {
       ${externalLink(nextEvent.url, "Open in Discord")}
     </article>` : `<article class="feature-card"><span class="card-kicker">NEXT EVENT</span><h3>Nothing scheduled</h3><p>No upcoming Discord events are currently listed.</p></article>`;
 
+  const lastResult = state.data.war_diary.recent[0];
+  const resultCard = lastResult ? `
+    <article class="feature-card latest-result-card">
+      <span class="card-kicker">LATEST WAR-DIARY RESULT</span><h3>7DR ${escapeHtml(lastResult.score)} ${escapeHtml(lastResult.opponent)}</h3>
+      <p>${escapeHtml(lastResult.date || "Date unavailable")} · ${escapeHtml(lastResult.map)}</p>
+      <span class="result ${escapeHtml(lastResult.outcome)}">${escapeHtml(lastResult.outcome)}</span>
+    </article>` : `<article class="feature-card"><span class="card-kicker">LATEST WAR-DIARY RESULT</span><h3>No result recorded</h3><p>The latest submitted match will appear here.</p></article>`;
+
   const holders = state.data.botr.holders;
   const ratCard = `<article class="feature-card rat-card"><span class="card-kicker">RAT OF THE WEEK</span><h3>${holders.length ? holders.map(escapeHtml).join(" · ") : "Awaiting a winner"}</h3><p>${holders.length ? "Current holder of the Rat Of The Week Discord role." : "No current member has the configured role."}</p></article>`;
-  $("#overview-grid").innerHTML = servers + eventCard + ratCard;
+  $("#overview-grid").innerHTML = eventCard + resultCard + ratCard;
 
   const links = [
     ["history", "Historical stats", "Browse previous HLL server matches"],
     ["bifrost", "7DR on Bifrost", "Open the external clan leaderboard"],
-    ["merch", "7DR merch", "Visit the clan merchandise store"]
+    ["merch", "7DR merch", "Visit the clan merchandise store"],
+    ["twitch", "7DR Twitch", "Watch clan live streams"]
   ];
-  $("#quick-links").innerHTML = links.map(([key, title, description]) => `
-    <a class="external-card" href="${escapeHtml(safeExternalUrl(state.data.external_links[key]))}" target="_blank" rel="noopener noreferrer">
-      <span class="card-kicker">EXTERNAL LINK</span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(description)}</small><b aria-hidden="true">↗</b>
-    </a>`).join("");
+  $("#quick-links").innerHTML = links.map(([key, title, description]) => {
+    const url = safeExternalUrl(state.data.external_links[key]);
+    return url ? `<a class="external-card" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">
+      <span class="card-kicker">EXTERNAL LINK</span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(description)}</small><b aria-hidden="true">↗</b></a>`
+      : `<div class="external-card disabled"><span class="card-kicker">LINK TBC</span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(description)}</small></div>`;
+  }).join("");
+}
+
+function renderServerStatus() {
+  const cards = state.data.server_status.map(server => {
+    if (server.source === "discord_webhook") {
+      const imageUrl = safeDiscordMediaUrl(server.image_url);
+      const fields = (server.fields || []).map(field => `
+        <div class="webhook-field ${field.inline ? "inline" : ""}"><small>${escapeHtml(field.name)}</small><strong>${escapeHtml(field.value)}</strong></div>`).join("");
+      return `<article class="webhook-status-card"${imageUrl ? ` data-server-image="${escapeHtml(imageUrl)}"` : ""}>
+        <div class="webhook-card-shade"></div><div class="webhook-card-content">
+          <span class="card-kicker">DISCORD WEBHOOK · LIVE STATUS</span><h3>${escapeHtml(server.name)}</h3>
+          ${server.content ? `<p class="webhook-copy">${escapeHtml(server.content)}</p>` : ""}
+          ${server.description ? `<p class="webhook-copy">${escapeHtml(server.description)}</p>` : ""}
+          ${fields ? `<div class="webhook-fields">${fields}</div>` : ""}
+          ${server.footer ? `<small class="webhook-footer">${escapeHtml(server.footer)}</small>` : ""}
+        </div></article>`;
+    }
+    return `<article class="feature-card server-card">
+      <div class="feature-card-top"><span class="card-kicker">SERVER STATUS</span><span class="badge ${server.available ? "online" : "warn"}">${server.available ? "Online" : "Unavailable"}</span></div>
+      <h3>${escapeHtml(server.name)}</h3><p>${server.available ? escapeHtml(server.map) : "Live data could not be reached."}</p>
+      <div class="mini-stats"><span><strong>${server.players ?? "—"}</strong> players</span><span><strong>${formatDuration(server.time_remaining_seconds)}</strong> remaining</span></div>
+    </article>`;
+  }).join("");
+  $("#server-grid").innerHTML = cards || emptyState("No server-status webhook or HLL backend is currently available.");
+  document.querySelectorAll("[data-server-image]").forEach(card => {
+    const imageUrl = safeDiscordMediaUrl(card.dataset.serverImage);
+    if (imageUrl) card.style.backgroundImage = `url("${imageUrl.replace(/["\\]/g, "")}")`;
+  });
 }
 
 function renderRollcalls() {

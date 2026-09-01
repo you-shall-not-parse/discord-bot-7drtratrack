@@ -9,8 +9,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/assets/app.css?v=7">
-  <script defer src="/assets/app.js?v=6"></script>
+  <link rel="stylesheet" href="/assets/app.css?v=8">
+  <script defer src="/assets/app.js?v=7"></script>
 </head>
 <body>
   <div class="grain" aria-hidden="true"></div>
@@ -35,10 +35,11 @@
     <nav class="section-tabs hub-tabs" aria-label="Dashboard sections">
       <button class="tab active" data-view="overview">Overview</button>
       <button class="tab" data-view="personnel">Personnel <span id="personnel-count">—</span></button>
-      <button class="tab" data-view="matches">Matches <span id="event-count">—</span></button>
+      <button class="tab" data-view="server-status">Server status</button>
+      <button class="tab" data-view="upcoming">Upcoming matches <span id="event-count">—</span></button>
+      <button class="tab" data-view="war-diary">War diary</button>
       <button class="tab" data-view="statistics">Statistics</button>
       <button class="tab" data-view="directory">HLLV names</button>
-      <button class="tab" data-view="community">Community</button>
     </nav>
 
     <section id="loading" class="loading-state">
@@ -53,7 +54,7 @@
     </section>
 
     <section id="overview" class="dashboard-view" hidden>
-      <div class="section-heading"><div><p class="eyebrow">COMMAND BOARD</p><h2>Overview</h2></div><p>Live operational information from Discord and the configured HLL servers.</p></div>
+      <div class="section-heading"><div><p class="eyebrow">COMMAND BOARD</p><h2>Overview</h2></div><p>The next operation, latest result and current clan highlights.</p></div>
       <div id="overview-grid" class="feature-grid"></div>
       <div class="subsection-heading"><h3>Quick links</h3><span>External 7DR services</span></div>
       <div id="quick-links" class="link-grid"></div>
@@ -67,11 +68,20 @@
       <div id="trainee-grid" class="card-grid"></div>
     </section>
 
-    <section id="matches" class="dashboard-view" hidden>
-      <div class="section-heading"><div><p class="eyebrow">OPERATIONS CALENDAR</p><h2>Matches</h2></div><p>Upcoming Discord events and results retained by the war diary.</p></div>
+    <section id="server-status" class="dashboard-view" hidden>
+      <div class="section-heading"><div><p class="eyebrow">LIVE SERVERS</p><h2>Server status</h2></div><p>The latest status cards published into Discord by the configured webhooks.</p></div>
+      <div id="server-grid" class="server-status-grid"></div>
+    </section>
+
+    <section id="upcoming" class="dashboard-view" hidden>
+      <div class="section-heading"><div><p class="eyebrow">OPERATIONS CALENDAR</p><h2>Upcoming matches</h2></div><p>Scheduled and active Discord events, ordered by start time.</p></div>
       <div class="subsection-heading"><h3>Upcoming events</h3><span id="match-event-count">—</span></div>
       <div id="event-grid" class="event-grid"></div>
-      <div class="subsection-heading spaced"><h3>War diary</h3><span id="war-record">—</span></div>
+    </section>
+
+    <section id="war-diary" class="dashboard-view" hidden>
+      <div class="section-heading"><div><p class="eyebrow">MATCH ARCHIVE</p><h2>War diary</h2></div><p>Recorded results and the clan’s performance against previous opponents.</p></div>
+      <div class="subsection-heading"><h3>Overall record</h3><span id="war-record">—</span></div>
       <div id="war-summary" class="stats summary-strip"></div>
       <div class="split-grid">
         <div><h3 class="table-title">Recent results</h3><div id="recent-results"></div></div>
@@ -94,13 +104,6 @@
       <div id="hllv-results"></div>
     </section>
 
-    <section id="community" class="dashboard-view" hidden>
-      <div class="section-heading"><div><p class="eyebrow">7DR COMMUNITY</p><h2>Community</h2></div><p>Clan services and future live broadcasts.</p></div>
-      <div class="feature-grid community-grid">
-        <article class="feature-card"><span class="card-kicker">LIVE STREAMS</span><h3>Twitch channel</h3><p>The clan stream destination is still to be confirmed.</p><span class="badge warn">TBC</span></article>
-        <article class="feature-card"><span class="card-kicker">7DR STORE</span><h3>Clan merchandise</h3><p>Custom clothing and items supporting the clan’s server and applications.</p><a id="community-merch-link" class="detail-button" target="_blank" rel="noopener noreferrer">Visit merch store</a></article>
-      </div>
-    </section>
   </main>
 
   <footer><span>HLL FRONTLINE</span><span id="last-updated">Awaiting sync</span></footer>

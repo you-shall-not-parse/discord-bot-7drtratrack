@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlparse
 
 from aiohttp import ClientSession, ClientTimeout, web
 from openpyxl import Workbook
@@ -48,6 +48,7 @@ EXTERNAL_LINKS = {
     "bifrost": "https://frostbite.bifrostgaming.com/hll/guilds/7DR",
     "history": "https://7drhistostats.hllfrontline.com/",
     "merch": "https://7dr-hll-merch.myshopify.com/",
+    "twitch": os.getenv("FRONTLINE_TWITCH_URL", "").strip(),
 }
 
 
@@ -128,7 +129,8 @@ class FrontlineWeb:
         turnstile_frame = "frame-src https://challenges.cloudflare.com; " if self._turnstile_enabled else ""
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; "
-            f"script-src 'self'{turnstile_script}; {turnstile_frame}connect-src 'self'; img-src 'self' data:; "
+            f"script-src 'self'{turnstile_script}; {turnstile_frame}connect-src 'self'; "
+            "img-src 'self' data: https://cdn.discordapp.com https://media.discordapp.net https://*.discordapp.net; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
             "font-src 'self' https://fonts.gstatic.com"
         )
@@ -625,6 +627,120 @@ class FrontlineWeb:
             "updated_at": str(raw.get("timestamp") or datetime.now(timezone.utc).isoformat()),
         }
 
+    @staticmethod
+    def _server_status_channel_ids() -> tuple[int, ...]:
+        values = []
+        for raw in os.getenv("FRONTLINE_SERVER_STATUS_CHANNEL_IDS", "").split(","):
+            candidate = raw.strip()
+            if not candidate:
+                continue
+            try:
+                channel_id = int(candidate)
+            except ValueError:
+                logger.warning("Ignoring invalid server-status Discord channel ID %r", candidate)
+                continue
+            if channel_id > 0 and channel_id not in values:
+                values.append(channel_id)
+        return tuple(values)
+
+    @staticmethod
+    def _discord_media_url(value: object) -> str:
+        candidate = str(value or "").strip()
+        parsed = urlparse(candidate)
+        hostname = (parsed.hostname or "").casefold()
+        if parsed.scheme != "https":
+            return ""
+        if hostname == "cdn.discordapp.com" or hostname == "media.discordapp.net" or hostname.endswith(".discordapp.net"):
+            return candidate
+        return ""
+
+    @classmethod
+    def _discord_status_embed(cls, embed, *, content: str, updated_at: datetime) -> dict[str, Any]:
+        def bounded(value: object, limit: int) -> str:
+            return str(value or "")[:limit]
+
+        image = getattr(embed, "image", None)
+        thumbnail = getattr(embed, "thumbnail", None)
+        image_url = cls._discord_media_url(getattr(image, "proxy_url", None))
+        if not image_url:
+            image_url = cls._discord_media_url(getattr(image, "url", None))
+        if not image_url:
+            image_url = cls._discord_media_url(getattr(thumbnail, "proxy_url", None))
+        if not image_url:
+            image_url = cls._discord_media_url(getattr(thumbnail, "url", None))
+
+        fields = []
+        for field in list(getattr(embed, "fields", ()) or ())[:25]:
+            fields.append(
+                {
+                    "name": bounded(getattr(field, "name", ""), 256),
+                    "value": bounded(getattr(field, "value", ""), 1024),
+                    "inline": bool(getattr(field, "inline", False)),
+                }
+            )
+        author = getattr(embed, "author", None)
+        footer = getattr(embed, "footer", None)
+        colour = getattr(getattr(embed, "colour", None), "value", None)
+        return {
+            "available": True,
+            "source": "discord_webhook",
+            "name": bounded(getattr(embed, "title", "") or getattr(author, "name", "") or "Server status", 256),
+            "content": bounded(content, 2000),
+            "description": bounded(getattr(embed, "description", ""), 4096),
+            "fields": fields,
+            "footer": bounded(getattr(footer, "text", ""), 2048),
+            "image_url": image_url,
+            "colour": int(colour) if isinstance(colour, int) else None,
+            "updated_at": updated_at.astimezone(timezone.utc).isoformat(),
+        }
+
+    async def _discord_server_status_payload(self, channel_ids: tuple[int, ...]) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+        seen: set[tuple[int, str]] = set()
+        for channel_id in channel_ids:
+            channel = self.bot.get_channel(channel_id)
+            if channel is None:
+                try:
+                    channel = await self.bot.fetch_channel(channel_id)
+                except Exception as exc:
+                    logger.warning("Could not access server-status Discord channel %s: %s", channel_id, exc)
+                    continue
+            history = getattr(channel, "history", None)
+            if not callable(history):
+                logger.warning("Server-status Discord channel %s has no message history", channel_id)
+                continue
+            try:
+                async for message in history(limit=50):
+                    webhook_id = getattr(message, "webhook_id", None)
+                    embeds = list(getattr(message, "embeds", ()) or ())
+                    if webhook_id is None or not embeds:
+                        continue
+                    for embed in embeds:
+                        identity = str(
+                            getattr(embed, "title", "")
+                            or getattr(getattr(embed, "author", None), "name", "")
+                            or "server-status"
+                        ).casefold()
+                        key = (int(webhook_id), identity)
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        timestamp = getattr(message, "edited_at", None) or getattr(message, "created_at", None)
+                        if not isinstance(timestamp, datetime):
+                            timestamp = datetime.now(timezone.utc)
+                        results.append(
+                            self._discord_status_embed(
+                                embed,
+                                content=str(getattr(message, "content", "") or ""),
+                                updated_at=timestamp,
+                            )
+                        )
+                        if len(results) >= 8:
+                            return results
+            except Exception as exc:
+                logger.warning("Could not read server-status Discord channel %s: %s", channel_id, exc)
+        return results
+
     async def _server_status_payload(self) -> list[dict[str, Any]]:
         cached_at, cached = self._server_status_cache
         if time.monotonic() - cached_at < SERVER_STATUS_CACHE_SECONDS:
@@ -634,6 +750,14 @@ class FrontlineWeb:
             cached_at, cached = self._server_status_cache
             if time.monotonic() - cached_at < SERVER_STATUS_CACHE_SECONDS:
                 return cached
+
+            channel_ids = self._server_status_channel_ids()
+            if channel_ids:
+                payload = await self._discord_server_status_payload(channel_ids)
+                if payload:
+                    self._server_status_cache = (time.monotonic(), payload)
+                    return payload
+                logger.warning("No webhook status embeds were found; using configured HLL backend status")
 
             from config.hll_API_config import get_hll_backend_status
             from hll_API_backend import get_hll_backend_client

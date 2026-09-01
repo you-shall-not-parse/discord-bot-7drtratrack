@@ -74,6 +74,32 @@ The bind address and port can be changed with `FRONTLINE_WEB_HOST` and
 `FRONTLINE_WEB_PORT`. Keep the bind address on loopback so only `cloudflared`
 can reach the service from the host.
 
+## Optional website feeds
+
+To mirror Discord server-status webhook cards on the website, configure the
+Discord channel IDs where those webhooks post. Use a comma-separated list when
+the servers post into different channels:
+
+```dotenv
+FRONTLINE_SERVER_STATUS_CHANNEL_IDS="123456789012345678,234567890123456789"
+```
+
+Do not store or paste the webhook URLs. They contain secret tokens and are not
+needed: the bot reads the latest webhook-authored embeds using its existing
+Discord channel access. It requires **View Channel** and **Read Message
+History** in each configured channel. Only Discord CDN/proxy images are
+accepted as website card backgrounds. If no channel is configured or no embed
+can be read, the website falls back to its read-only HLL backend status.
+
+When the clan Twitch destination is known, add its HTTPS URL to show an active
+Quick Link; otherwise the dashboard displays it as TBC:
+
+```dotenv
+FRONTLINE_TWITCH_URL="https://www.twitch.tv/example"
+```
+
+Restart `traineetrackpyth.service` after changing either value.
+
 ## Security hardening checklist
 
 1. Keep `FRONTLINE_WEB_HOST=127.0.0.1`; never expose port 7020 publicly.
