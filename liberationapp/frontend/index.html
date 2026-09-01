@@ -4,13 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#151711">
-  <meta name="description" content="7th Armoured Division roll calls and trainee readiness.">
+  <meta name="description" content="7th Armoured Division operations, events, records and personnel readiness.">
   <title>HLL Frontline — 7th Armoured Division Operations</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/assets/app.css?v=6">
-  <script defer src="/assets/app.js?v=5"></script>
+  <link rel="stylesheet" href="/assets/app.css?v=7">
+  <script defer src="/assets/app.js?v=6"></script>
 </head>
 <body>
   <div class="grain" aria-hidden="true"></div>
@@ -25,16 +25,20 @@
   <main>
     <section class="hero">
       <div>
-        <p class="eyebrow">PERSONNEL COMMAND · LIVE OVERVIEW</p>
-        <h1>Readiness,<br><em>at a glance.</em></h1>
-        <p class="hero-copy">Weekly attendance and trainee progression for the 7th Armoured Division, kept in step with Discord.</p>
+        <p class="eyebrow">CLAN OPERATIONS · LIVE OVERVIEW</p>
+        <h1>Your unit,<br><em>in one place.</em></h1>
+        <p class="hero-copy">Matches, server activity, clan records and personnel readiness for the 7th Armoured Division.</p>
       </div>
       <img class="hero-emblem" src="/assets/emblem_7dr.png" alt="" aria-hidden="true">
     </section>
 
-    <nav class="section-tabs" aria-label="Dashboard sections">
-      <button class="tab active" data-view="rollcalls">Roll calls <span id="rollcall-count">—</span></button>
-      <button class="tab" data-view="trainees">Trainee tracker <span id="trainee-count">—</span></button>
+    <nav class="section-tabs hub-tabs" aria-label="Dashboard sections">
+      <button class="tab active" data-view="overview">Overview</button>
+      <button class="tab" data-view="personnel">Personnel <span id="personnel-count">—</span></button>
+      <button class="tab" data-view="matches">Matches <span id="event-count">—</span></button>
+      <button class="tab" data-view="statistics">Statistics</button>
+      <button class="tab" data-view="directory">HLLV names</button>
+      <button class="tab" data-view="community">Community</button>
     </nav>
 
     <section id="loading" class="loading-state">
@@ -48,20 +52,54 @@
       <button id="retry">Try again</button>
     </section>
 
-    <section id="rollcalls" class="dashboard-view" hidden>
-      <div class="section-heading">
-        <div><p class="eyebrow">WEEKLY MUSTER</p><h2>Roll calls</h2></div>
-        <p>Attendance remains managed through Discord reactions during this first web release.</p>
-      </div>
-      <div id="rollcall-grid" class="card-grid"></div>
+    <section id="overview" class="dashboard-view" hidden>
+      <div class="section-heading"><div><p class="eyebrow">COMMAND BOARD</p><h2>Overview</h2></div><p>Live operational information from Discord and the configured HLL servers.</p></div>
+      <div id="overview-grid" class="feature-grid"></div>
+      <div class="subsection-heading"><h3>Quick links</h3><span>External 7DR services</span></div>
+      <div id="quick-links" class="link-grid"></div>
     </section>
 
-    <section id="trainees" class="dashboard-view" hidden>
-      <div class="section-heading">
-        <div><p class="eyebrow">TRAINING PIPELINE</p><h2>Trainee tracker</h2></div>
-        <p>Role qualifications update automatically from the live Discord roster.</p>
-      </div>
+    <section id="personnel" class="dashboard-view" hidden>
+      <div class="section-heading"><div><p class="eyebrow">PERSONNEL COMMAND</p><h2>Readiness</h2></div><p>Weekly attendance and trainee qualifications kept in step with Discord.</p></div>
+      <div class="subsection-heading"><h3>Roll calls</h3><span id="rollcall-count">—</span></div>
+      <div id="rollcall-grid" class="card-grid"></div>
+      <div class="subsection-heading spaced"><h3>Trainee tracker</h3><span id="trainee-count">—</span></div>
       <div id="trainee-grid" class="card-grid"></div>
+    </section>
+
+    <section id="matches" class="dashboard-view" hidden>
+      <div class="section-heading"><div><p class="eyebrow">OPERATIONS CALENDAR</p><h2>Matches</h2></div><p>Upcoming Discord events and results retained by the war diary.</p></div>
+      <div class="subsection-heading"><h3>Upcoming events</h3><span id="match-event-count">—</span></div>
+      <div id="event-grid" class="event-grid"></div>
+      <div class="subsection-heading spaced"><h3>War diary</h3><span id="war-record">—</span></div>
+      <div id="war-summary" class="stats summary-strip"></div>
+      <div class="split-grid">
+        <div><h3 class="table-title">Recent results</h3><div id="recent-results"></div></div>
+        <div><h3 class="table-title">Records by opponent</h3><div id="opponent-records"></div></div>
+      </div>
+    </section>
+
+    <section id="statistics" class="dashboard-view" hidden>
+      <div class="section-heading"><div><p class="eyebrow">CLAN RECORDS</p><h2>Leaderboards</h2></div><p>Verified records submitted through the clan’s Discord leaderboards.</p></div>
+      <div id="leaderboard-groups"></div>
+    </section>
+
+    <section id="directory" class="dashboard-view" hidden>
+      <div class="section-heading"><div><p class="eyebrow">PLAYER DIRECTORY</p><h2>HLLV names</h2></div><p>Find the HLLV account name recorded against a current Discord member.</p></div>
+      <form id="hllv-search-form" class="directory-search">
+        <label for="hllv-query">Discord or HLLV name</label>
+        <div><input id="hllv-query" name="q" minlength="2" maxlength="64" autocomplete="off" required><button type="submit">Search</button></div>
+      </form>
+      <p id="hllv-search-status" class="muted-copy">Enter at least two characters.</p>
+      <div id="hllv-results"></div>
+    </section>
+
+    <section id="community" class="dashboard-view" hidden>
+      <div class="section-heading"><div><p class="eyebrow">7DR COMMUNITY</p><h2>Community</h2></div><p>Clan services and future live broadcasts.</p></div>
+      <div class="feature-grid community-grid">
+        <article class="feature-card"><span class="card-kicker">LIVE STREAMS</span><h3>Twitch channel</h3><p>The clan stream destination is still to be confirmed.</p><span class="badge warn">TBC</span></article>
+        <article class="feature-card"><span class="card-kicker">7DR STORE</span><h3>Clan merchandise</h3><p>Custom clothing and items supporting the clan’s server and applications.</p><a id="community-merch-link" class="detail-button" target="_blank" rel="noopener noreferrer">Visit merch store</a></article>
+      </div>
     </section>
   </main>
 

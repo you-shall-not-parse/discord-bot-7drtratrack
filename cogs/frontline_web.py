@@ -4,10 +4,12 @@ import asyncio
 import hmac
 import html
 import io
+import json
 import logging
 import os
 import re
 import secrets
+import sqlite3
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -36,6 +38,17 @@ TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverif
 TURNSTILE_SITE_KEY = "0x4AAAAAAEjLElnYaILQaVYk"
 TURNSTILE_HOSTNAME = "hllfrontline.com"
 LOGIN_NAME_MAX_LENGTH = 80
+HLLV_SEARCH_MAX_LENGTH = 64
+HLLV_SEARCH_MIN_LENGTH = 2
+HLLV_SEARCH_WINDOW_SECONDS = 60
+HLLV_SEARCH_MAX_REQUESTS = 30
+RAT_OF_THE_WEEK_ROLE_ID = 1461087295930106020
+SERVER_STATUS_CACHE_SECONDS = 45
+EXTERNAL_LINKS = {
+    "bifrost": "https://frostbite.bifrostgaming.com/hll/guilds/7DR",
+    "history": "https://7drhistostats.hllfrontline.com/",
+    "merch": "https://7dr-hll-merch.myshopify.com/",
+}
 
 
 @dataclass(frozen=True)
@@ -60,6 +73,9 @@ class FrontlineWeb:
         self._turnstile_hostname = TURNSTILE_HOSTNAME
         self._sessions: dict[str, WebSession] = {}
         self._login_failures: dict[str, list[float]] = {}
+        self._hllv_searches: dict[str, list[float]] = {}
+        self._server_status_cache: tuple[float, list[dict[str, Any]]] = (0.0, [])
+        self._server_status_lock = asyncio.Lock()
 
     async def start(self) -> None:
         if len(self._app_pin) < 8:
@@ -73,6 +89,7 @@ class FrontlineWeb:
         app.router.add_post("/login", self.login)
         app.router.add_post("/logout", self.logout)
         app.router.add_get("/api/dashboard", self.dashboard)
+        app.router.add_get("/api/hllv-search", self.hllv_search)
         app.router.add_get("/assets/{filename}", self.asset)
         app.router.add_get("/exports/rollcalls/{key}.html", self.rollcall_html_export)
         app.router.add_get("/exports/rollcalls/{key}.xlsx", self.rollcall_excel_export)
@@ -194,6 +211,10 @@ class FrontlineWeb:
         return name if name and len(name) <= LOGIN_NAME_MAX_LENGTH else None
 
     @staticmethod
+    def _operator_login_notice(claimed_name: str) -> None:
+        logging.getLogger().warning("%s has logged into your website!", claimed_name)
+
+    @staticmethod
     def _client_key(request: web.Request) -> str:
         forwarded = (
             request.headers.get("CF-Connecting-IP")
@@ -290,6 +311,10 @@ class FrontlineWeb:
         client_ip = self._client_key(request)
         self._login_failures.pop(client_ip, None)
         logger.info("Successful HLL Frontline login claimed_name=%r client_ip=%s", claimed_name, client_ip)
+        # The production service directs stderr to bot_error.log. Use the root
+        # console logger for this explicit operator-facing notice while keeping
+        # the detailed authentication audit in bot_web.log.
+        self._operator_login_notice(claimed_name)
         response = web.HTTPSeeOther(location=next_url)
         response.set_cookie(
             SESSION_COOKIE,
@@ -353,6 +378,287 @@ class FrontlineWeb:
             status=200 if guild else 503,
         )
 
+    def _allow_hllv_search(self, request: web.Request) -> bool:
+        key = self._client_key(request)
+        cutoff = time.monotonic() - HLLV_SEARCH_WINDOW_SECONDS
+        recent = [attempt for attempt in self._hllv_searches.get(key, []) if attempt >= cutoff]
+        if len(recent) >= HLLV_SEARCH_MAX_REQUESTS:
+            self._hllv_searches[key] = recent
+            return False
+        recent.append(time.monotonic())
+        self._hllv_searches[key] = recent
+        return True
+
+    async def hllv_search(self, request: web.Request) -> web.Response:
+        if not self._allow_hllv_search(request):
+            return web.json_response(
+                {"error": "Too many searches. Try again in a minute."},
+                status=429,
+                headers={"Retry-After": str(HLLV_SEARCH_WINDOW_SECONDS)},
+            )
+
+        query = " ".join(str(request.query.get("q") or "").split())
+        if not HLLV_SEARCH_MIN_LENGTH <= len(query) <= HLLV_SEARCH_MAX_LENGTH:
+            return web.json_response(
+                {"error": f"Enter between {HLLV_SEARCH_MIN_LENGTH} and {HLLV_SEARCH_MAX_LENGTH} characters."},
+                status=400,
+            )
+
+        guild = self.bot.get_guild(MAIN_GUILD_ID)
+        names = self.bot.get_cog("HLLVNames")
+        if guild is None or names is None:
+            raise web.HTTPServiceUnavailable(
+                text='{"error":"The HLLV directory is unavailable"}',
+                content_type="application/json",
+            )
+
+        records = names._search_records(guild, names._records(guild.id), query)[:20]
+        results = []
+        for user_id, hllv_name in records:
+            member = guild.get_member(user_id)
+            if member is None:
+                continue
+            results.append(
+                {
+                    "discord_name": str(member.display_name),
+                    "hllv_name": str(hllv_name),
+                }
+            )
+        return web.json_response({"query": query, "results": results})
+
+    @staticmethod
+    def _event_payload(guild) -> list[dict[str, Any]]:
+        now = datetime.now(timezone.utc)
+        events = []
+        for event in getattr(guild, "scheduled_events", ()):
+            status = str(getattr(getattr(event, "status", None), "name", getattr(event, "status", ""))).casefold()
+            start = getattr(event, "start_time", None)
+            if status not in {"scheduled", "active"} or not isinstance(start, datetime):
+                continue
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=timezone.utc)
+            if status != "active" and start < now:
+                continue
+            end = getattr(event, "end_time", None)
+            if isinstance(end, datetime) and end.tzinfo is None:
+                end = end.replace(tzinfo=timezone.utc)
+            events.append(
+                {
+                    "name": str(getattr(event, "name", "Scheduled event")),
+                    "start_time": start.astimezone(timezone.utc).isoformat(),
+                    "end_time": end.astimezone(timezone.utc).isoformat() if isinstance(end, datetime) else None,
+                    "location": str(getattr(event, "location", "") or ""),
+                    "url": str(getattr(event, "url", "") or ""),
+                    "status": status,
+                    "interested": int(getattr(event, "user_count", 0) or 0),
+                }
+            )
+        return sorted(events, key=lambda item: item["start_time"])[:25]
+
+    @staticmethod
+    def _war_diary_payload(cog) -> dict[str, Any]:
+        if cog is None:
+            return {"summary": {"played": 0, "wins": 0, "losses": 0, "draws": 0}, "opponents": [], "recent": []}
+
+        matches: list[dict[str, Any]] = []
+        opponents: dict[str, dict[str, Any]] = {}
+        for raw in cog._get_match_records():
+            score_match = re.fullmatch(r"\s*(\d+)\s*[-:]\s*(\d+)\s*", str(raw.get("result") or ""))
+            if score_match is None:
+                continue
+            home_score, away_score = (int(value) for value in score_match.groups())
+            outcome = "win" if home_score > away_score else "loss" if home_score < away_score else "draw"
+            opponent = " ".join(str(raw.get("opponent_clan_name") or "Unknown clan").split())
+            opponent_key = opponent.casefold()
+            record = opponents.setdefault(
+                opponent_key,
+                {"name": opponent, "played": 0, "wins": 0, "losses": 0, "draws": 0},
+            )
+            record["played"] += 1
+            record[{"win": "wins", "loss": "losses", "draw": "draws"}[outcome]] += 1
+            matches.append(
+                {
+                    "opponent": opponent,
+                    "date": str(raw.get("match_date") or ""),
+                    "map": str(raw.get("map_name") or "Unknown"),
+                    "score": f"{home_score}-{away_score}",
+                    "outcome": outcome,
+                }
+            )
+
+        def date_key(item: dict[str, Any]) -> datetime:
+            for date_format in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+                try:
+                    return datetime.strptime(item["date"], date_format)
+                except ValueError:
+                    continue
+            return datetime.min
+
+        matches.sort(key=date_key, reverse=True)
+        opponent_rows = sorted(opponents.values(), key=lambda row: (-row["played"], row["name"].casefold()))
+        wins = sum(match["outcome"] == "win" for match in matches)
+        losses = sum(match["outcome"] == "loss" for match in matches)
+        draws = sum(match["outcome"] == "draw" for match in matches)
+        return {
+            "summary": {"played": len(matches), "wins": wins, "losses": losses, "draws": draws},
+            "opponents": opponent_rows,
+            "recent": matches[:12],
+        }
+
+    @staticmethod
+    def _botr_payload(guild) -> dict[str, Any]:
+        role = guild.get_role(RAT_OF_THE_WEEK_ROLE_ID)
+        if role is None:
+            role = next(
+                (candidate for candidate in getattr(guild, "roles", ()) if candidate.id == RAT_OF_THE_WEEK_ROLE_ID),
+                None,
+            )
+        holders = sorted(
+            (str(member.display_name) for member in getattr(role, "members", ()) if not getattr(member, "bot", False)),
+            key=str.casefold,
+        )
+        return {"role_id": str(RAT_OF_THE_WEEK_ROLE_ID), "holders": holders}
+
+    @staticmethod
+    def _read_leaderboards(guild) -> list[dict[str, Any]]:
+        from cogs.HLLArmLeaderboard import DB_FILE as ARM_DB_FILE, STATS_ARM, format_seconds_as_hhmmss, is_life_stat
+        from cogs.HLLInfLeaderboard import DB_FILE as INF_DB_FILE, STATS
+
+        def member_name(user_id: object) -> str:
+            try:
+                member = guild.get_member(int(user_id))
+            except (TypeError, ValueError):
+                member = None
+            return str(member.display_name) if member is not None else "Former member"
+
+        groups: list[dict[str, Any]] = []
+        sources = (
+            ("Infantry & Recon", Path(INF_DB_FILE), "submissions", "user_id", STATS),
+            ("Armour", Path(ARM_DB_FILE), "submissions_arm", "crew_key", STATS_ARM),
+        )
+        for title, path, table, owner_column, stats in sources:
+            category = {"title": title, "records": []}
+            if not path.is_file():
+                groups.append(category)
+                continue
+            try:
+                with sqlite3.connect(path) as database:
+                    for stat in stats:
+                        rows = database.execute(
+                            f"SELECT {owner_column}, MAX(value) AS best FROM {table} "
+                            "WHERE stat = ? AND proof_verified = 1 "
+                            f"GROUP BY {owner_column} ORDER BY best DESC, {owner_column} ASC LIMIT 3",
+                            (stat,),
+                        ).fetchall()
+                        leaders = []
+                        for owner, value in rows:
+                            if owner_column == "crew_key":
+                                names = [member_name(user_id) for user_id in str(owner).split(",") if user_id]
+                                name = ", ".join(names) or "Former crew"
+                                display_value = format_seconds_as_hhmmss(value) if is_life_stat(stat) else str(value)
+                            else:
+                                name = member_name(owner)
+                                display_value = str(value)
+                            leaders.append({"name": name, "value": display_value})
+                        if leaders:
+                            category["records"].append({"stat": stat, "leaders": leaders})
+            except sqlite3.Error:
+                logger.warning("Could not read %s website leaderboard", title, exc_info=True)
+            groups.append(category)
+        return groups
+
+    @staticmethod
+    def _coerce_server_data(value: object) -> dict[str, Any]:
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                return {}
+            return parsed if isinstance(parsed, dict) else {}
+        return {}
+
+    @classmethod
+    def _normalise_server_status(cls, raw: dict[str, Any], fallback_name: str) -> dict[str, Any]:
+        payload = cls._coerce_server_data(raw.get("data"))
+        team1 = raw.get("team1") if isinstance(raw.get("team1"), dict) else {}
+        team2 = raw.get("team2") if isinstance(raw.get("team2"), dict) else {}
+
+        def first(*keys: str) -> str:
+            for key in keys:
+                value = payload.get(key)
+                if value not in (None, ""):
+                    return str(value)
+            return ""
+
+        current_map = first("currentMap", "current_map", "map", "mapName", "map_name", "server.map.name")
+        game_mode = first("currentGameMode", "current_game_mode", "gameMode", "gamemode", "server.map.gamemode")
+        players = 0
+        for team in (team1, team2):
+            try:
+                players += int(team.get("playerCount") or 0)
+            except (TypeError, ValueError):
+                pass
+        try:
+            remaining = int(raw.get("matchTimeRemainingSeconds") or 0)
+        except (TypeError, ValueError):
+            remaining = 0
+        return {
+            "available": True,
+            "name": first("serverName", "server_name", "server", "name", "server.name") or fallback_name,
+            "map": " ".join(part for part in (current_map, game_mode) if part) or "Unknown",
+            "players": players,
+            "time_remaining_seconds": max(0, remaining),
+            "next_map": str(raw.get("nextMap") or ""),
+            "updated_at": str(raw.get("timestamp") or datetime.now(timezone.utc).isoformat()),
+        }
+
+    async def _server_status_payload(self) -> list[dict[str, Any]]:
+        cached_at, cached = self._server_status_cache
+        if time.monotonic() - cached_at < SERVER_STATUS_CACHE_SECONDS:
+            return cached
+
+        async with self._server_status_lock:
+            cached_at, cached = self._server_status_cache
+            if time.monotonic() - cached_at < SERVER_STATUS_CACHE_SECONDS:
+                return cached
+
+            from config.hll_API_config import get_hll_backend_status
+            from hll_API_backend import get_hll_backend_client
+
+            async def fetch(alias: str, label: str) -> dict[str, Any] | None:
+                status = get_hll_backend_status(alias)
+                if not status.get("server_id"):
+                    return None
+                try:
+                    raw = await asyncio.wait_for(
+                        get_hll_backend_client(alias).get_mapvote_game_state(),
+                        timeout=12,
+                    )
+                    if not isinstance(raw, dict):
+                        raise RuntimeError("empty server response")
+                    return self._normalise_server_status(raw, label)
+                except Exception as exc:
+                    logger.warning("Website server status unavailable for %s: %s", alias, exc)
+                    return {
+                        "available": False,
+                        "name": label,
+                        "map": "Unknown",
+                        "players": None,
+                        "time_remaining_seconds": None,
+                        "next_map": "",
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }
+
+            results = await asyncio.gather(
+                fetch("main", "7DR Public Server 1"),
+                fetch("server_2", "7DR Public Server 2"),
+            )
+            payload = [result for result in results if result is not None]
+            self._server_status_cache = (time.monotonic(), payload)
+            return payload
+
     async def dashboard(self, _request: web.Request) -> web.Response:
         guild = self.bot.get_guild(MAIN_GUILD_ID)
         if guild is None:
@@ -369,16 +675,27 @@ class FrontlineWeb:
                 content_type="application/json",
             )
 
+        server_status_task = asyncio.create_task(self._server_status_payload())
+        leaderboards_task = asyncio.create_task(asyncio.to_thread(self._read_leaderboards, guild))
+
         # The roll-call cog serialises workbook mutations with this lock. Reading under
         # the same lock prevents the API seeing a half-written weekly refresh.
         async with rollcall._lock:
             rollcalls = await asyncio.to_thread(self._rollcall_payload, rollcall, guild)
         trainees = self._trainee_payload(trainee, guild)
+        server_status, leaderboards = await asyncio.gather(server_status_task, leaderboards_task)
+        war_diary = self.bot.get_cog("WarDiaryCog")
 
         return web.json_response(
             {
                 "generated_at": datetime.now(timezone.utc).isoformat(),
                 "guild": {"name": guild.name},
+                "external_links": EXTERNAL_LINKS,
+                "server_status": server_status,
+                "events": self._event_payload(guild),
+                "war_diary": self._war_diary_payload(war_diary),
+                "leaderboards": leaderboards,
+                "botr": self._botr_payload(guild),
                 "rollcalls": rollcalls,
                 "trainee_tracks": trainees,
             }
