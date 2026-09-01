@@ -533,10 +533,26 @@ class FrontlineWeb:
 
         groups: list[dict[str, Any]] = []
         sources = (
-            ("Infantry & Recon", Path(INF_DB_FILE), "submissions", "user_id", STATS),
-            ("Armour", Path(ARM_DB_FILE), "submissions_arm", "crew_key", STATS_ARM),
+            (
+                "Infantry & Recon",
+                Path(INF_DB_FILE),
+                "user_id",
+                STATS,
+                "SELECT user_id, MAX(value) AS best FROM submissions "
+                "WHERE stat = ? AND proof_verified = 1 "
+                "GROUP BY user_id ORDER BY best DESC, user_id ASC LIMIT 3",
+            ),
+            (
+                "Armour",
+                Path(ARM_DB_FILE),
+                "crew_key",
+                STATS_ARM,
+                "SELECT crew_key, MAX(value) AS best FROM submissions_arm "
+                "WHERE stat = ? AND proof_verified = 1 "
+                "GROUP BY crew_key ORDER BY best DESC, crew_key ASC LIMIT 3",
+            ),
         )
-        for title, path, table, owner_column, stats in sources:
+        for title, path, owner_column, stats, query in sources:
             category = {"title": title, "records": []}
             if not path.is_file():
                 groups.append(category)
@@ -544,12 +560,7 @@ class FrontlineWeb:
             try:
                 with sqlite3.connect(path) as database:
                     for stat in stats:
-                        rows = database.execute(
-                            f"SELECT {owner_column}, MAX(value) AS best FROM {table} "
-                            "WHERE stat = ? AND proof_verified = 1 "
-                            f"GROUP BY {owner_column} ORDER BY best DESC, {owner_column} ASC LIMIT 3",
-                            (stat,),
-                        ).fetchall()
+                        rows = database.execute(query, (stat,)).fetchall()
                         leaders = []
                         for owner, value in rows:
                             if owner_column == "crew_key":
