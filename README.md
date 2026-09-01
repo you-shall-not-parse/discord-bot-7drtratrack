@@ -172,7 +172,7 @@ Currently disabled in `main.py`:
 
 The bot serves a read-only, live personnel dashboard on `127.0.0.1:7020` by
 default. It mirrors roll-call attendance and Infantry, Recon, and Armour trainee
-progress while the existing Discord features remain active. Caddy publishes it
-at `hllfrontline.com`; historic stats remain at
+progress while the existing Discord features remain active. An outbound-only
+Cloudflare Tunnel publishes it at `hllfrontline.com`; historic stats remain at
 `7drhistostats.hllfrontline.com`. The dashboard requires the shared `APPPIN`
 configured in `.env`. See `liberationapp/DEPLOYMENT.md`.

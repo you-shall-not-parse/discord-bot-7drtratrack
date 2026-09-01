@@ -246,7 +246,7 @@ trainee-tracker API. The site reads directly from `rollcall.py` and
 Slash commands: none.
 
 How to use: Start the bot normally, then open `http://127.0.0.1:7020` on the
-host. In production, Caddy publishes that service at `https://hllfrontline.com`.
+host. In production, Cloudflare Tunnel publishes that service at `https://hllfrontline.com`.
 The bind address and port can be overridden with `FRONTLINE_WEB_HOST` and
 `FRONTLINE_WEB_PORT`. Set `APPPIN` to a random value of at least eight
 characters in `.env`; changing it and restarting logs out every website user.

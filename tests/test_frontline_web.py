@@ -116,10 +116,8 @@ def test_missed_rollcall_streak_counts_only_consecutive_explicit_misses() -> Non
     ) == 0
 
 
-def test_caddyfile_publishes_apex_without_replacing_historic_stats() -> None:
+def test_caddyfile_does_not_reopen_tunnel_origins() -> None:
     caddyfile = Path("liberationapp/Caddyfile.production").read_text(encoding="utf-8")
 
-    assert "hllfrontline.com {" in caddyfile
-    assert "reverse_proxy 127.0.0.1:7020" in caddyfile
-    assert "7drhistostats.hllfrontline.com {" in caddyfile
-    assert "reverse_proxy 127.0.0.1:7010" in caddyfile
+    assert "Cloudflare Tunnel" in caddyfile
+    assert "reverse_proxy" not in caddyfile
