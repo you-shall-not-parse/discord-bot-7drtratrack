@@ -84,10 +84,10 @@ function renderRollcall(item) {
   const inactive = item.report_members.filter(member => !member.active);
   $("#report-kicker").textContent = `${item.week} · ${item.locked ? "FINAL" : "IN PROGRESS"}`;
   $("#report-title").textContent = item.title;
-  $("#report-description").textContent = "Select any column heading to reorder the full attendance record. Missed streak counts consecutive unticked roll calls, newest first.";
+  $("#report-description").textContent = "Current members hold one of this roll call's tracked Discord roles. Archived members retain their attendance history. Missed streak counts consecutive unticked roll calls, newest first.";
   $("#report-content").innerHTML = `
     <section class="report-section"><div class="report-section-title"><h2>Roll call</h2><span>${active.length} active members</span></div>${sortableTable(active, columns, "No active members found.")}</section>
-    <section class="report-section"><div class="report-section-title"><h2>Former members</h2><span>${inactive.length} archived members</span></div>${sortableTable(inactive, columns, "No former members.")}</section>`;
+    <section class="report-section"><div class="report-section-title"><h2>Archived members</h2><span>${inactive.length} archived members</span></div>${sortableTable(inactive, columns, "No archived members.")}</section>`;
 }
 
 function traineeColumns(item) {

@@ -412,8 +412,8 @@ class FrontlineWeb:
         for user_id in report_user_ids:
             member = guild.get_member(user_id)
             is_former = cog._is_former_member(member)
+            active, flags = self._rollcall_member_state(user_id, expected_ids, member, is_former)
             rank, rank_order = self._member_rank(None if is_former else member)
-            flags = ["LEFT"] if member is None else (["FORMER"] if is_former else [])
             attendance = {
                 header: week_statuses[header].get(user_id, "")
                 for header in week_headers
@@ -424,7 +424,7 @@ class FrontlineWeb:
                     "rank": rank,
                     "rank_order": rank_order,
                     "flags": flags,
-                    "active": not is_former,
+                    "active": active,
                     "missed_streak": self._missed_rollcall_streak(attendance, week_headers),
                     "attendance": attendance,
                 }
@@ -450,6 +450,17 @@ class FrontlineWeb:
             "report_members": report_members,
             "departed_count": departed_count,
         }
+
+    @staticmethod
+    def _rollcall_member_state(user_id: int, expected_ids: set[int], member, is_former: bool) -> tuple[bool, list[str]]:
+        """Classify current role members separately from retained attendance history."""
+        if member is None:
+            return False, ["LEFT"]
+        if is_former:
+            return False, ["FORMER"]
+        if user_id not in expected_ids:
+            return False, ["ARCHIVED"]
+        return True, []
 
     @staticmethod
     def _member_rank(member) -> tuple[str, int]:

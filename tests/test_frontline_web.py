@@ -22,7 +22,7 @@ def test_frontend_assets_exist_and_are_wired() -> None:
     assert "[hidden] { display: none !important; }" in css
     assert 'fetch("/api/dashboard"' in javascript
     assert "AbortSignal.timeout(20_000)" in javascript
-    assert 'src="/assets/report.js?v=4"' in report
+    assert 'src="/assets/report.js?v=5"' in report
     assert 'href="/rollcalls/${encodeURIComponent(rollcall.key)}"' in javascript
     assert 'href="/trainees/${encodeURIComponent(track.key)}"' in javascript
     assert 'label: "Current status"' in report_javascript
@@ -91,6 +91,15 @@ def test_rollcall_rank_uses_the_clan_hierarchy() -> None:
     assert FrontlineWeb._member_rank(no_rank)[0] == "Unranked"
     assert FrontlineWeb._member_rank(role_rank)[0] == "MAJ"
     assert FrontlineWeb._member_rank(None)[0] == "Former member"
+
+
+def test_rollcall_membership_uses_current_tracked_role_membership() -> None:
+    member = SimpleNamespace()
+
+    assert FrontlineWeb._rollcall_member_state(1, {1}, member, False) == (True, [])
+    assert FrontlineWeb._rollcall_member_state(1, set(), member, False) == (False, ["ARCHIVED"])
+    assert FrontlineWeb._rollcall_member_state(1, {1}, member, True) == (False, ["FORMER"])
+    assert FrontlineWeb._rollcall_member_state(1, {1}, None, True) == (False, ["LEFT"])
 
 
 def test_missed_rollcall_streak_counts_only_consecutive_explicit_misses() -> None:
