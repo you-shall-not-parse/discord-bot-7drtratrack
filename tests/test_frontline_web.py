@@ -170,9 +170,9 @@ def test_dashboard_event_payload_only_includes_current_upcoming_events() -> None
 def test_war_diary_builds_overall_and_opponent_records() -> None:
     cog = SimpleNamespace(
         _get_match_records=lambda: [
-            {"opponent_clan_name": "Example", "match_date": "01/09/2026", "map_name": "Carentan", "result": "5-2"},
-            {"opponent_clan_name": "example", "match_date": "02/09/2026", "map_name": "Kharkov", "result": "1-3"},
-            {"opponent_clan_name": "Another", "match_date": "03/09/2026", "map_name": "Omaha", "result": "3-3"},
+            {"opponent_clan_name": "Example", "match_date": "01/09/26", "map_name": "Carentan", "result": "5-2"},
+            {"opponent_clan_name": "example", "match_date": "02/09/26", "map_name": "Kharkov", "result": "1-3"},
+            {"opponent_clan_name": "Another", "match_date": "03/09/26", "map_name": "Omaha", "result": "3-3"},
         ]
     )
 
@@ -181,6 +181,32 @@ def test_war_diary_builds_overall_and_opponent_records() -> None:
     assert payload["summary"] == {"played": 3, "wins": 1, "losses": 1, "draws": 1}
     assert payload["opponents"][0] == {"name": "Example", "played": 2, "wins": 1, "losses": 1, "draws": 0}
     assert payload["recent"][0]["opponent"] == "Another"
+
+
+def test_war_diary_returns_every_match_and_keeps_legacy_outcomes() -> None:
+    records = [
+        {
+            "opponent_clan_name": f"Clan {day}",
+            "match_date": f"{day:02d}/08/26",
+            "map_name": "Carentan",
+            "result": "3-2",
+        }
+        for day in range(1, 16)
+    ]
+    records.append(
+        {
+            "opponent_clan_name": "Legacy Clan",
+            "match_date": "31/07/26",
+            "map_name": "Unknown",
+            "is_7dr_win": False,
+        }
+    )
+
+    payload = FrontlineWeb._war_diary_payload(SimpleNamespace(_get_match_records=lambda: records))
+
+    assert len(payload["recent"]) == 16
+    assert payload["recent"][0]["date"] == "15/08/26"
+    assert payload["recent"][-1]["score"] == "Loss"
 
 
 def test_server_status_normalises_bifrost_data_without_exposing_credentials() -> None:

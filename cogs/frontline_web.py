@@ -467,10 +467,15 @@ class FrontlineWeb:
         opponents: dict[str, dict[str, Any]] = {}
         for raw in cog._get_match_records():
             score_match = re.fullmatch(r"\s*(\d+)\s*[-:]\s*(\d+)\s*", str(raw.get("result") or ""))
-            if score_match is None:
+            if score_match is not None:
+                home_score, away_score = (int(value) for value in score_match.groups())
+                outcome = "win" if home_score > away_score else "loss" if home_score < away_score else "draw"
+                display_score = f"{home_score}-{away_score}"
+            elif isinstance(raw.get("is_7dr_win"), bool):
+                outcome = "win" if raw["is_7dr_win"] else "loss"
+                display_score = outcome.title()
+            else:
                 continue
-            home_score, away_score = (int(value) for value in score_match.groups())
-            outcome = "win" if home_score > away_score else "loss" if home_score < away_score else "draw"
             opponent = " ".join(str(raw.get("opponent_clan_name") or "Unknown clan").split())
             opponent_key = opponent.casefold()
             record = opponents.setdefault(
@@ -484,13 +489,13 @@ class FrontlineWeb:
                     "opponent": opponent,
                     "date": str(raw.get("match_date") or ""),
                     "map": str(raw.get("map_name") or "Unknown"),
-                    "score": f"{home_score}-{away_score}",
+                    "score": display_score,
                     "outcome": outcome,
                 }
             )
 
         def date_key(item: dict[str, Any]) -> datetime:
-            for date_format in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+            for date_format in ("%d/%m/%y", "%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
                 try:
                     return datetime.strptime(item["date"], date_format)
                 except ValueError:
@@ -505,7 +510,7 @@ class FrontlineWeb:
         return {
             "summary": {"played": len(matches), "wins": wins, "losses": losses, "draws": draws},
             "opponents": opponent_rows,
-            "recent": matches[:12],
+            "recent": matches,
         }
 
     @staticmethod
