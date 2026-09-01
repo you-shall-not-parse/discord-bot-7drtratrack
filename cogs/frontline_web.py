@@ -44,6 +44,7 @@ HLLV_SEARCH_WINDOW_SECONDS = 60
 HLLV_SEARCH_MAX_REQUESTS = 30
 RAT_OF_THE_WEEK_ROLE_ID = 1461087295930106020
 SERVER_STATUS_CACHE_SECONDS = 45
+DEFAULT_SERVER_STATUS_CHANNEL_IDS = "1441751747935735878"
 EXTERNAL_LINKS = {
     "bifrost": "https://frostbite.bifrostgaming.com/hll/guilds/7DR",
     "history": "https://7drhistostats.hllfrontline.com/",
@@ -630,7 +631,10 @@ class FrontlineWeb:
     @staticmethod
     def _server_status_channel_ids() -> tuple[int, ...]:
         values = []
-        for raw in os.getenv("FRONTLINE_SERVER_STATUS_CHANNEL_IDS", "").split(","):
+        for raw in os.getenv(
+            "FRONTLINE_SERVER_STATUS_CHANNEL_IDS",
+            DEFAULT_SERVER_STATUS_CHANNEL_IDS,
+        ).split(","):
             candidate = raw.strip()
             if not candidate:
                 continue
