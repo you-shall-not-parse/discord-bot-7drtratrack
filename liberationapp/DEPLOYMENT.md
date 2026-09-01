@@ -76,9 +76,10 @@ can reach the service from the host.
 
 ## Optional website feeds
 
-To mirror Discord server-status webhook cards on the website, configure the
-Discord channel IDs where those webhooks post. Use a comma-separated list when
-the servers post into different channels:
+The website reads server-status webhook cards from Discord channel
+`1441751747935735878` by default. Override it with the channel IDs where those
+webhooks post if the destination changes. Use a comma-separated list when the
+servers post into different channels:
 
 ```dotenv
 FRONTLINE_SERVER_STATUS_CHANNEL_IDS="123456789012345678,234567890123456789"
