@@ -1,9 +1,12 @@
 import asyncio
 import logging
+from pathlib import Path
 from typing import Optional
 
 import discord
 from discord.ext import commands
+
+from data_paths import data_path
 
 logger = logging.getLogger(__name__)
 
@@ -13,9 +16,9 @@ logger = logging.getLogger(__name__)
 # Put your onboarding role NAMES here (must match exactly).
 # The first matching role found on the member will be used.
 ROLE_DM_MESSAGES: dict[str, str] = {
-	"Infantry Trainee": "Infantry! click here to start your application!",
-	"Tank Crew Trainee": "Armour! click here to start your application!",
-	"Recon Trainee": "Recon! click here to start your application!",
+	"Infantry Trainee": "Infantry! type here to start your application!",
+	"Tank Crew Trainee": "Armour! type here to start your application!",
+	"Recon Trainee": "Recon! type here to start your application!",
 	"Blueberry": "**Welcome! Since you chose Blueberry...** \n\n"
 	"Check out [#community-info-and-faq](https://discord.com/channels/1097913605082579024/1441744889145720942) and join us in [#community-chat](https://discord.com/channels/1097913605082579024/1441511200474271875) for HLL chatter, in [#the-arcade](https://discord.com/channels/1097913605082579024/1398672228803018763)  for other games or in [#side-quests](https://discordapp.com/channels/1097913605082579024/1399082728313458778) for hobbies.\n\n"
 	"👋 We recommend you add your current T17 HLL in-game name with the # numbers after it in [#team-17-names](https://discord.com/channels/1097913605082579024/1098665953706909848) so we can identify each other!\n\n"
@@ -25,7 +28,6 @@ ROLE_DM_MESSAGES: dict[str, str] = {
 	"Diplomat": "**Welcome! Since you chose Diplomat...** \n\n"
 	"👋 Check out [#community-info-and-faq](https://discord.com/channels/1097913605082579024/1441744889145720942) and join us in [#community-chat](https://discord.com/channels/1097913605082579024/1441511200474271875) for HLL chatter, in [#the-arcade](https://discord.com/channels/1097913605082579024/1398672228803018763) for other games or in [#side-quests](https://discordapp.com/channels/1097913605082579024/1399082728313458778) for hobbies.\n\n"
 	"You can see all of our upcoming events in [#upcoming-events-calendar](https://discord.com/channels/1097913605082579024/1332736267485708419) to plan and organise events with us! \n\n"
-	"You can also map vote here [#map-voting](https://discord.com/channels/1097913605082579024/1441751747935735878)\n\n",
 }
 
 # If the member's matched onboarding role is in this set, the bot will also
@@ -38,10 +40,18 @@ RECRUIT_FORM_TRIGGER_ROLES: set[str] = {
 	"Tank Crew Trainee",
 }
 
+# Send this before the greeting text for direct-entry trainee roles only.
+TRAINEE_INTRO_VIDEO_ROLES: set[str] = {
+	"Infantry Trainee",
+	"Recon Trainee",
+	"Tank Crew Trainee",
+}
+TRAINEE_INTRO_VIDEO_PATH = Path(data_path("intro_video.mp4", ensure_dir=False))
+
 # If none of the roles above are found after waiting, this message is used.
 DEFAULT_DM_MESSAGE = (
 	"Welcome! Please complete onboarding and pick a role. "
-	"If you don’t receive the right DM, ping an admin in #entree-chat and they'll assist you."
+	"If you don’t receive the right DM, ping an admin in #general-chat and they'll assist you."
 )
 
 # How long to wait for Discord Onboarding to apply roles (seconds)
@@ -55,6 +65,7 @@ class DiscordGreeting(commands.Cog):
 	def __init__(self, bot: commands.Bot):
 		self.bot = bot
 		self._already_dmed: set[int] = set()
+		self._intro_video_sent: set[int] = set()
 		self._welcome_tasks: dict[int, asyncio.Task] = {}
 		self._dm_locks: dict[int, asyncio.Lock] = {}
 
@@ -116,12 +127,48 @@ class DiscordGreeting(commands.Cog):
 				e,
 			)
 
-	async def _safe_dm(self, member: discord.Member, message: str) -> bool:
+	async def _safe_dm(
+		self,
+		member: discord.Member,
+		message: str,
+		*,
+		matched_role_name: Optional[str] = None,
+	) -> bool:
 		lock = self._get_dm_lock(member.id)
 		async with lock:
 			# Re-check inside the lock so join-task + member_update cannot double-send.
 			if member.id in self._already_dmed:
 				return False
+
+			if (
+				matched_role_name in TRAINEE_INTRO_VIDEO_ROLES
+				and member.id not in self._intro_video_sent
+			):
+				if not TRAINEE_INTRO_VIDEO_PATH.is_file():
+					logger.warning(
+						"Trainee intro video is missing; expected it at %s.",
+						TRAINEE_INTRO_VIDEO_PATH,
+					)
+				else:
+					try:
+						await member.send(
+							file=discord.File(
+								TRAINEE_INTRO_VIDEO_PATH,
+								filename="7DR-introduction.mp4",
+							)
+						)
+						self._intro_video_sent.add(member.id)
+					except discord.Forbidden:
+						logger.info("Cannot DM member %s (%s): DMs closed.", member, member.id)
+						return False
+					except (OSError, discord.HTTPException) as e:
+						# A missing/oversized attachment must not prevent onboarding.
+						logger.warning(
+							"Failed to send trainee intro video to %s (%s): %s",
+							member,
+							member.id,
+							e,
+						)
 			try:
 				await member.send(message)
 				self._already_dmed.add(member.id)
@@ -158,7 +205,11 @@ class DiscordGreeting(commands.Cog):
 				matched_role_name, matched_message = picked
 
 			final_message = matched_message or DEFAULT_DM_MESSAGE
-			sent = await self._safe_dm(member, final_message)
+			sent = await self._safe_dm(
+				member,
+				final_message,
+				matched_role_name=matched_role_name,
+			)
 			if sent and matched_role_name:
 				self._maybe_start_recruit_form(member, matched_role_name)
 		except asyncio.CancelledError:
@@ -171,6 +222,7 @@ class DiscordGreeting(commands.Cog):
 	async def on_member_join(self, member: discord.Member):
 		# Allow leave/rejoin testing (or genuine rejoins) to receive DMs again.
 		self._already_dmed.discard(member.id)
+		self._intro_video_sent.discard(member.id)
 		self._cancel_welcome_task(member.id)
 		# Note: we intentionally don't try to cancel any prior tasks here; those
 		# would be from a previous join and will naturally no-op or time out.
@@ -182,6 +234,7 @@ class DiscordGreeting(commands.Cog):
 	async def on_member_remove(self, member: discord.Member):
 		# If they leave and rejoin later, they should be eligible to receive the DM again.
 		self._already_dmed.discard(member.id)
+		self._intro_video_sent.discard(member.id)
 		self._cancel_welcome_task(member.id)
 
 	@commands.Cog.listener()
@@ -199,7 +252,11 @@ class DiscordGreeting(commands.Cog):
 				picked = self._pick_role_and_message(after)
 				if picked:
 					matched_role_name, matched_message = picked
-					sent = await self._safe_dm(after, matched_message)
+					sent = await self._safe_dm(
+						after,
+						matched_message,
+						matched_role_name=matched_role_name,
+					)
 					if sent:
 						self._cancel_welcome_task(after.id)
 						self._maybe_start_recruit_form(after, matched_role_name)

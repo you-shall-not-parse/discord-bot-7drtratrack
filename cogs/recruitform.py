@@ -340,7 +340,6 @@ class RecruitFormCog(commands.Cog):
                 " include Pte (Private) at the start and post it in the [#team-17-names](https://discord.com/channels/1097913605082579024/1098665953706909848) channel so we can change that in discord for you. \n\n"
                 "If unsure see our [tutorial video](https://discord.com/channels/1097913605082579024/1098665953706909848/1445828966006001808) or ask one of our officers! \n\n"
                 "3️⃣ Then add your [7DR] clan tags on the in-game options menu and you're all set! 🥳 \n\n"
-                "Discord can be daunting... we have some [discord tutorial videos](https://discord.com/channels/1097913605082579024/1363096754697797742) to help you sign-up to events and get involved! \n\n"
             )
 
         except Exception as e:
