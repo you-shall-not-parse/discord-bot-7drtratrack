@@ -1,8 +1,10 @@
+import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
-from cogs.frontline_web import FRONTEND_DIR, TURNSTILE_SITE_KEY, FrontlineWeb
+from cogs.frontline_web import DASHBOARD_CACHE_SECONDS, FRONTEND_DIR, TURNSTILE_SITE_KEY, FrontlineWeb
 from config import WEB_LOG_PATH
 
 
@@ -63,6 +65,57 @@ def test_pin_sessions_are_random_and_open_redirects_are_rejected(monkeypatch) ->
     assert service._safe_next("//example.com") == "/"
     assert service._safe_next("https://example.com") == "/"
     assert service._sessions[token].claimed_name == "Example User"
+
+
+def test_dashboard_payload_is_cached_for_30_seconds(monkeypatch) -> None:
+    service = FrontlineWeb(SimpleNamespace())
+    now = 100.0
+    builds = 0
+
+    monkeypatch.setattr("cogs.frontline_web.time.monotonic", lambda: now)
+
+    async def build_payload() -> dict[str, int]:
+        nonlocal builds
+        builds += 1
+        return {"build": builds}
+
+    service._build_dashboard_payload = build_payload
+
+    async def exercise_cache() -> None:
+        nonlocal now
+        first = await service.dashboard(None)
+        now += DASHBOARD_CACHE_SECONDS - 1
+        second = await service.dashboard(None)
+        now += 1
+        third = await service.dashboard(None)
+
+        assert json.loads(first.body) == {"build": 1}
+        assert json.loads(second.body) == {"build": 1}
+        assert json.loads(third.body) == {"build": 2}
+
+    asyncio.run(exercise_cache())
+    assert builds == 2
+
+
+def test_concurrent_dashboard_requests_share_one_build() -> None:
+    service = FrontlineWeb(SimpleNamespace())
+    builds = 0
+
+    async def build_payload() -> dict[str, int]:
+        nonlocal builds
+        builds += 1
+        await asyncio.sleep(0)
+        return {"build": builds}
+
+    service._build_dashboard_payload = build_payload
+
+    async def exercise_cache() -> None:
+        responses = await asyncio.gather(*(service.dashboard(None) for _ in range(20)))
+
+        assert all(json.loads(response.body) == {"build": 1} for response in responses)
+
+    asyncio.run(exercise_cache())
+    assert builds == 1
 
 
 def test_login_name_is_normalised_and_rejects_log_injection() -> None:

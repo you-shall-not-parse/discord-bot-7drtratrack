@@ -44,6 +44,7 @@ HLLV_SEARCH_WINDOW_SECONDS = 60
 HLLV_SEARCH_MAX_REQUESTS = 30
 RAT_OF_THE_WEEK_ROLE_ID = 1461087295930106020
 SERVER_STATUS_CACHE_SECONDS = 45
+DASHBOARD_CACHE_SECONDS = 30
 DEFAULT_SERVER_STATUS_CHANNEL_IDS = "1441751747935735878"
 EXTERNAL_LINKS = {
     "bifrost": "https://frostbite.bifrostgaming.com/hll/guilds/7DR",
@@ -78,6 +79,8 @@ class FrontlineWeb:
         self._hllv_searches: dict[str, list[float]] = {}
         self._server_status_cache: tuple[float, list[dict[str, Any]]] = (0.0, [])
         self._server_status_lock = asyncio.Lock()
+        self._dashboard_cache: tuple[float, bytes | None] = (0.0, None)
+        self._dashboard_cache_lock = asyncio.Lock()
 
     async def start(self) -> None:
         if len(self._app_pin) < 8:
@@ -804,6 +807,18 @@ class FrontlineWeb:
             return payload
 
     async def dashboard(self, _request: web.Request) -> web.Response:
+        cached_at, cached_body = self._dashboard_cache
+        if cached_body is None or time.monotonic() - cached_at >= DASHBOARD_CACHE_SECONDS:
+            async with self._dashboard_cache_lock:
+                cached_at, cached_body = self._dashboard_cache
+                if cached_body is None or time.monotonic() - cached_at >= DASHBOARD_CACHE_SECONDS:
+                    payload = await self._build_dashboard_payload()
+                    cached_body = json.dumps(payload).encode("utf-8")
+                    self._dashboard_cache = (time.monotonic(), cached_body)
+
+        return web.Response(body=cached_body, content_type="application/json", charset="utf-8")
+
+    async def _build_dashboard_payload(self) -> dict[str, Any]:
         guild = self.bot.get_guild(MAIN_GUILD_ID)
         if guild is None:
             raise web.HTTPServiceUnavailable(
@@ -830,20 +845,18 @@ class FrontlineWeb:
         server_status, leaderboards = await asyncio.gather(server_status_task, leaderboards_task)
         war_diary = self.bot.get_cog("WarDiaryCog")
 
-        return web.json_response(
-            {
-                "generated_at": datetime.now(timezone.utc).isoformat(),
-                "guild": {"name": guild.name},
-                "external_links": EXTERNAL_LINKS,
-                "server_status": server_status,
-                "events": self._event_payload(guild),
-                "war_diary": self._war_diary_payload(war_diary),
-                "leaderboards": leaderboards,
-                "botr": self._botr_payload(guild),
-                "rollcalls": rollcalls,
-                "trainee_tracks": trainees,
-            }
-        )
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "guild": {"name": guild.name},
+            "external_links": EXTERNAL_LINKS,
+            "server_status": server_status,
+            "events": self._event_payload(guild),
+            "war_diary": self._war_diary_payload(war_diary),
+            "leaderboards": leaderboards,
+            "botr": self._botr_payload(guild),
+            "rollcalls": rollcalls,
+            "trainee_tracks": trainees,
+        }
 
     def _rollcall_payload(self, cog, guild) -> list[dict[str, Any]]:
         workbook = cog._load_or_create_workbook()
