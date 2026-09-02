@@ -11,6 +11,7 @@ from cogs.frontline_web import (
     DASHBOARD_CACHE_SECONDS,
     EXTERNAL_LINKS,
     FRONTEND_DIR,
+    HIGHLIGHTS_CHANNEL_ID,
     MAP_IMAGES_DIR,
     MAX_ACTIVE_SESSIONS,
     SESSION_SECONDS,
@@ -33,11 +34,11 @@ def test_frontend_assets_exist_and_are_wired() -> None:
 
     admin = (FRONTEND_DIR / "admin.html").read_text(encoding="utf-8")
 
-    assert '<link rel="stylesheet" href="/assets/app.css?v=13">' in index
-    assert '<link rel="stylesheet" href="/assets/app.css?v=13">' in login
-    assert '<link rel="stylesheet" href="/assets/app.css?v=13">' in report
-    assert '<link rel="stylesheet" href="/assets/app.css?v=13">' in admin
-    assert '<script defer src="/assets/app.js?v=9"></script>' in index
+    assert '<link rel="stylesheet" href="/assets/app.css?v=14">' in index
+    assert '<link rel="stylesheet" href="/assets/app.css?v=14">' in login
+    assert '<link rel="stylesheet" href="/assets/app.css?v=14">' in report
+    assert '<link rel="stylesheet" href="/assets/app.css?v=14">' in admin
+    assert '<script defer src="/assets/app.js?v=10"></script>' in index
     assert 'src="/assets/emblem_7dr.png"' in index
     assert "7th Armoured Division" in index
     assert "<dialog" not in index
@@ -51,6 +52,8 @@ def test_frontend_assets_exist_and_are_wired() -> None:
     assert 'data-view="server-status"' in index
     assert 'data-view="upcoming"' in index
     assert 'data-view="war-diary"' in index
+    assert 'data-view="highlights"' in index
+    assert 'id="highlight-grid"' in index
     assert 'data-view="community"' not in index
     assert 'id="server-grid"' in index
     assert 'src="/assets/report.js?v=5"' in report
@@ -76,6 +79,9 @@ def test_frontend_assets_exist_and_are_wired() -> None:
     assert 'name="name" type="text" minlength="1" maxlength="80" autocomplete="name" autofocus>' in login
     assert 'action="/logout"' in index
     assert "function resultCards(rows)" in javascript
+    assert "function renderHighlights()" in javascript
+    assert 'loading="lazy"' in javascript
+    assert 'preload="metadata"' in javascript
     assert "statsDate(row.date, row.stats_url)" in javascript
     assert "data-map-image" in javascript
     assert ".summary-strip { grid-template-columns: repeat(3, 1fr);" in css
@@ -127,6 +133,57 @@ def test_report_pages_are_not_browser_cached() -> None:
         request = SimpleNamespace(secure=False, headers={}, path=path)
         response = asyncio.run(service._security_headers(request, handler))
         assert response.headers["Cache-Control"] == "no-store"
+        assert "media-src 'self' https://cdn.discordapp.com" in response.headers["Content-Security-Policy"]
+
+
+def test_highlight_message_keeps_direct_discord_images_and_videos_only() -> None:
+    class Attachment(SimpleNamespace):
+        def is_spoiler(self):
+            return bool(getattr(self, "spoiler", False))
+
+    attachments = [
+        Attachment(filename="victory.png", content_type="image/png", url="https://cdn.discordapp.com/attachments/1/2/victory.png", width=1920, height=1080),
+        Attachment(filename="clip.mp4", content_type="video/mp4", url="https://media.discordapp.net/attachments/1/2/clip.mp4", width=1280, height=720),
+        Attachment(filename="notes.txt", content_type="text/plain", url="https://cdn.discordapp.com/attachments/1/2/notes.txt"),
+        Attachment(filename="hidden.jpg", content_type="image/jpeg", url="https://cdn.discordapp.com/attachments/1/2/hidden.jpg", spoiler=True),
+        Attachment(filename="outside.jpg", content_type="image/jpeg", url="https://example.com/outside.jpg"),
+    ]
+    message = SimpleNamespace(
+        id=456,
+        attachments=attachments,
+        author=SimpleNamespace(display_name="Example Member", display_avatar=SimpleNamespace(url="https://cdn.discordapp.com/avatars/1/a.png")),
+        clean_content="A strong finish",
+        created_at=datetime(2026, 9, 2, 18, 30, tzinfo=timezone.utc),
+        jump_url="https://discord.com/channels/1/2/456",
+    )
+
+    post = FrontlineWeb._highlight_from_message(message, guild_id=1, channel_id=HIGHLIGHTS_CHANNEL_ID)
+
+    assert post is not None
+    assert post["author"] == "Example Member"
+    assert post["caption"] == "A strong finish"
+    assert [item["kind"] for item in post["media"]] == ["image", "video"]
+    assert post["url"] == "https://discord.com/channels/1/2/456"
+
+
+def test_highlights_are_cached_between_dashboard_builds(monkeypatch) -> None:
+    now = 1_000.0
+    monkeypatch.setattr("cogs.frontline_web.time.monotonic", lambda: now)
+    service = FrontlineWeb(SimpleNamespace())
+    calls = 0
+
+    async def read_highlights():
+        nonlocal calls
+        calls += 1
+        return [{"id": str(calls)}]
+
+    service._read_discord_highlights = read_highlights
+
+    first = asyncio.run(service._highlights_payload())
+    second = asyncio.run(service._highlights_payload())
+
+    assert first == second == [{"id": "1"}]
+    assert calls == 1
 
 
 def test_active_session_limit_rejects_login_until_sessions_expire(monkeypatch) -> None:

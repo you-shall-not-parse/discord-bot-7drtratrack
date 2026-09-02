@@ -1,4 +1,4 @@
-const VIEWS = new Set(["overview", "personnel", "server-status", "upcoming", "war-diary", "statistics", "directory"]);
+const VIEWS = new Set(["overview", "personnel", "server-status", "upcoming", "war-diary", "highlights", "statistics", "directory"]);
 const requestedView = location.hash.replace(/^#/, "");
 const state = { data: null, view: VIEWS.has(requestedView) ? requestedView : "overview" };
 const $ = selector => document.querySelector(selector);
@@ -109,12 +109,14 @@ function render() {
   $("#personnel-count").textContent = traineeTotal;
   $("#event-count").textContent = state.data.events.length;
   $("#match-event-count").textContent = state.data.events.length;
+  $("#highlight-count").textContent = (state.data.highlights || []).length;
   renderOverview();
   renderServerStatus();
   renderRollcalls();
   renderTrainees();
   renderEvents();
   renderWarDiary();
+  renderHighlights();
   renderLeaderboards();
   applyMapBackgrounds();
   showView(state.view, false);
@@ -243,6 +245,34 @@ function renderWarDiary() {
     <div class="stat"><strong>${diary.summary.losses}</strong><small>Losses</small></div>`;
   $("#recent-results").innerHTML = resultCards(diary.recent);
   $("#opponent-records").innerHTML = opponentTable(diary.opponents);
+}
+
+function renderHighlights() {
+  const posts = state.data.highlights || [];
+  $("#highlight-grid").innerHTML = posts.map(post => {
+    const author = escapeHtml(post.author || "7DR member");
+    const media = (post.media || []).map(item => {
+      const url = safeDiscordMediaUrl(item.url);
+      if (!url) return "";
+      if (item.kind === "video") {
+        return `<video controls preload="metadata" playsinline aria-label="Video shared by ${author}">
+          <source src="${escapeHtml(url)}"${item.content_type ? ` type="${escapeHtml(item.content_type)}"` : ""}>
+          Your browser cannot play this video.
+        </video>`;
+      }
+      return `<img src="${escapeHtml(url)}" alt="${escapeHtml(item.filename || `Image shared by ${post.author || "7DR member"}`)}" loading="lazy" decoding="async">`;
+    }).join("");
+    if (!media) return "";
+    const avatar = safeDiscordMediaUrl(post.author_avatar);
+    return `<article class="highlight-card">
+      <div class="highlight-media ${(post.media || []).length > 1 ? "multiple" : ""}">${media}</div>
+      <div class="highlight-copy">
+        <div class="highlight-author">${avatar ? `<img src="${escapeHtml(avatar)}" alt="" loading="lazy">` : ""}<strong>${author}</strong><time datetime="${escapeHtml(post.created_at)}">${escapeHtml(formatDate(post.created_at))}</time></div>
+        ${post.caption ? `<p>${escapeHtml(post.caption)}</p>` : ""}
+        ${externalLink(post.url, "Open in Discord")}
+      </div>
+    </article>`;
+  }).join("") || emptyState("No image or video highlights have been posted yet.");
 }
 
 function renderLeaderboards() {

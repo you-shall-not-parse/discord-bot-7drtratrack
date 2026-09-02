@@ -86,6 +86,20 @@ h1 em { font-style: normal; color: transparent; -webkit-text-stroke: 1px var(--o
 .event-card time span { color: var(--olive); font-size: 9px; letter-spacing: .12em; }
 .event-card h3 { margin: 5px 0 2px; font-size: 22px; }
 .event-card p { margin: 0; color: var(--muted); font-size: 10px; }
+.highlight-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 17px; align-items: start; }
+.highlight-card { min-width: 0; border: 1px solid var(--line); background: #191b16; overflow: hidden; }
+.highlight-media { display: grid; background: #0d0f0b; }
+.highlight-media.multiple { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; }
+.highlight-media img,.highlight-media video { display: block; width: 100%; aspect-ratio: 16 / 10; border: 0; background: #0d0f0b; object-fit: cover; }
+.highlight-media video { object-fit: contain; }
+.highlight-media.multiple img,.highlight-media.multiple video { aspect-ratio: 1; }
+.highlight-copy { padding: 16px; }
+.highlight-author { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.highlight-author img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; }
+.highlight-author strong { overflow: hidden; color: var(--olive); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.highlight-author time { margin-left: auto; color: var(--muted); font-size: 9px; white-space: nowrap; }
+.highlight-copy p { margin: 13px 0; color: #c6c7be; font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; white-space: pre-wrap; }
+.highlight-copy .detail-button { display: inline-block; margin-top: 12px; }
 .summary-strip { grid-template-columns: repeat(3, 1fr); margin: 0 0 30px; }
 .split-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 26px; }
 .table-title { margin-bottom: 12px; }
@@ -241,7 +255,7 @@ footer { padding: 28px clamp(22px, 5vw, 72px); border-top: 1px solid var(--line)
   .subsection-heading { margin-top: 26px; }
   .subsection-heading.spaced { margin-top: 38px; }
   .subsection-heading h3,.table-title { font-size: 21px; }
-  .card-grid,.feature-grid,.link-grid,.leaderboard-grid,.community-grid,.split-grid,.server-status-grid { grid-template-columns: 1fr; }
+  .card-grid,.feature-grid,.link-grid,.leaderboard-grid,.community-grid,.split-grid,.server-status-grid,.highlight-grid { grid-template-columns: 1fr; }
   .feature-card,.leader-card { min-height: 155px; padding: 18px; }
   .feature-card h3,.leader-card h3 { font-size: 24px; }
   .webhook-status-card,.webhook-card-content { min-height: 285px; }

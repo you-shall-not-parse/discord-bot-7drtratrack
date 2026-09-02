@@ -52,6 +52,11 @@ RAT_OF_THE_WEEK_ROLE_ID = 1461087295930106020
 SERVER_STATUS_CACHE_SECONDS = 45
 DASHBOARD_CACHE_SECONDS = 30
 DEFAULT_SERVER_STATUS_CHANNEL_IDS = "1441751747935735878"
+HIGHLIGHTS_CHANNEL_ID = 1097913605539774485
+HIGHLIGHTS_CACHE_SECONDS = 60
+HIGHLIGHTS_HISTORY_LIMIT = 100
+HIGHLIGHTS_MAX_POSTS = 30
+HIGHLIGHTS_MAX_MEDIA_PER_POST = 4
 EXTERNAL_LINKS = {
     "bifrost": "https://frostbite.bifrostgaming.com/hll/guilds/7DR",
     "history": "https://7drhistostats.hllfrontline.com/",
@@ -89,6 +94,8 @@ class FrontlineWeb:
         self._hllv_searches: dict[str, list[float]] = {}
         self._server_status_cache: tuple[float, list[dict[str, Any]]] = (0.0, [])
         self._server_status_lock = asyncio.Lock()
+        self._highlights_cache: tuple[float, list[dict[str, Any]]] = (0.0, [])
+        self._highlights_lock = asyncio.Lock()
         self._dashboard_cache: tuple[float, bytes | None] = (0.0, None)
         self._dashboard_cache_lock = asyncio.Lock()
 
@@ -148,6 +155,7 @@ class FrontlineWeb:
             "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; "
             f"script-src 'self'{turnstile_script}; {turnstile_frame}connect-src 'self'; "
             "img-src 'self' data: https://cdn.discordapp.com https://media.discordapp.net https://*.discordapp.net; "
+            "media-src 'self' https://cdn.discordapp.com https://media.discordapp.net https://*.discordapp.net; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
             "font-src 'self' https://fonts.gstatic.com"
         )
@@ -835,6 +843,108 @@ class FrontlineWeb:
             return candidate
         return ""
 
+    @staticmethod
+    def _attachment_media_kind(attachment) -> str:
+        content_type = str(getattr(attachment, "content_type", "") or "").casefold()
+        if content_type.startswith("image/"):
+            return "image"
+        if content_type.startswith("video/"):
+            return "video"
+        suffix = Path(str(getattr(attachment, "filename", "") or "")).suffix.casefold()
+        if suffix in {".jpg", ".jpeg", ".png", ".gif", ".webp"}:
+            return "image"
+        if suffix in {".mp4", ".webm", ".mov", ".m4v"}:
+            return "video"
+        return ""
+
+    @classmethod
+    def _highlight_from_message(cls, message, guild_id: int, channel_id: int) -> dict[str, Any] | None:
+        media: list[dict[str, Any]] = []
+        for attachment in list(getattr(message, "attachments", ()) or ()):
+            is_spoiler = getattr(attachment, "is_spoiler", None)
+            if callable(is_spoiler) and is_spoiler():
+                continue
+            kind = cls._attachment_media_kind(attachment)
+            if not kind:
+                continue
+            url = cls._discord_media_url(getattr(attachment, "url", None))
+            if not url:
+                continue
+            media.append(
+                {
+                    "kind": kind,
+                    "url": url,
+                    "content_type": str(getattr(attachment, "content_type", "") or "")[:100],
+                    "filename": str(getattr(attachment, "filename", "") or "Highlight")[:255],
+                    "width": int(getattr(attachment, "width", 0) or 0),
+                    "height": int(getattr(attachment, "height", 0) or 0),
+                }
+            )
+            if len(media) >= HIGHLIGHTS_MAX_MEDIA_PER_POST:
+                break
+        if not media:
+            return None
+
+        author = getattr(message, "author", None)
+        avatar = getattr(author, "display_avatar", None)
+        avatar_url = cls._discord_media_url(getattr(avatar, "url", None))
+        created_at = getattr(message, "created_at", None)
+        if not isinstance(created_at, datetime):
+            created_at = datetime.now(timezone.utc)
+        elif created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        message_id = int(getattr(message, "id", 0) or 0)
+        jump_url = str(getattr(message, "jump_url", "") or "")
+        if not jump_url and message_id:
+            jump_url = f"https://discord.com/channels/{guild_id}/{channel_id}/{message_id}"
+
+        caption = str(getattr(message, "clean_content", None) or getattr(message, "content", "") or "").strip()
+        return {
+            "id": str(message_id),
+            "author": str(getattr(author, "display_name", None) or getattr(author, "name", None) or "7DR member")[:80],
+            "author_avatar": avatar_url,
+            "caption": caption[:800],
+            "created_at": created_at.astimezone(timezone.utc).isoformat(),
+            "url": jump_url,
+            "media": media,
+        }
+
+    async def _read_discord_highlights(self) -> list[dict[str, Any]]:
+        channel = self.bot.get_channel(HIGHLIGHTS_CHANNEL_ID)
+        if channel is None:
+            channel = await self.bot.fetch_channel(HIGHLIGHTS_CHANNEL_ID)
+        history = getattr(channel, "history", None)
+        if not callable(history):
+            raise RuntimeError("the configured highlights channel has no message history")
+
+        guild = getattr(channel, "guild", None)
+        guild_id = int(getattr(guild, "id", MAIN_GUILD_ID) or MAIN_GUILD_ID)
+        posts: list[dict[str, Any]] = []
+        async for message in history(limit=HIGHLIGHTS_HISTORY_LIMIT):
+            post = self._highlight_from_message(message, guild_id, HIGHLIGHTS_CHANNEL_ID)
+            if post is not None:
+                posts.append(post)
+            if len(posts) >= HIGHLIGHTS_MAX_POSTS:
+                break
+        return posts
+
+    async def _highlights_payload(self) -> list[dict[str, Any]]:
+        cached_at, cached = self._highlights_cache
+        if time.monotonic() - cached_at < HIGHLIGHTS_CACHE_SECONDS:
+            return cached
+
+        async with self._highlights_lock:
+            cached_at, cached = self._highlights_cache
+            if time.monotonic() - cached_at < HIGHLIGHTS_CACHE_SECONDS:
+                return cached
+            try:
+                posts = await asyncio.wait_for(self._read_discord_highlights(), timeout=12)
+            except Exception as exc:
+                logger.warning("Could not read Discord highlights channel %s: %s", HIGHLIGHTS_CHANNEL_ID, exc)
+                return cached
+            self._highlights_cache = (time.monotonic(), posts)
+            return posts
+
     @classmethod
     def _discord_status_embed(cls, embed, *, content: str, updated_at: datetime) -> dict[str, Any]:
         def bounded(value: object, limit: int) -> str:
@@ -1004,6 +1114,7 @@ class FrontlineWeb:
             )
 
         server_status_task = asyncio.create_task(self._server_status_payload())
+        highlights_task = asyncio.create_task(self._highlights_payload())
         leaderboards_task = asyncio.create_task(asyncio.to_thread(self._read_leaderboards, guild))
 
         # The roll-call cog serialises workbook mutations with this lock. Reading under
@@ -1011,7 +1122,11 @@ class FrontlineWeb:
         async with rollcall._lock:
             rollcalls = await asyncio.to_thread(self._rollcall_payload, rollcall, guild)
         trainees = self._trainee_payload(trainee, guild)
-        server_status, leaderboards = await asyncio.gather(server_status_task, leaderboards_task)
+        server_status, highlights, leaderboards = await asyncio.gather(
+            server_status_task,
+            highlights_task,
+            leaderboards_task,
+        )
         war_diary = self.bot.get_cog("WarDiaryCog")
 
         return {
@@ -1019,6 +1134,7 @@ class FrontlineWeb:
             "guild": {"name": guild.name},
             "external_links": EXTERNAL_LINKS,
             "server_status": server_status,
+            "highlights": highlights,
             "events": self._event_payload(guild),
             "war_diary": self._war_diary_payload(war_diary),
             "leaderboards": leaderboards,
