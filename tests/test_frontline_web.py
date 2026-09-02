@@ -67,6 +67,8 @@ def test_frontend_assets_exist_and_are_wired() -> None:
     assert 'name="pin"' in login
     assert 'name="name"' in login
     assert 'maxlength="80"' in login
+    assert "admin PIN" not in login
+    assert "not required for admin" not in login
     assert "{{TURNSTILE_HEAD}}" in login
     assert "{{TURNSTILE_WIDGET}}" in login
     assert 'method="post" action="/login"' in login
