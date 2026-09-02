@@ -29,7 +29,7 @@ def test_frontend_assets_exist_and_are_wired() -> None:
 
     login = (FRONTEND_DIR / "login.html").read_text(encoding="utf-8")
 
-    assert '<link rel="stylesheet" href="/assets/app.css?v=11">' in index
+    assert '<link rel="stylesheet" href="/assets/app.css?v=12">' in index
     assert '<script defer src="/assets/app.js?v=9"></script>' in index
     assert 'src="/assets/emblem_7dr.png"' in index
     assert "7th Armoured Division" in index
@@ -74,6 +74,8 @@ def test_frontend_assets_exist_and_are_wired() -> None:
     assert "background-position: 72% center" in css
     assert "background-size: auto 100%" in css
     assert "background-attachment: fixed" not in css
+    assert "position: absolute; bottom: auto; height: 100svh" in css
+    assert "Matches, server activity, clan records and personnel readiness" not in index
 
 
 def test_optimized_war_diary_map_card_assets_exist() -> None:
