@@ -43,3 +43,18 @@ def test_rollcall_stores_formula_like_nickname_as_text() -> None:
     cell = worksheet.cell(row=row, column=2)
     assert cell.value == "'=HYPERLINK(\"https://example.com\")"
     assert cell.data_type == "s"
+
+
+def test_rollcall_html_uses_website_background_and_mobile_table_scroll() -> None:
+    worksheet = Workbook().active
+    worksheet.append(["User ID", "Nickname", "W36 07/09/2026"])
+    worksheet.append([123, "Active Member", "Present"])
+    guild = SimpleNamespace(get_member=lambda member_id: SimpleNamespace(roles=[]))
+    config = SimpleNamespace(title="Test Roll Call")
+    cog = object.__new__(RollCallCog)
+
+    rendered = cog._render_html(guild, worksheet, config, highlight_week="W36 07/09/2026")
+
+    assert "https://hllfrontlines.com/assets/website_backg.webp?v=1" in rendered
+    assert 'class="table-scroll"' in rendered
+    assert "background-attachment: scroll" in rendered

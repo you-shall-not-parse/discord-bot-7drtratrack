@@ -115,6 +115,18 @@ def test_pin_sessions_are_random_and_open_redirects_are_rejected(monkeypatch) ->
     assert service._sessions[token].claimed_name == "Example User"
 
 
+def test_report_pages_are_not_browser_cached() -> None:
+    service = FrontlineWeb(SimpleNamespace())
+
+    async def handler(_request):
+        return SimpleNamespace(headers={})
+
+    for path in ("/rollcalls/22nd", "/trainees/recruits"):
+        request = SimpleNamespace(secure=False, headers={}, path=path)
+        response = asyncio.run(service._security_headers(request, handler))
+        assert response.headers["Cache-Control"] == "no-store"
+
+
 def test_active_session_limit_rejects_login_until_sessions_expire(monkeypatch) -> None:
     now = 1_000
     monkeypatch.setattr("cogs.frontline_web.time.time", lambda: now)

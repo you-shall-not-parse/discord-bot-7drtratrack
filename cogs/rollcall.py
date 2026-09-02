@@ -1172,7 +1172,7 @@ class RollCallCog(commands.Cog):
 			display_col = (idx - 2) + 3
 			# nth-child is 1-based; td/th
 			nth = display_col + 1
-			highlight_css = f"th:nth-child({nth}), td:nth-child({nth}) {{ background: #fff7cc; }}"
+			highlight_css = f"th:nth-child({nth}), td:nth-child({nth}) {{ background: rgba(130, 139, 91, 0.42); }}"
 
 		return f"""<!doctype html>
 <html lang=\"en\">
@@ -1181,30 +1181,61 @@ class RollCallCog(commands.Cog):
   <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\" />
   <title>{html.escape(cfg.title)}</title>
   <style>
-	body {{ font-family: Arial, sans-serif; padding: 16px; }}
-	h1 {{ margin: 0 0 12px 0; }}
-	table {{ border-collapse: collapse; width: 100%; }}
-	th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
-	th {{ background: #f5f5f5; position: sticky; top: 0; }}
-	tr:nth-child(even) {{ background: #fafafa; }}
+	:root {{ color-scheme: dark; }}
+	* {{ box-sizing: border-box; }}
+	html {{ min-height: 100%; background: #11130e; }}
+	body {{
+	  min-height: 100vh;
+	  margin: 0;
+	  padding: 24px;
+	  color: #ece9dc;
+	  font-family: Arial, sans-serif;
+	  background: #11130e url("https://hllfrontlines.com/assets/website_backg.webp?v=1") center top / cover fixed no-repeat;
+	}}
+	body::before {{
+	  content: "";
+	  position: fixed;
+	  inset: 0;
+	  z-index: 0;
+	  pointer-events: none;
+	  background: rgba(13, 15, 10, 0.70);
+	}}
+	.page {{ position: relative; z-index: 1; max-width: 1800px; margin: 0 auto; }}
+	h1 {{ margin: 0 0 12px; color: #d7c46a; }}
+	h2 {{ color: #ddd5ad; }}
+	table {{ border-collapse: collapse; width: 100%; background: rgba(22, 25, 18, 0.88); }}
+	th, td {{ border: 1px solid rgba(215, 196, 106, 0.24); padding: 8px; text-align: left; }}
+	th {{ background: rgba(39, 43, 30, 0.97); color: #f2e9bd; position: sticky; top: 0; }}
+	tr:nth-child(even) {{ background: rgba(255, 255, 255, 0.035); }}
+	@media (max-width: 760px) {{
+	  body {{ padding: 10px; background-attachment: scroll; background-position: 72% top; background-size: auto 100svh; }}
+	  .table-scroll {{ overflow-x: auto; -webkit-overflow-scrolling: touch; }}
+	  th, td {{ padding: 7px; font-size: 0.85rem; white-space: nowrap; }}
+	}}
 	{highlight_css}
   </style>
 </head>
 <body>
+  <main class="page">
   <h1>{html.escape(cfg.title)}</h1>
 	  <p><strong>Flags:</strong> LEFT = left server; FORMER = former clan member</p>
   <p>Last updated: {datetime.utcnow().strftime('%d/%m/%Y %H:%M UTC')}</p>
 	  <h2>Roll call</h2>
+	  <div class="table-scroll">
 	  <table>
 	    <thead><tr>{head_html}</tr></thead>
 	    <tbody>{main_table}</tbody>
 	  </table>
+	  </div>
 
 	  <h2 style="margin-top: 24px;">Former members</h2>
+	  <div class="table-scroll">
 	  <table>
 	    <thead><tr>{head_html}</tr></thead>
 	    <tbody>{excluded_table}</tbody>
 	  </table>
+	  </div>
+  </main>
 </body>
 </html>"""
 

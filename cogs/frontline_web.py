@@ -153,7 +153,9 @@ class FrontlineWeb:
         )
         if request.secure or request.headers.get("X-Forwarded-Proto", "").casefold() == "https":
             response.headers["Strict-Transport-Security"] = "max-age=31536000"
-        if request.path.startswith(("/api/", "/exports/", "/admin")) or request.path == "/login":
+        if request.path.startswith(
+            ("/api/", "/exports/", "/admin", "/rollcalls/", "/trainees/")
+        ) or request.path == "/login":
             response.headers["Cache-Control"] = "no-store"
         return response
 
