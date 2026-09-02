@@ -29,7 +29,7 @@ def test_frontend_assets_exist_and_are_wired() -> None:
 
     login = (FRONTEND_DIR / "login.html").read_text(encoding="utf-8")
 
-    assert '<link rel="stylesheet" href="/assets/app.css?v=10">' in index
+    assert '<link rel="stylesheet" href="/assets/app.css?v=11">' in index
     assert '<script defer src="/assets/app.js?v=9"></script>' in index
     assert 'src="/assets/emblem_7dr.png"' in index
     assert "7th Armoured Division" in index
@@ -71,6 +71,9 @@ def test_frontend_assets_exist_and_are_wired() -> None:
     assert ".match-result-card" in css
     assert '["kofi", "Support us on Ko-fi"' in javascript
     assert 'url("/assets/website_backg.webp?v=1")' in css
+    assert "background-position: 72% center" in css
+    assert "background-size: auto 100%" in css
+    assert "background-attachment: fixed" not in css
 
 
 def test_optimized_war_diary_map_card_assets_exist() -> None:
