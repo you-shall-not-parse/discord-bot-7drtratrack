@@ -34,11 +34,11 @@ def test_frontend_assets_exist_and_are_wired() -> None:
 
     admin = (FRONTEND_DIR / "admin.html").read_text(encoding="utf-8")
 
-    assert '<link rel="stylesheet" href="/assets/app.css?v=14">' in index
-    assert '<link rel="stylesheet" href="/assets/app.css?v=14">' in login
-    assert '<link rel="stylesheet" href="/assets/app.css?v=14">' in report
-    assert '<link rel="stylesheet" href="/assets/app.css?v=14">' in admin
-    assert '<script defer src="/assets/app.js?v=10"></script>' in index
+    assert '<link rel="stylesheet" href="/assets/app.css?v=15">' in index
+    assert '<link rel="stylesheet" href="/assets/app.css?v=15">' in login
+    assert '<link rel="stylesheet" href="/assets/app.css?v=15">' in report
+    assert '<link rel="stylesheet" href="/assets/app.css?v=15">' in admin
+    assert '<script defer src="/assets/app.js?v=11"></script>' in index
     assert 'src="/assets/emblem_7dr.png"' in index
     assert "7th Armoured Division" in index
     assert "<dialog" not in index
@@ -51,6 +51,8 @@ def test_frontend_assets_exist_and_are_wired() -> None:
     assert 'data-view="overview"' in index
     assert 'data-view="server-status"' in index
     assert 'data-view="upcoming"' in index
+    assert 'id="event-view-toggle"' in index
+    assert 'id="event-calendar"' in index
     assert 'data-view="war-diary"' in index
     assert 'data-view="highlights"' in index
     assert 'id="highlight-grid"' in index
@@ -80,8 +82,14 @@ def test_frontend_assets_exist_and_are_wired() -> None:
     assert 'action="/logout"' in index
     assert "function resultCards(rows)" in javascript
     assert "function renderHighlights()" in javascript
+    assert "function renderEventCalendar(events)" in javascript
+    assert 'state.eventLayout === "calendar"' in javascript
+    assert ".calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr));" in css
+    assert ".calendar-day { min-height: 72px;" in css
     assert 'loading="lazy"' in javascript
     assert 'preload="metadata"' in javascript
+    assert "QuickTime .MOV video" in javascript
+    assert "Open original video" in javascript
     assert "statsDate(row.date, row.stats_url)" in javascript
     assert "data-map-image" in javascript
     assert ".summary-strip { grid-template-columns: repeat(3, 1fr);" in css

@@ -1,6 +1,6 @@
 const VIEWS = new Set(["overview", "personnel", "server-status", "upcoming", "war-diary", "highlights", "statistics", "directory"]);
 const requestedView = location.hash.replace(/^#/, "");
-const state = { data: null, view: VIEWS.has(requestedView) ? requestedView : "overview" };
+const state = { data: null, view: VIEWS.has(requestedView) ? requestedView : "overview", eventLayout: "list" };
 const $ = selector => document.querySelector(selector);
 
 const escapeHtml = value => String(value ?? "").replace(/[&<>'"]/g, character => ({
@@ -209,12 +209,69 @@ function renderTrainees() {
 }
 
 function renderEvents() {
-  $("#event-grid").innerHTML = state.data.events.map(event => `
+  const events = state.data.events || [];
+  $("#event-grid").innerHTML = events.map(event => `
     <article class="event-card">
       <time datetime="${escapeHtml(event.start_time)}"><strong>${escapeHtml(new Date(event.start_time).toLocaleDateString("en-GB", { day: "2-digit" }))}</strong><span>${escapeHtml(new Date(event.start_time).toLocaleDateString("en-GB", { month: "short" }))}</span></time>
       <div><span class="card-kicker">${event.status === "active" ? "LIVE NOW" : escapeHtml(formatDate(event.start_time))}</span><h3>${escapeHtml(event.name)}</h3><p>${event.location ? escapeHtml(event.location) : "Location TBC"}${event.interested ? ` · ${event.interested} interested` : ""}</p></div>
       ${externalLink(event.url, "Discord")}
     </article>`).join("") || emptyState("No upcoming Discord events are scheduled.");
+  $("#event-calendar").innerHTML = renderEventCalendar(events);
+  applyEventLayout();
+}
+
+function localDateKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function renderEventCalendar(events) {
+  if (!events.length) return emptyState("No upcoming Discord events are scheduled.");
+  const months = new Map();
+  events.forEach(event => {
+    const date = new Date(event.start_time);
+    if (Number.isNaN(date.getTime())) return;
+    const monthKey = `${date.getFullYear()}-${date.getMonth()}`;
+    if (!months.has(monthKey)) months.set(monthKey, { year: date.getFullYear(), month: date.getMonth(), events: [] });
+    months.get(monthKey).events.push({ ...event, date });
+  });
+  const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const todayKey = localDateKey(new Date());
+  return [...months.values()].map(group => {
+    const byDay = new Map();
+    group.events.forEach(event => {
+      const key = localDateKey(event.date);
+      if (!byDay.has(key)) byDay.set(key, []);
+      byDay.get(key).push(event);
+    });
+    const firstDay = new Date(group.year, group.month, 1);
+    const leadingBlanks = (firstDay.getDay() + 6) % 7;
+    const daysInMonth = new Date(group.year, group.month + 1, 0).getDate();
+    const cells = Array.from({ length: leadingBlanks }, () => '<div class="calendar-day outside" aria-hidden="true"></div>');
+    for (let day = 1; day <= daysInMonth; day += 1) {
+      const date = new Date(group.year, group.month, day);
+      const key = localDateKey(date);
+      const dayEvents = byDay.get(key) || [];
+      const eventLinks = dayEvents.map(event => {
+        const url = safeExternalUrl(event.url);
+        const label = `<time>${escapeHtml(event.date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }))}</time><span>${escapeHtml(event.name)}</span>`;
+        return url
+          ? `<a class="calendar-event${event.status === "active" ? " active" : ""}" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(event.name)}">${label}</a>`
+          : `<div class="calendar-event${event.status === "active" ? " active" : ""}" title="${escapeHtml(event.name)}">${label}</div>`;
+      }).join("");
+      cells.push(`<div class="calendar-day${key === todayKey ? " today" : ""}${dayEvents.length ? " has-events" : ""}"><span class="calendar-day-number">${day}</span><div class="calendar-day-events">${eventLinks}</div></div>`);
+    }
+    const trailingBlanks = (7 - ((leadingBlanks + daysInMonth) % 7)) % 7;
+    for (let blank = 0; blank < trailingBlanks; blank += 1) cells.push('<div class="calendar-day outside" aria-hidden="true"></div>');
+    return `<section class="calendar-month"><h3>${escapeHtml(firstDay.toLocaleDateString("en-GB", { month: "long", year: "numeric" }))}</h3><div class="calendar-grid"><div class="calendar-weekdays">${weekdays.map(day => `<span>${day}</span>`).join("")}</div>${cells.join("")}</div></section>`;
+  }).join("") || emptyState("No upcoming Discord events have valid dates.");
+}
+
+function applyEventLayout() {
+  const calendar = state.eventLayout === "calendar";
+  $("#event-grid").hidden = calendar;
+  $("#event-calendar").hidden = !calendar;
+  $("#event-view-toggle").textContent = calendar ? "Switch to list view" : "Switch to calendar view";
+  $("#event-view-toggle").setAttribute("aria-pressed", String(calendar));
 }
 
 function opponentTable(rows) {
@@ -255,10 +312,12 @@ function renderHighlights() {
       const url = safeDiscordMediaUrl(item.url);
       if (!url) return "";
       if (item.kind === "video") {
-        return `<video controls preload="metadata" playsinline aria-label="Video shared by ${author}">
+        const quickTime = String(item.content_type || "").toLowerCase().includes("quicktime") || /\.mov(?:$|\?)/i.test(url);
+        if (quickTime) return `<div class="video-fallback"><span>QuickTime .MOV video</span><small>This format may not play in your browser.</small><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open original video</a></div>`;
+        return `<div class="highlight-video"><video controls preload="metadata" playsinline aria-label="Video shared by ${author}">
           <source src="${escapeHtml(url)}"${item.content_type ? ` type="${escapeHtml(item.content_type)}"` : ""}>
           Your browser cannot play this video.
-        </video>`;
+        </video><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open video directly</a></div>`;
       }
       return `<img src="${escapeHtml(url)}" alt="${escapeHtml(item.filename || `Image shared by ${post.author || "7DR member"}`)}" loading="lazy" decoding="async">`;
     }).join("");
@@ -294,6 +353,11 @@ function showView(view, updateHash = true) {
 document.addEventListener("click", event => {
   const tab = event.target.closest(".tab");
   if (tab) showView(tab.dataset.view);
+});
+
+$("#event-view-toggle").addEventListener("click", () => {
+  state.eventLayout = state.eventLayout === "calendar" ? "list" : "calendar";
+  applyEventLayout();
 });
 
 $("#hllv-search-form").addEventListener("submit", async event => {
