@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/assets/app.css?v=6">
+  <link rel="stylesheet" href="/assets/app.css?v=13">
   {{TURNSTILE_HEAD}}
 </head>
 <body class="login-page">
@@ -19,11 +19,11 @@
       <img class="login-emblem" src="/assets/emblem_7dr.png" alt="7th Armoured Division emblem">
       <p class="eyebrow">RESTRICTED PERSONNEL SYSTEM</p>
       <h1>Frontline<br><em>access.</em></h1>
-      <p class="login-copy">Enter your name and the current 7th Armoured Division access PIN to continue.</p>
+      <p class="login-copy">Enter your name and the current 7th Armoured Division access PIN to continue. Administrators can use the admin PIN without a name.</p>
       <form class="login-form" method="post" action="/login">
         <input type="hidden" name="next" value="{{NEXT}}">
-        <label for="name">Your name</label>
-        <input id="name" name="name" type="text" minlength="1" maxlength="80" autocomplete="name" autofocus required>
+        <label for="name">Your name <span>(not required for admin)</span></label>
+        <input id="name" name="name" type="text" minlength="1" maxlength="80" autocomplete="name" autofocus>
         <label for="pin">Access PIN</label>
         <input id="pin" name="pin" type="password" minlength="8" maxlength="128" autocomplete="current-password" required>
         {{TURNSTILE_WIDGET}}

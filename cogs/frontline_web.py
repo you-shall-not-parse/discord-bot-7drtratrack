@@ -33,7 +33,10 @@ WEBSITE_BACKGROUND_PATH = Path(__file__).resolve().parent.parent / "data" / "web
 WEB_HOST = os.getenv("FRONTLINE_WEB_HOST", "127.0.0.1")
 WEB_PORT = int(os.getenv("FRONTLINE_WEB_PORT", "7020"))
 SESSION_COOKIE = "hll_frontline_session"
+ADMIN_SESSION_COOKIE = "hll_frontline_admin_session"
 SESSION_SECONDS = 24 * 60 * 60
+ADMIN_SESSION_SECONDS = 4 * 60 * 60
+ACTIVE_SESSION_WINDOW_SECONDS = 5 * 60
 MAX_ACTIVE_SESSIONS = 300
 LOGIN_WINDOW_SECONDS = 15 * 60
 LOGIN_MAX_FAILURES = 5
@@ -62,6 +65,7 @@ EXTERNAL_LINKS = {
 class WebSession:
     expires_at: int
     claimed_name: str
+    last_seen_at: int
 
 
 class FrontlineWeb:
@@ -72,6 +76,7 @@ class FrontlineWeb:
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
         self._app_pin = os.getenv("APPPIN", "")
+        self._admin_pin = os.getenv("FRONTLINE_ADMIN_PIN", "").strip()
         self._turnstile_site_key = TURNSTILE_SITE_KEY
         self._turnstile_secret_key = (
             os.getenv("TURNSTILE_SECRET", "").strip()
@@ -79,6 +84,7 @@ class FrontlineWeb:
         )
         self._turnstile_hostname = TURNSTILE_HOSTNAME
         self._sessions: dict[str, WebSession] = {}
+        self._admin_sessions: dict[str, int] = {}
         self._login_failures: dict[str, list[float]] = {}
         self._hllv_searches: dict[str, list[float]] = {}
         self._server_status_cache: tuple[float, list[dict[str, Any]]] = (0.0, [])
@@ -97,6 +103,8 @@ class FrontlineWeb:
         app.router.add_get("/login", self.login_page)
         app.router.add_post("/login", self.login)
         app.router.add_post("/logout", self.logout)
+        app.router.add_get("/admin", self.admin_page)
+        app.router.add_post("/admin/logout", self.admin_logout)
         app.router.add_get("/api/dashboard", self.dashboard)
         app.router.add_get("/api/hllv-search", self.hllv_search)
         app.router.add_get("/assets/maps/{filename}", self.map_asset)
@@ -145,7 +153,7 @@ class FrontlineWeb:
         )
         if request.secure or request.headers.get("X-Forwarded-Proto", "").casefold() == "https":
             response.headers["Strict-Transport-Security"] = "max-age=31536000"
-        if request.path.startswith(("/api/", "/exports/")) or request.path == "/login":
+        if request.path.startswith(("/api/", "/exports/", "/admin")) or request.path == "/login":
             response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -155,6 +163,10 @@ class FrontlineWeb:
             return web.Response(text="Not found.", status=404, content_type="text/plain")
         if request.path in {"/login", "/api/health"} or request.path.startswith("/assets/"):
             return await handler(request)
+        if request.path.startswith("/admin"):
+            if self._valid_admin_session(request.cookies.get(ADMIN_SESSION_COOKIE, "")):
+                return await handler(request)
+            return web.HTTPSeeOther(location="/login?next=%2Fadmin")
         if self._valid_session(request.cookies.get(SESSION_COOKIE, "")):
             return await handler(request)
         if request.path.startswith("/api/"):
@@ -203,6 +215,7 @@ class FrontlineWeb:
         self._sessions[token] = WebSession(
             expires_at=now + SESSION_SECONDS,
             claimed_name=claimed_name,
+            last_seen_at=now,
         )
         return token
 
@@ -212,6 +225,31 @@ class FrontlineWeb:
             return False
         if session.expires_at < int(time.time()):
             self._sessions.pop(token, None)
+            return False
+        now = int(time.time())
+        if session.last_seen_at != now:
+            self._sessions[token] = WebSession(
+                expires_at=session.expires_at,
+                claimed_name=session.claimed_name,
+                last_seen_at=now,
+            )
+        return True
+
+    def _new_admin_session(self) -> str:
+        now = int(time.time())
+        self._admin_sessions = {
+            token: expires_at for token, expires_at in self._admin_sessions.items() if expires_at >= now
+        }
+        token = secrets.token_urlsafe(32)
+        self._admin_sessions[token] = now + ADMIN_SESSION_SECONDS
+        return token
+
+    def _valid_admin_session(self, token: str) -> bool:
+        expires_at = self._admin_sessions.get(token)
+        if expires_at is None:
+            return False
+        if expires_at < int(time.time()):
+            self._admin_sessions.pop(token, None)
             return False
         return True
 
@@ -279,6 +317,8 @@ class FrontlineWeb:
         return self._valid_turnstile_result(result, self._turnstile_hostname)
 
     async def login_page(self, request: web.Request) -> web.Response:
+        if self._valid_admin_session(request.cookies.get(ADMIN_SESSION_COOKIE, "")):
+            return web.HTTPSeeOther(location="/admin")
         if self._valid_session(request.cookies.get(SESSION_COOKIE, "")):
             return web.HTTPSeeOther(location=self._safe_next(request.query.get("next")))
         return self._login_document(
@@ -299,20 +339,45 @@ class FrontlineWeb:
 
         form = await request.post()
         next_url = self._safe_next(str(form.get("next") or next_url))
+        supplied_pin = str(form.get("pin") or "")
         claimed_name = self._normalise_login_name(form.get("name"))
-        if claimed_name is None:
-            return web.HTTPSeeOther(location=f"/login?error=name&next={quote(next_url, safe='')}")
+        is_admin_login = bool(self._admin_pin) and hmac.compare_digest(
+            supplied_pin.encode("utf-8"), self._admin_pin.encode("utf-8")
+        )
+        is_user_login = hmac.compare_digest(supplied_pin.encode("utf-8"), self._app_pin.encode("utf-8"))
         if self._turnstile_enabled:
             turnstile_token = str(form.get("cf-turnstile-response") or "")
             if not await self._verify_turnstile(request, turnstile_token):
                 logger.warning(
                     "Rejected HLL Frontline login after failed Turnstile verification claimed_name=%r client_ip=%s",
-                    claimed_name,
+                    claimed_name or "Administrator",
                     self._client_key(request),
                 )
                 return web.HTTPSeeOther(location=f"/login?error=turnstile&next={quote(next_url, safe='')}")
-        supplied_pin = str(form.get("pin") or "")
-        if not hmac.compare_digest(supplied_pin.encode("utf-8"), self._app_pin.encode("utf-8")):
+
+        client_ip = self._client_key(request)
+        if is_admin_login:
+            self._login_failures.pop(client_ip, None)
+            logger.info("Successful HLL Frontline admin login client_ip=%s", client_ip)
+            response = web.HTTPSeeOther(location="/admin")
+            response.set_cookie(
+                ADMIN_SESSION_COOKIE,
+                self._new_admin_session(),
+                max_age=ADMIN_SESSION_SECONDS,
+                httponly=True,
+                secure=True,
+                samesite="Strict",
+                path="/",
+            )
+            return response
+
+        if claimed_name is None:
+            if not is_user_login:
+                self._login_failures.setdefault(client_ip, []).append(time.monotonic())
+                logger.warning("Rejected HLL Frontline PIN login without a valid name client_ip=%s", client_ip)
+                return web.HTTPSeeOther(location=f"/login?error=1&next={quote(next_url, safe='')}")
+            return web.HTTPSeeOther(location=f"/login?error=name&next={quote(next_url, safe='')}")
+        if not is_user_login:
             self._login_failures.setdefault(self._client_key(request), []).append(time.monotonic())
             logger.warning(
                 "Rejected HLL Frontline PIN login claimed_name=%r client_ip=%s",
@@ -321,7 +386,6 @@ class FrontlineWeb:
             )
             return web.HTTPSeeOther(location=f"/login?error=1&next={quote(next_url, safe='')}")
 
-        client_ip = self._client_key(request)
         self._login_failures.pop(client_ip, None)
         session_token = self._new_session(claimed_name)
         if session_token is None:
@@ -362,6 +426,67 @@ class FrontlineWeb:
         response = web.HTTPSeeOther(location="/login")
         response.del_cookie(SESSION_COOKIE, path="/")
         return response
+
+    async def admin_logout(self, request: web.Request) -> web.Response:
+        self._admin_sessions.pop(request.cookies.get(ADMIN_SESSION_COOKIE, ""), None)
+        response = web.HTTPSeeOther(location="/login")
+        response.del_cookie(ADMIN_SESSION_COOKIE, path="/")
+        return response
+
+    def _session_snapshot(self) -> tuple[int, int, list[WebSession]]:
+        now = int(time.time())
+        self._sessions = {
+            token: session for token, session in self._sessions.items() if session.expires_at >= now
+        }
+        sessions = sorted(
+            self._sessions.values(),
+            key=lambda session: (-session.last_seen_at, session.claimed_name.casefold()),
+        )
+        active_count = sum(now - session.last_seen_at <= ACTIVE_SESSION_WINDOW_SECONDS for session in sessions)
+        unique_names = len({session.claimed_name.casefold() for session in sessions})
+        return active_count, unique_names, sessions
+
+    async def admin_page(self, _request: web.Request) -> web.Response:
+        path = FRONTEND_DIR / "admin.html"
+        if not path.is_file():
+            raise web.HTTPNotFound(text="Admin frontend is missing.")
+
+        active_count, unique_names, sessions = self._session_snapshot()
+        now = int(time.time())
+        rows = []
+        for session in sessions:
+            seconds_ago = max(0, now - session.last_seen_at)
+            if seconds_ago < 60:
+                last_seen = "Just now"
+            elif seconds_ago < 3600:
+                last_seen = f"{seconds_ago // 60}m ago"
+            else:
+                last_seen = f"{seconds_ago // 3600}h ago"
+            expires = datetime.fromtimestamp(session.expires_at, timezone.utc).strftime("%d/%m/%y %H:%M UTC")
+            status = "Active" if seconds_ago <= ACTIVE_SESSION_WINDOW_SECONDS else "Idle"
+            rows.append(
+                "<tr>"
+                f"<td>{html.escape(session.claimed_name)}</td>"
+                f'<td><span class="session-state {status.casefold()}">{status}</span></td>'
+                f"<td>{last_seen}</td>"
+                f"<td>{expires}</td>"
+                "</tr>"
+            )
+        if not rows:
+            rows.append('<tr><td class="admin-empty" colspan="4">No user sessions are currently logged in.</td></tr>')
+
+        document = path.read_text(encoding="utf-8")
+        replacements = {
+            "{{ACTIVE_COUNT}}": str(active_count),
+            "{{SESSION_COUNT}}": str(len(sessions)),
+            "{{UNIQUE_NAMES}}": str(unique_names),
+            "{{SESSION_LIMIT}}": str(MAX_ACTIVE_SESSIONS),
+            "{{SESSION_ROWS}}": "".join(rows),
+            "{{UPDATED_AT}}": datetime.now(timezone.utc).strftime("%d/%m/%y %H:%M:%S UTC"),
+        }
+        for placeholder, value in replacements.items():
+            document = document.replace(placeholder, value)
+        return web.Response(text=document, content_type="text/html", charset="utf-8")
 
     def _login_document(self, *, next_url: str, error_code: str, status: int = 200) -> web.Response:
         path = FRONTEND_DIR / "login.html"

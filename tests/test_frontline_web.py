@@ -6,6 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from cogs.frontline_web import (
+    ACTIVE_SESSION_WINDOW_SECONDS,
+    ADMIN_SESSION_COOKIE,
     DASHBOARD_CACHE_SECONDS,
     EXTERNAL_LINKS,
     FRONTEND_DIR,
@@ -29,7 +31,12 @@ def test_frontend_assets_exist_and_are_wired() -> None:
 
     login = (FRONTEND_DIR / "login.html").read_text(encoding="utf-8")
 
-    assert '<link rel="stylesheet" href="/assets/app.css?v=12">' in index
+    admin = (FRONTEND_DIR / "admin.html").read_text(encoding="utf-8")
+
+    assert '<link rel="stylesheet" href="/assets/app.css?v=13">' in index
+    assert '<link rel="stylesheet" href="/assets/app.css?v=13">' in login
+    assert '<link rel="stylesheet" href="/assets/app.css?v=13">' in report
+    assert '<link rel="stylesheet" href="/assets/app.css?v=13">' in admin
     assert '<script defer src="/assets/app.js?v=9"></script>' in index
     assert 'src="/assets/emblem_7dr.png"' in index
     assert "7th Armoured Division" in index
@@ -63,6 +70,8 @@ def test_frontend_assets_exist_and_are_wired() -> None:
     assert "{{TURNSTILE_HEAD}}" in login
     assert "{{TURNSTILE_WIDGET}}" in login
     assert 'method="post" action="/login"' in login
+    assert 'method="post" action="/admin/logout"' in admin
+    assert 'name="name" type="text" minlength="1" maxlength="80" autocomplete="name" autofocus>' in login
     assert 'action="/logout"' in index
     assert "function resultCards(rows)" in javascript
     assert "statsDate(row.date, row.stats_url)" in javascript
@@ -141,6 +150,71 @@ def test_login_returns_capacity_page_when_session_limit_is_reached(monkeypatch) 
     assert response.status == 503
     assert b"limit of 300 active logins" in response.body
     assert len(service._sessions) == MAX_ACTIVE_SESSIONS
+
+
+def test_admin_pin_opens_admin_without_using_a_user_session(monkeypatch) -> None:
+    monkeypatch.setenv("APPPIN", "a-long-test-pin")
+    monkeypatch.setenv("FRONTLINE_ADMIN_PIN", "crumpadmin!")
+    monkeypatch.delenv("TURNSTILE_SECRET", raising=False)
+    monkeypatch.delenv("TURNSTILE_SECRET_KEY", raising=False)
+    service = FrontlineWeb(SimpleNamespace())
+
+    async def post() -> dict[str, str]:
+        return {"name": "", "pin": "crumpadmin!", "next": "/"}
+
+    request = SimpleNamespace(query={}, headers={}, remote="192.0.2.1", post=post)
+    response = asyncio.run(service.login(request))
+
+    assert response.status == 303
+    assert response.headers["Location"] == "/admin"
+    assert ADMIN_SESSION_COOKIE in response.cookies
+    assert not service._sessions
+    assert len(service._admin_sessions) == 1
+
+
+def test_admin_page_reports_activity_and_escapes_claimed_names(monkeypatch) -> None:
+    now = 1_000
+    monkeypatch.setattr("cogs.frontline_web.time.time", lambda: now)
+    service = FrontlineWeb(SimpleNamespace())
+    unsafe_token = service._new_session("<script>alert(1)</script>")
+    active_token = service._new_session("Active User")
+    assert unsafe_token is not None and active_token is not None
+
+    now += ACTIVE_SESSION_WINDOW_SECONDS + 1
+    assert service._valid_session(active_token)
+    response = asyncio.run(service.admin_page(None))
+    document = response.text
+
+    assert "<strong>1</strong><small>Active now</small>" in document
+    assert "<strong>2</strong><small>Logged-in sessions</small>" in document
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in document
+    assert "<script>alert(1)</script>" not in document
+
+
+def test_admin_route_requires_a_separate_admin_session() -> None:
+    service = FrontlineWeb(SimpleNamespace())
+    calls = 0
+
+    async def handler(_request):
+        nonlocal calls
+        calls += 1
+        return "allowed"
+
+    anonymous = SimpleNamespace(raw_path="/admin", path="/admin", cookies={}, rel_url="/admin")
+    denied = asyncio.run(service._pin_auth(anonymous, handler))
+    assert denied.status == 303
+    assert denied.headers["Location"] == "/login?next=/admin"
+    assert calls == 0
+
+    token = service._new_admin_session()
+    authorised = SimpleNamespace(
+        raw_path="/admin",
+        path="/admin",
+        cookies={ADMIN_SESSION_COOKIE: token},
+        rel_url="/admin",
+    )
+    assert asyncio.run(service._pin_auth(authorised, handler)) == "allowed"
+    assert calls == 1
 
 
 def test_dashboard_payload_is_cached_for_30_seconds(monkeypatch) -> None:

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#151711">
+  <meta name="robots" content="noindex, nofollow">
+  <meta http-equiv="refresh" content="30">
+  <title>Session Control — HLL Frontline</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/app.css?v=13">
+</head>
+<body>
+  <div class="grain" aria-hidden="true"></div>
+  <header class="topbar">
+    <a class="brand" href="/admin">
+      <img class="brand-mark" src="/assets/emblem_7dr.png" alt="7th Armoured Division emblem">
+      <span><b>HLL</b> CONTROL<small>SESSION ADMINISTRATION</small></span>
+    </a>
+    <form method="post" action="/admin/logout"><button class="logout-button" type="submit">Admin logout</button></form>
+  </header>
+
+  <main class="admin-main">
+    <section class="admin-heading">
+      <div><p class="eyebrow">RESTRICTED CONTROL PANEL</p><h1>Active<br><em>logins.</em></h1></div>
+      <p>Active means the session accessed the website during the last five minutes. This page refreshes every 30 seconds.</p>
+    </section>
+
+    <section class="stats admin-stats" aria-label="Session totals">
+      <div class="stat"><strong>{{ACTIVE_COUNT}}</strong><small>Active now</small></div>
+      <div class="stat"><strong>{{SESSION_COUNT}}</strong><small>Logged-in sessions</small></div>
+      <div class="stat"><strong>{{UNIQUE_NAMES}}</strong><small>Unique names</small></div>
+      <div class="stat"><strong>{{SESSION_LIMIT}}</strong><small>Session limit</small></div>
+    </section>
+
+    <section class="admin-sessions">
+      <div class="subsection-heading"><h3>User sessions</h3><span>Updated {{UPDATED_AT}}</span></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Claimed name</th><th>Status</th><th>Last seen</th><th>Expires</th></tr></thead>
+          <tbody>{{SESSION_ROWS}}</tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
