@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "liberationapp" / "frontend"
 CLAN_EMBLEM_PATH = Path(__file__).resolve().parent.parent / "data" / "emblem_7dr.png"
+MAP_IMAGES_DIR = Path(__file__).resolve().parent.parent / "data" / "map_images"
 WEB_HOST = os.getenv("FRONTLINE_WEB_HOST", "127.0.0.1")
 WEB_PORT = int(os.getenv("FRONTLINE_WEB_PORT", "7020"))
 SESSION_COOKIE = "hll_frontline_session"
@@ -96,6 +97,7 @@ class FrontlineWeb:
         app.router.add_post("/logout", self.logout)
         app.router.add_get("/api/dashboard", self.dashboard)
         app.router.add_get("/api/hllv-search", self.hllv_search)
+        app.router.add_get("/assets/maps/{filename}", self.map_asset)
         app.router.add_get("/assets/{filename}", self.asset)
         app.router.add_get("/exports/rollcalls/{key}.html", self.rollcall_html_export)
         app.router.add_get("/exports/rollcalls/{key}.xlsx", self.rollcall_excel_export)
@@ -479,7 +481,9 @@ class FrontlineWeb:
     @staticmethod
     def _war_diary_payload(cog) -> dict[str, Any]:
         if cog is None:
-            return {"summary": {"played": 0, "wins": 0, "losses": 0, "draws": 0}, "opponents": [], "recent": []}
+            return {"summary": {"played": 0, "wins": 0, "losses": 0}, "opponents": [], "recent": []}
+
+        from cogs.wardiary import WAR_DIARY_MAP_IMAGE_FILES, _normalize_stats_link
 
         matches: list[dict[str, Any]] = []
         opponents: dict[str, dict[str, Any]] = {}
@@ -502,11 +506,23 @@ class FrontlineWeb:
             )
             record["played"] += 1
             record[{"win": "wins", "loss": "losses", "draw": "draws"}[outcome]] += 1
+            map_name = str(raw.get("map_name") or "Unknown")
+            source_map_filename = WAR_DIARY_MAP_IMAGE_FILES.get(map_name, "")
+            map_filename = Path(source_map_filename).with_suffix(".webp").name if source_map_filename else ""
+            try:
+                stats_url = _normalize_stats_link(str(raw.get("stats_link") or "")) or ""
+            except ValueError:
+                stats_url = ""
+            parsed_stats_url = urlparse(stats_url)
+            if parsed_stats_url.scheme != "https" or not parsed_stats_url.hostname:
+                stats_url = ""
             matches.append(
                 {
                     "opponent": opponent,
                     "date": str(raw.get("match_date") or ""),
-                    "map": str(raw.get("map_name") or "Unknown"),
+                    "map": map_name,
+                    "map_image": f"/assets/maps/{quote(map_filename, safe='')}" if map_filename else "",
+                    "stats_url": stats_url,
                     "score": display_score,
                     "outcome": outcome,
                 }
@@ -524,9 +540,8 @@ class FrontlineWeb:
         opponent_rows = sorted(opponents.values(), key=lambda row: (-row["played"], row["name"].casefold()))
         wins = sum(match["outcome"] == "win" for match in matches)
         losses = sum(match["outcome"] == "loss" for match in matches)
-        draws = sum(match["outcome"] == "draw" for match in matches)
         return {
-            "summary": {"played": len(matches), "wins": wins, "losses": losses, "draws": draws},
+            "summary": {"played": len(matches), "wins": wins, "losses": losses},
             "opponents": opponent_rows,
             "recent": matches,
         }
@@ -1095,6 +1110,18 @@ class FrontlineWeb:
             path = FRONTEND_DIR / filename
         else:
             raise web.HTTPNotFound()
+        if not path.is_file():
+            raise web.HTTPNotFound()
+        return web.FileResponse(path)
+
+    async def map_asset(self, request: web.Request) -> web.StreamResponse:
+        from cogs.wardiary import WAR_DIARY_MAP_IMAGE_FILES
+
+        filename = request.match_info["filename"]
+        allowed_filenames = {Path(value).with_suffix(".webp").name for value in WAR_DIARY_MAP_IMAGE_FILES.values()}
+        if filename not in allowed_filenames:
+            raise web.HTTPNotFound()
+        path = MAP_IMAGES_DIR / filename
         if not path.is_file():
             raise web.HTTPNotFound()
         return web.FileResponse(path)

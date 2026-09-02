@@ -7,11 +7,13 @@ from types import SimpleNamespace
 from cogs.frontline_web import (
     DASHBOARD_CACHE_SECONDS,
     FRONTEND_DIR,
+    MAP_IMAGES_DIR,
     MAX_ACTIVE_SESSIONS,
     SESSION_SECONDS,
     TURNSTILE_SITE_KEY,
     FrontlineWeb,
 )
+from cogs.wardiary import WAR_DIARY_MAP_IMAGE_FILES
 from config import WEB_LOG_PATH
 
 
@@ -24,8 +26,8 @@ def test_frontend_assets_exist_and_are_wired() -> None:
 
     login = (FRONTEND_DIR / "login.html").read_text(encoding="utf-8")
 
-    assert '<link rel="stylesheet" href="/assets/app.css?v=8">' in index
-    assert '<script defer src="/assets/app.js?v=7"></script>' in index
+    assert '<link rel="stylesheet" href="/assets/app.css?v=9">' in index
+    assert '<script defer src="/assets/app.js?v=8"></script>' in index
     assert 'src="/assets/emblem_7dr.png"' in index
     assert "7th Armoured Division" in index
     assert "<dialog" not in index
@@ -59,6 +61,18 @@ def test_frontend_assets_exist_and_are_wired() -> None:
     assert "{{TURNSTILE_WIDGET}}" in login
     assert 'method="post" action="/login"' in login
     assert 'action="/logout"' in index
+    assert "function resultCards(rows)" in javascript
+    assert "statsDate(row.date, row.stats_url)" in javascript
+    assert "data-map-image" in javascript
+    assert ".summary-strip { grid-template-columns: repeat(3, 1fr);" in css
+    assert ".match-result-card" in css
+
+
+def test_optimized_war_diary_map_card_assets_exist() -> None:
+    paths = [MAP_IMAGES_DIR / Path(filename).with_suffix(".webp") for filename in WAR_DIARY_MAP_IMAGE_FILES.values()]
+
+    assert all(path.is_file() for path in paths)
+    assert sum(path.stat().st_size for path in paths) < 2 * 1024 * 1024
 
 
 def test_pin_sessions_are_random_and_open_redirects_are_rejected(monkeypatch) -> None:
@@ -268,17 +282,34 @@ def test_dashboard_event_payload_only_includes_current_upcoming_events() -> None
 def test_war_diary_builds_overall_and_opponent_records() -> None:
     cog = SimpleNamespace(
         _get_match_records=lambda: [
-            {"opponent_clan_name": "Example", "match_date": "01/09/26", "map_name": "Carentan", "result": "5-2"},
-            {"opponent_clan_name": "example", "match_date": "02/09/26", "map_name": "Kharkov", "result": "1-3"},
+            {
+                "opponent_clan_name": "Example",
+                "match_date": "01/09/26",
+                "map_name": "Carentan",
+                "stats_link": "https://stats.example.test/games/123",
+                "result": "5-2",
+            },
+            {
+                "opponent_clan_name": "example",
+                "match_date": "02/09/26",
+                "map_name": "Kharkov",
+                "stats_link": "javascript:alert(1)",
+                "result": "1-3",
+            },
             {"opponent_clan_name": "Another", "match_date": "03/09/26", "map_name": "Omaha", "result": "3-3"},
         ]
     )
 
     payload = FrontlineWeb._war_diary_payload(cog)
 
-    assert payload["summary"] == {"played": 3, "wins": 1, "losses": 1, "draws": 1}
+    assert payload["summary"] == {"played": 3, "wins": 1, "losses": 1}
     assert payload["opponents"][0] == {"name": "Example", "played": 2, "wins": 1, "losses": 1, "draws": 0}
     assert payload["recent"][0]["opponent"] == "Another"
+    carentan = next(match for match in payload["recent"] if match["map"] == "Carentan")
+    kharkov = next(match for match in payload["recent"] if match["map"] == "Kharkov")
+    assert carentan["map_image"] == "/assets/maps/Carentan.webp"
+    assert carentan["stats_url"] == "https://stats.example.test/games/123"
+    assert kharkov["stats_url"] == ""
 
 
 def test_war_diary_returns_every_match_and_keeps_legacy_outcomes() -> None:

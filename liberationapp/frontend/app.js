@@ -32,6 +32,27 @@ function externalLink(url, label, className = "detail-button") {
     : "";
 }
 
+function statsDate(value, statsUrl) {
+  const label = escapeHtml(value || "—");
+  const safeUrl = safeExternalUrl(statsUrl);
+  return safeUrl
+    ? `<a class="match-date" href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer" title="Open match stats">${label}</a>`
+    : `<span class="match-date">${label}</span>`;
+}
+
+function applyMapBackgrounds() {
+  document.querySelectorAll("[data-map-image]").forEach(card => {
+    try {
+      const url = new URL(card.dataset.mapImage, location.origin);
+      if (url.origin === location.origin && url.pathname.startsWith("/assets/maps/")) {
+        card.style.backgroundImage = `url("${url.href.replace(/["\\]/g, "")}")`;
+      }
+    } catch {
+      // Keep the card's fallback gradient when an image URL is invalid.
+    }
+  });
+}
+
 function formatDate(value, options = {}) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "Date TBC" : date.toLocaleString("en-GB", {
@@ -95,6 +116,7 @@ function render() {
   renderEvents();
   renderWarDiary();
   renderLeaderboards();
+  applyMapBackgrounds();
   showView(state.view, false);
 }
 
@@ -109,9 +131,9 @@ function renderOverview() {
 
   const lastResult = state.data.war_diary.recent[0];
   const resultCard = lastResult ? `
-    <article class="feature-card latest-result-card">
+    <article class="feature-card latest-result-card"${lastResult.map_image ? ` data-map-image="${escapeHtml(lastResult.map_image)}"` : ""}>
       <span class="card-kicker">LATEST WAR-DIARY RESULT</span><h3>7DR ${escapeHtml(lastResult.score)} ${escapeHtml(lastResult.opponent)}</h3>
-      <p>${escapeHtml(lastResult.date || "Date unavailable")} · ${escapeHtml(lastResult.map)}</p>
+      <p>${statsDate(lastResult.date || "Date unavailable", lastResult.stats_url)} · ${escapeHtml(lastResult.map)}</p>
       <span class="result ${escapeHtml(lastResult.outcome)}">${escapeHtml(lastResult.outcome)}</span>
     </article>` : `<article class="feature-card"><span class="card-kicker">LATEST WAR-DIARY RESULT</span><h3>No result recorded</h3><p>The latest submitted match will appear here.</p></article>`;
 
@@ -192,25 +214,34 @@ function renderEvents() {
     </article>`).join("") || emptyState("No upcoming Discord events are scheduled.");
 }
 
-function resultTable(rows, opponentMode = false) {
+function opponentTable(rows) {
   if (!rows.length) return emptyState("No recorded results yet.");
-  const body = rows.map(row => opponentMode
-    ? `<tr><td>${escapeHtml(row.name)}</td><td>${row.played}</td><td>${row.wins}</td><td>${row.losses}</td><td>${row.draws}</td></tr>`
-    : `<tr><td>${escapeHtml(row.date || "—")}</td><td>${escapeHtml(row.opponent)}</td><td>${escapeHtml(row.map)}</td><td><span class="result ${escapeHtml(row.outcome)}">${escapeHtml(row.score)}</span></td></tr>`).join("");
-  const headers = opponentMode ? ["Opponent", "P", "W", "L", "D"] : ["Date", "Opponent", "Map", "Result"];
+  const body = rows.map(row => `<tr><td>${escapeHtml(row.name)}</td><td>${row.played}</td><td>${row.wins}</td><td>${row.losses}</td></tr>`).join("");
+  const headers = ["Opponent", "P", "W", "L"];
   return `<div class="table-wrap"><table><thead><tr>${headers.map(header => `<th>${header}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
+function resultCards(rows) {
+  if (!rows.length) return emptyState("No recorded results yet.");
+  return `<div class="match-result-grid">${rows.map(row => `
+    <article class="match-result-card"${row.map_image ? ` data-map-image="${escapeHtml(row.map_image)}"` : ""}>
+      <div class="match-result-content">
+        <div class="match-result-top">${statsDate(row.date, row.stats_url)}<span class="result ${escapeHtml(row.outcome)}">${escapeHtml(row.outcome)}</span></div>
+        <h4><span>7DR</span> ${escapeHtml(row.score)} ${escapeHtml(row.opponent)}</h4>
+        <small>${escapeHtml(row.map)}</small>
+      </div>
+    </article>`).join("")}</div>`;
 }
 
 function renderWarDiary() {
   const diary = state.data.war_diary;
-  $("#war-record").textContent = `${diary.summary.wins}W · ${diary.summary.losses}L · ${diary.summary.draws}D`;
+  $("#war-record").textContent = `${diary.summary.wins}W · ${diary.summary.losses}L`;
   $("#war-summary").innerHTML = `
     <div class="stat"><strong>${diary.summary.played}</strong><small>Played</small></div>
     <div class="stat"><strong>${diary.summary.wins}</strong><small>Wins</small></div>
-    <div class="stat"><strong>${diary.summary.losses}</strong><small>Losses</small></div>
-    <div class="stat"><strong>${diary.summary.draws}</strong><small>Draws</small></div>`;
-  $("#recent-results").innerHTML = resultTable(diary.recent);
-  $("#opponent-records").innerHTML = resultTable(diary.opponents, true);
+    <div class="stat"><strong>${diary.summary.losses}</strong><small>Losses</small></div>`;
+  $("#recent-results").innerHTML = resultCards(diary.recent);
+  $("#opponent-records").innerHTML = opponentTable(diary.opponents);
 }
 
 function renderLeaderboards() {
