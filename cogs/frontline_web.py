@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "liberationapp" / "frontend"
 CLAN_EMBLEM_PATH = Path(__file__).resolve().parent.parent / "data" / "emblem_7dr.png"
 MAP_IMAGES_DIR = Path(__file__).resolve().parent.parent / "data" / "map_images"
+WEBSITE_BACKGROUND_PATH = Path(__file__).resolve().parent.parent / "data" / "website_backg.webp"
 WEB_HOST = os.getenv("FRONTLINE_WEB_HOST", "127.0.0.1")
 WEB_PORT = int(os.getenv("FRONTLINE_WEB_PORT", "7020"))
 SESSION_COOKIE = "hll_frontline_session"
@@ -51,6 +52,7 @@ DEFAULT_SERVER_STATUS_CHANNEL_IDS = "1441751747935735878"
 EXTERNAL_LINKS = {
     "bifrost": "https://frostbite.bifrostgaming.com/hll/guilds/7DR",
     "history": "https://7drhistostats.hllfrontline.com/",
+    "kofi": "https://ko-fi.com/7tharmoureddivisonclan",
     "merch": "https://7dr-hll-merch.myshopify.com/",
     "twitch": os.getenv("FRONTLINE_TWITCH_URL", "").strip(),
 }
@@ -1116,6 +1118,8 @@ class FrontlineWeb:
         filename = request.match_info["filename"]
         if filename == "emblem_7dr.png":
             path = CLAN_EMBLEM_PATH
+        elif filename == "website_backg.webp":
+            path = WEBSITE_BACKGROUND_PATH
         elif filename in {"app.css", "app.js", "report.js"}:
             path = FRONTEND_DIR / filename
         else:

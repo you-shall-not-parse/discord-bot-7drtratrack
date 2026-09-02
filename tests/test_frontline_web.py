@@ -7,11 +7,13 @@ from types import SimpleNamespace
 
 from cogs.frontline_web import (
     DASHBOARD_CACHE_SECONDS,
+    EXTERNAL_LINKS,
     FRONTEND_DIR,
     MAP_IMAGES_DIR,
     MAX_ACTIVE_SESSIONS,
     SESSION_SECONDS,
     TURNSTILE_SITE_KEY,
+    WEBSITE_BACKGROUND_PATH,
     FrontlineWeb,
 )
 from cogs.wardiary import WAR_DIARY_MAP_IMAGE_FILES
@@ -27,8 +29,8 @@ def test_frontend_assets_exist_and_are_wired() -> None:
 
     login = (FRONTEND_DIR / "login.html").read_text(encoding="utf-8")
 
-    assert '<link rel="stylesheet" href="/assets/app.css?v=9">' in index
-    assert '<script defer src="/assets/app.js?v=8"></script>' in index
+    assert '<link rel="stylesheet" href="/assets/app.css?v=10">' in index
+    assert '<script defer src="/assets/app.js?v=9"></script>' in index
     assert 'src="/assets/emblem_7dr.png"' in index
     assert "7th Armoured Division" in index
     assert "<dialog" not in index
@@ -67,6 +69,8 @@ def test_frontend_assets_exist_and_are_wired() -> None:
     assert "data-map-image" in javascript
     assert ".summary-strip { grid-template-columns: repeat(3, 1fr);" in css
     assert ".match-result-card" in css
+    assert '["kofi", "Support us on Ko-fi"' in javascript
+    assert 'url("/assets/website_backg.webp?v=1")' in css
 
 
 def test_optimized_war_diary_map_card_assets_exist() -> None:
@@ -74,6 +78,13 @@ def test_optimized_war_diary_map_card_assets_exist() -> None:
 
     assert all(path.is_file() for path in paths)
     assert sum(path.stat().st_size for path in paths) < 2 * 1024 * 1024
+
+
+def test_quick_link_and_optimized_website_background_are_configured() -> None:
+    assert EXTERNAL_LINKS["kofi"] == "https://ko-fi.com/7tharmoureddivisonclan"
+    assert WEBSITE_BACKGROUND_PATH.is_file()
+    assert WEBSITE_BACKGROUND_PATH.suffix == ".webp"
+    assert WEBSITE_BACKGROUND_PATH.stat().st_size < 200 * 1024
 
 
 def test_pin_sessions_are_random_and_open_redirects_are_rejected(monkeypatch) -> None:

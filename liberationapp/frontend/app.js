@@ -144,6 +144,7 @@ function renderOverview() {
   const links = [
     ["history", "Historical stats", "Browse previous HLL server matches"],
     ["bifrost", "7DR on Bifrost", "Open the external clan leaderboard"],
+    ["kofi", "Support us on Ko-fi", "Help support the 7th Armoured Division"],
     ["merch", "7DR merch", "Visit the clan merchandise store"],
     ["twitch", "7DR Twitch", "Watch clan live streams"]
   ];
