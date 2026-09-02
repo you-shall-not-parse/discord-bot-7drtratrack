@@ -22,6 +22,10 @@ ADMIN_ROLE_IDS = {
     1097946543065137183,
 }
 
+# Historical submissions stay stored, but departed members and current
+# community-only members are omitted from the Discord leaderboard.
+LEADERBOARD_EXCLUDED_ROLE_NAMES = frozenset({"blueberry", "diplomat"})
+
 DB_FILE = data_path("leaderboard.db")
 
 # Minutes allowed to provide a screenshot when one is required
@@ -82,6 +86,15 @@ class HLLInfLeaderboard(commands.Cog):
         self._view_registered = False  # persistent view registered once
         self._cleanup_started = False  # start proof cleanup loop once
 
+    @staticmethod
+    def _is_leaderboard_eligible(member) -> bool:
+        if member is None:
+            return False
+        return not any(
+            str(getattr(role, "name", "")).strip().casefold() in LEADERBOARD_EXCLUDED_ROLE_NAMES
+            for role in getattr(member, "roles", ())
+        )
+
     async def _get_channel(self, channel_id: int):
         """Try cache first, then API as a fallback."""
         channel = self.bot.get_channel(channel_id)
@@ -135,6 +148,7 @@ class HLLInfLeaderboard(commands.Cog):
         )
         # Add descriptive text under the title
         embed.description = LEADERBOARD_DESCRIPTION_MONTHLY if monthly else LEADERBOARD_DESCRIPTION
+        guild = self.bot.get_guild(GUILD_ID)
 
         async with aiosqlite.connect(DB_FILE) as db:
             for stat in STATS:
@@ -162,7 +176,6 @@ class HLLInfLeaderboard(commands.Cog):
                     SELECT user_id, best, first_achieved_at
                     FROM achieved
                     ORDER BY best DESC, first_achieved_at ASC, user_id ASC
-                    LIMIT 5
                     """
                     params = (stat, start_month, stat, start_month)
                 else:
@@ -187,29 +200,28 @@ class HLLInfLeaderboard(commands.Cog):
                     SELECT user_id, best, first_achieved_at
                     FROM achieved
                     ORDER BY best DESC, first_achieved_at ASC, user_id ASC
-                    LIMIT 5
                     """
                     params = (stat, stat)
 
                 cursor = await db.execute(query, params)
                 rows = await cursor.fetchall()
 
-                if rows:
-                    lines = []
-                    for idx, (user_id, best, first_achieved_at) in enumerate(rows, 1):
-                        user = self.bot.get_user(user_id)
-                        name = user.mention if user else f"<@{user_id}>"
-                        achieved_str = ""
-                        if first_achieved_at:
-                            try:
-                                dt = datetime.datetime.fromisoformat(first_achieved_at)
-                                achieved_str = f" ({dt.strftime('%d/%m/%y')})"
-                            except Exception:
-                                pass
-                        lines.append(f"**{idx}.** {name} — {best}{achieved_str}")
-                    embed.add_field(name=stat, value="\n".join(lines), inline=False)
-                else:
-                    embed.add_field(name=stat, value="No data yet", inline=False)
+                lines = []
+                for user_id, best, first_achieved_at in rows:
+                    member = guild.get_member(user_id) if guild is not None else None
+                    if not self._is_leaderboard_eligible(member):
+                        continue
+                    achieved_str = ""
+                    if first_achieved_at:
+                        try:
+                            dt = datetime.datetime.fromisoformat(first_achieved_at)
+                            achieved_str = f" ({dt.strftime('%d/%m/%y')})"
+                        except Exception:
+                            pass
+                    lines.append(f"**{len(lines) + 1}.** {member.mention} — {best}{achieved_str}")
+                    if len(lines) == 5:
+                        break
+                embed.add_field(name=stat, value="\n".join(lines) if lines else "No data yet", inline=False)
 
         now_str = datetime.datetime.utcnow().strftime("%d/%m/%y %H:%M GMT")
         embed.set_footer(text=f"Last updated: {now_str}")
@@ -279,6 +291,18 @@ class HLLInfLeaderboard(commands.Cog):
                 print(f"HLLInfLeaderboard: Failed to start cleanup loop: {e}")
 
         await self.update_leaderboard()
+
+    @commands.Cog.listener()
+    async def on_member_remove(self, member: discord.Member):
+        if member.guild.id == GUILD_ID and self._is_leaderboard_eligible(member):
+            await self.update_leaderboard()
+
+    @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member):
+        if after.guild.id != GUILD_ID:
+            return
+        if self._is_leaderboard_eligible(before) != self._is_leaderboard_eligible(after):
+            await self.update_leaderboard()
 
     @app_commands.command(name="hllhighs-inftopscores", description="Show all-time top scores")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
