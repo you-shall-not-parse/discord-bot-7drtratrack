@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -336,6 +337,46 @@ def test_war_diary_returns_every_match_and_keeps_legacy_outcomes() -> None:
     assert len(payload["recent"]) == 16
     assert payload["recent"][0]["date"] == "15/08/26"
     assert payload["recent"][-1]["score"] == "Loss"
+
+
+def test_website_infantry_leaderboard_filters_members_and_backfills_top_three(tmp_path, monkeypatch) -> None:
+    import cogs.HLLInfLeaderboard as infantry
+
+    database = tmp_path / "leaderboard.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE submissions "
+            "(user_id INTEGER, stat TEXT, value INTEGER, proof_verified INTEGER)"
+        )
+        connection.executemany(
+            "INSERT INTO submissions(user_id, stat, value, proof_verified) VALUES (?, 'Most Kills', ?, 1)",
+            [(1, 100), (2, 90), (3, 80), (4, 70), (5, 60), (6, 50)],
+        )
+
+    members = {
+        2: SimpleNamespace(display_name="Blueberry", roles=[SimpleNamespace(name="Blueberry")]),
+        3: SimpleNamespace(display_name="Diplomat", roles=[SimpleNamespace(name="Diplomat")]),
+        4: SimpleNamespace(display_name="First", roles=[SimpleNamespace(name="Infantry")]),
+        5: SimpleNamespace(display_name="Second", roles=[SimpleNamespace(name="Recon")]),
+        6: SimpleNamespace(display_name="Third", roles=[]),
+    }
+    guild = SimpleNamespace(get_member=members.get)
+    monkeypatch.setattr(infantry, "DB_FILE", str(database))
+    monkeypatch.setattr(infantry, "STATS", ["Most Kills"])
+
+    groups = FrontlineWeb._read_leaderboards(guild)
+    infantry_records = groups[0]["records"]
+
+    assert infantry_records == [
+        {
+            "stat": "Most Kills",
+            "leaders": [
+                {"name": "First", "value": "70"},
+                {"name": "Second", "value": "60"},
+                {"name": "Third", "value": "50"},
+            ],
+        }
+    ]
 
 
 def test_server_status_normalises_bifrost_data_without_exposing_credentials() -> None:

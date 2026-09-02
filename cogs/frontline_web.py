@@ -563,13 +563,16 @@ class FrontlineWeb:
     @staticmethod
     def _read_leaderboards(guild) -> list[dict[str, Any]]:
         from cogs.HLLArmLeaderboard import DB_FILE as ARM_DB_FILE, STATS_ARM, format_seconds_as_hhmmss, is_life_stat
-        from cogs.HLLInfLeaderboard import DB_FILE as INF_DB_FILE, STATS
+        from cogs.HLLInfLeaderboard import DB_FILE as INF_DB_FILE, STATS, HLLInfLeaderboard
+
+        def guild_member(user_id: object):
+            try:
+                return guild.get_member(int(user_id))
+            except (TypeError, ValueError):
+                return None
 
         def member_name(user_id: object) -> str:
-            try:
-                member = guild.get_member(int(user_id))
-            except (TypeError, ValueError):
-                member = None
+            member = guild_member(user_id)
             return str(member.display_name) if member is not None else "Former member"
 
         groups: list[dict[str, Any]] = []
@@ -581,7 +584,8 @@ class FrontlineWeb:
                 STATS,
                 "SELECT user_id, MAX(value) AS best FROM submissions "
                 "WHERE stat = ? AND proof_verified = 1 "
-                "GROUP BY user_id ORDER BY best DESC, user_id ASC LIMIT 3",
+                "GROUP BY user_id ORDER BY best DESC, user_id ASC",
+                True,
             ),
             (
                 "Armour",
@@ -591,9 +595,10 @@ class FrontlineWeb:
                 "SELECT crew_key, MAX(value) AS best FROM submissions_arm "
                 "WHERE stat = ? AND proof_verified = 1 "
                 "GROUP BY crew_key ORDER BY best DESC, crew_key ASC LIMIT 3",
+                False,
             ),
         )
-        for title, path, owner_column, stats, query in sources:
+        for title, path, owner_column, stats, query, filter_infantry_members in sources:
             category = {"title": title, "records": []}
             if not path.is_file():
                 groups.append(category)
@@ -609,9 +614,14 @@ class FrontlineWeb:
                                 name = ", ".join(names) or "Former crew"
                                 display_value = format_seconds_as_hhmmss(value) if is_life_stat(stat) else str(value)
                             else:
-                                name = member_name(owner)
+                                member = guild_member(owner)
+                                if filter_infantry_members and not HLLInfLeaderboard._is_leaderboard_eligible(member):
+                                    continue
+                                name = str(member.display_name)
                                 display_value = str(value)
                             leaders.append({"name": name, "value": display_value})
+                            if len(leaders) == 3:
+                                break
                         if leaders:
                             category["records"].append({"stat": stat, "leaders": leaders})
             except sqlite3.Error:
