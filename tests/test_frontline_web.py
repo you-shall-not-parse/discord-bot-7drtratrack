@@ -4,7 +4,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
-from cogs.frontline_web import DASHBOARD_CACHE_SECONDS, FRONTEND_DIR, TURNSTILE_SITE_KEY, FrontlineWeb
+from cogs.frontline_web import (
+    DASHBOARD_CACHE_SECONDS,
+    FRONTEND_DIR,
+    MAX_ACTIVE_SESSIONS,
+    SESSION_SECONDS,
+    TURNSTILE_SITE_KEY,
+    FrontlineWeb,
+)
 from config import WEB_LOG_PATH
 
 
@@ -59,12 +66,50 @@ def test_pin_sessions_are_random_and_open_redirects_are_rejected(monkeypatch) ->
     service = FrontlineWeb(SimpleNamespace())
     token = service._new_session("Example User")
 
+    assert token is not None
     assert service._valid_session(token)
     assert not service._valid_session(token + "tampered")
     assert service._safe_next("/rollcalls/22nd") == "/rollcalls/22nd"
     assert service._safe_next("//example.com") == "/"
     assert service._safe_next("https://example.com") == "/"
     assert service._sessions[token].claimed_name == "Example User"
+
+
+def test_active_session_limit_rejects_login_until_sessions_expire(monkeypatch) -> None:
+    now = 1_000
+    monkeypatch.setattr("cogs.frontline_web.time.time", lambda: now)
+    service = FrontlineWeb(SimpleNamespace())
+
+    tokens = [service._new_session(f"User {index}") for index in range(MAX_ACTIVE_SESSIONS)]
+
+    assert all(token is not None for token in tokens)
+    assert len(service._sessions) == MAX_ACTIVE_SESSIONS
+    assert service._new_session("One too many") is None
+
+    now += SESSION_SECONDS + 1
+    replacement = service._new_session("Replacement user")
+
+    assert replacement is not None
+    assert len(service._sessions) == 1
+
+
+def test_login_returns_capacity_page_when_session_limit_is_reached(monkeypatch) -> None:
+    monkeypatch.setenv("APPPIN", "a-long-test-pin")
+    monkeypatch.delenv("TURNSTILE_SECRET", raising=False)
+    monkeypatch.delenv("TURNSTILE_SECRET_KEY", raising=False)
+    service = FrontlineWeb(SimpleNamespace())
+    for index in range(MAX_ACTIVE_SESSIONS):
+        assert service._new_session(f"User {index}") is not None
+
+    async def post() -> dict[str, str]:
+        return {"name": "Waiting User", "pin": "a-long-test-pin", "next": "/"}
+
+    request = SimpleNamespace(query={}, headers={}, remote="192.0.2.1", post=post)
+    response = asyncio.run(service.login(request))
+
+    assert response.status == 503
+    assert b"limit of 300 active logins" in response.body
+    assert len(service._sessions) == MAX_ACTIVE_SESSIONS
 
 
 def test_dashboard_payload_is_cached_for_30_seconds(monkeypatch) -> None:

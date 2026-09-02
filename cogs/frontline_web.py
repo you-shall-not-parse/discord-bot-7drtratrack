@@ -32,6 +32,7 @@ WEB_HOST = os.getenv("FRONTLINE_WEB_HOST", "127.0.0.1")
 WEB_PORT = int(os.getenv("FRONTLINE_WEB_PORT", "7020"))
 SESSION_COOKIE = "hll_frontline_session"
 SESSION_SECONDS = 24 * 60 * 60
+MAX_ACTIVE_SESSIONS = 300
 LOGIN_WINDOW_SECONDS = 15 * 60
 LOGIN_MAX_FAILURES = 5
 TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
@@ -185,13 +186,15 @@ class FrontlineWeb:
         candidate = str(value or "/")
         return candidate if candidate.startswith("/") and not candidate.startswith("//") else "/"
 
-    def _new_session(self, claimed_name: str) -> str:
+    def _new_session(self, claimed_name: str) -> str | None:
         now = int(time.time())
         self._sessions = {
             token: session
             for token, session in self._sessions.items()
             if session.expires_at >= now
         }
+        if len(self._sessions) >= MAX_ACTIVE_SESSIONS:
+            return None
         token = secrets.token_urlsafe(32)
         self._sessions[token] = WebSession(
             expires_at=now + SESSION_SECONDS,
@@ -316,6 +319,17 @@ class FrontlineWeb:
 
         client_ip = self._client_key(request)
         self._login_failures.pop(client_ip, None)
+        session_token = self._new_session(claimed_name)
+        if session_token is None:
+            logger.warning(
+                "Rejected HLL Frontline login because the active-session limit was reached "
+                "claimed_name=%r client_ip=%s limit=%s",
+                claimed_name,
+                client_ip,
+                MAX_ACTIVE_SESSIONS,
+            )
+            return self._login_document(next_url=next_url, error_code="capacity", status=503)
+
         logger.info("Successful HLL Frontline login claimed_name=%r client_ip=%s", claimed_name, client_ip)
         # The production service directs stderr to bot_error.log. Use the root
         # console logger for this explicit operator-facing notice while keeping
@@ -324,7 +338,7 @@ class FrontlineWeb:
         response = web.HTTPSeeOther(location=next_url)
         response.set_cookie(
             SESSION_COOKIE,
-            self._new_session(claimed_name),
+            session_token,
             max_age=SESSION_SECONDS,
             httponly=True,
             secure=True,
@@ -345,7 +359,7 @@ class FrontlineWeb:
         response.del_cookie(SESSION_COOKIE, path="/")
         return response
 
-    def _login_document(self, *, next_url: str, error_code: str) -> web.Response:
+    def _login_document(self, *, next_url: str, error_code: str, status: int = 200) -> web.Response:
         path = FRONTEND_DIR / "login.html"
         if not path.is_file():
             raise web.HTTPNotFound(text="Login frontend is missing.")
@@ -365,13 +379,14 @@ class FrontlineWeb:
             turnstile_widget = ""
         error_messages = {
             "1": "The PIN was not recognised.",
+            "capacity": f"The website has reached its limit of {MAX_ACTIVE_SESSIONS} active logins. Try again later.",
             "name": "Enter a valid name of no more than 80 characters.",
             "turnstile": "The security check was not completed. Please try again.",
         }
         document = document.replace("{{TURNSTILE_HEAD}}", turnstile_head)
         document = document.replace("{{TURNSTILE_WIDGET}}", turnstile_widget)
         document = document.replace("{{ERROR}}", error_messages.get(error_code, ""))
-        return web.Response(text=document, content_type="text/html", charset="utf-8")
+        return web.Response(text=document, status=status, content_type="text/html", charset="utf-8")
 
     async def health(self, _request: web.Request) -> web.Response:
         guild = self.bot.get_guild(MAIN_GUILD_ID)
