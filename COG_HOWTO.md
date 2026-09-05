@@ -280,11 +280,11 @@ Rules and notes: This cog has important nuance. Short LOAs are one-off, daily, o
 
 Overview: Keeps a cleaner record of wars, events, or match history.
 
-Slash commands: `/wardiary_export`.
+Slash commands: `/wardiary_export`, `/transcript`.
 
-How to use: Use the submission button in the War Diary forum to record results. Members with a configured War Diary role can run `/wardiary_export` to download a CSV containing the match date, map, clans played, result, Allied clan, Axis clan, and stats link. The download is only shown to the person who ran the command.
+How to use: Use the submission button in the War Diary forum to record results. Each successful submission also opens `Event Review 7DR Vs OPPONENT MAP DD/MM/YY` in the event review channel. Run `/transcript` inside one of those threads to privately download its full discussion as a text file. Members with a configured War Diary role can run `/wardiary_export` to download a CSV containing the match date, map, clans played, result, Allied clan, Axis clan, and stats link. Downloads are only shown to the person who ran the command.
 
-Rules and notes: Older saved matches are backfilled from their forum posts during export. Retired `7dr-stats.hlladmin.com` links are rewritten to `7drhistostats.hllfrontline.com`; retired RMC Events links are moved to its Bifrost server; and Bifrost server links use the `/crcon` proxy. For a public CRCON `/games/{id}` link, the exporter inspects the corresponding match API and compares its Allied/Axis score with the recorded War Diary result. Clan-tagged player names are used as a fallback. A missing link, inaccessible match, unsupported stats provider, or inconclusive result leaves the side cells blank rather than guessing.
+Rules and notes: Event review threads are created in channel `1116768642017796146`; the bot needs View Channel, Send Messages, Create Public Threads, Send Messages in Threads, and Read Message History there. `/transcript` only works within threads belonging to that channel. Older saved matches are backfilled from their forum posts during export. Retired `7dr-stats.hlladmin.com` links are rewritten to `7drhistostats.hllfrontline.com`; retired RMC Events links are moved to its Bifrost server; and Bifrost server links use the `/crcon` proxy. For a public CRCON `/games/{id}` link, the exporter inspects the corresponding match API and compares its Allied/Axis score with the recorded War Diary result. Clan-tagged player names are used as a fallback. A missing link, inaccessible match, unsupported stats provider, or inconclusive result leaves the side cells blank rather than guessing.
 
 ## `t17lookup.py`
 

@@ -1,14 +1,38 @@
 import csv
 import io
 import sys
+from datetime import datetime, timezone
 from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
-from cogs.wardiary import WarDiaryCog, _display_stats_link, _normalize_stats_link
+from cogs.wardiary import (
+    WarDiaryCog,
+    _display_stats_link,
+    _event_review_thread_name,
+    _normalize_stats_link,
+    _transcript_filename,
+)
 
 
 class WarDiaryExportTests(unittest.TestCase):
+    def test_event_review_thread_name_contains_match_details(self) -> None:
+        self.assertEqual(
+            _event_review_thread_name("CROWS", "Carentan", "20/08/26"),
+            "Event Review 7DR Vs CROWS Carentan 20/08/26",
+        )
+
+    def test_event_review_thread_name_obeys_discord_limit(self) -> None:
+        name = _event_review_thread_name("A" * 80, "B" * 80, "20/08/26")
+        self.assertEqual(len(name), 100)
+        self.assertTrue(name.endswith("..."))
+
+    def test_transcript_filename_is_safe(self) -> None:
+        self.assertEqual(
+            _transcript_filename("Event Review 7DR Vs CROWS / Carentan"),
+            "Event-Review-7DR-Vs-CROWS-Carentan-transcript.txt",
+        )
+
     def test_builds_crcon_api_url_from_game_link(self) -> None:
         self.assertEqual(
             WarDiaryCog._crcon_match_api_url("https://stats.example.test/games/123/charts"),
@@ -222,7 +246,60 @@ class WarDiaryExportTests(unittest.TestCase):
         self.assertEqual(rows[1][3], '=\"4-1\"')
 
 
+    def test_links_event_review_thread_to_saved_match(self) -> None:
+        cog = object.__new__(WarDiaryCog)
+        cog._state = {
+            "match_threads": [
+                {
+                    "thread_id": 10,
+                    "clan_name": "7DR",
+                    "opponent_clan_name": "CROWS",
+                    "match_date": "20/08/26",
+                }
+            ]
+        }
+        cog._save_state = Mock()
+
+        cog._link_review_thread(
+            clan_name="7DR",
+            opponent_clan_name="CROWS",
+            match_date="20/08/26",
+            review_thread_id=20,
+        )
+
+        self.assertEqual(cog._state["match_threads"][0]["review_thread_id"], 20)
+        cog._save_state.assert_called_once_with()
+
+
 class WarDiaryFetchTests(unittest.IsolatedAsyncioTestCase):
+    async def test_event_review_transcript_contains_messages_and_attachments(self) -> None:
+        message = SimpleNamespace(
+            author=SimpleNamespace(display_name="Rat", id=123),
+            created_at=datetime(2026, 8, 20, 19, 30, tzinfo=timezone.utc),
+            content="Good comms",
+            attachments=[SimpleNamespace(filename="plan.png", url="https://example.test/plan.png")],
+            stickers=[],
+            embeds=[],
+            jump_url="https://discord.test/channels/1/2/3",
+        )
+
+        class FakeThread:
+            name = "Event Review 7DR Vs CROWS Carentan 20/08/26"
+            id = 456
+
+            async def history(self, **kwargs):
+                yield message
+
+        cog = object.__new__(WarDiaryCog)
+        payload, count = await cog._build_event_review_transcript(FakeThread())
+        transcript = payload.decode("utf-8")
+
+        self.assertEqual(count, 1)
+        self.assertIn("Messages: 1", transcript)
+        self.assertIn("Rat (Discord ID: 123)", transcript)
+        self.assertIn("Good comms", transcript)
+        self.assertIn("[Attachment: plan.png] https://example.test/plan.png", transcript)
+
     async def test_frostbite_fetch_uses_browser_headers(self) -> None:
         class FakeRequestException(Exception):
             pass

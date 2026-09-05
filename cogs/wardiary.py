@@ -34,6 +34,11 @@ ALLOWED_ROLE_IDS: list[int] = [1213495462632361994, 1097946543065137183, 1097946
 # Target Discord forum channel where war diary posts should live.
 WAR_DIARY_FORUM_CHANNEL_ID: int = 1489703502426018002
 
+# Companion channel where each submitted result gets a discussion thread.
+EVENT_REVIEW_CHANNEL_ID: int = 1116768642017796146
+EVENT_REVIEW_AUTO_ARCHIVE_MINUTES: int = 10080
+TRANSCRIPT_SIZE_MARGIN: int = 1024
+
 # The persistent submission post created inside the forum.
 SUBMISSION_POST_NAME: str = "Result Submission"
 SUBMISSION_POST_AUTO_ARCHIVE_MINUTES: int = 10080
@@ -256,6 +261,38 @@ def _truncate_thread_name(name: str) -> str:
 	if len(clean) <= 100:
 		return clean
 	return clean[:97] + "..."
+
+
+def _event_review_thread_name(opponent_clan_name: str, map_name: str, match_date: str) -> str:
+	return _truncate_thread_name(
+		f"Event Review {HOME_CLAN_NAME} Vs {opponent_clan_name} {map_name} {match_date}"
+	)
+
+
+def _transcript_message_block(message: discord.Message) -> str:
+	author_name = getattr(message.author, "display_name", str(message.author))
+	author_id = getattr(message.author, "id", "unknown")
+	created_at = message.created_at.astimezone(timezone.utc)
+	lines = [
+		f"[{created_at.strftime('%Y-%m-%d %H:%M:%S UTC')}] "
+		f"{author_name} (Discord ID: {author_id})",
+		(message.content or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+		or "[No text content]",
+	]
+	for attachment in message.attachments:
+		lines.append(f"[Attachment: {attachment.filename}] {attachment.url}")
+	for sticker in message.stickers:
+		lines.append(f"[Sticker: {sticker.name}] {sticker.url}")
+	for embed in message.embeds:
+		parts = [str(part) for part in (embed.title, embed.description, embed.url) if part]
+		lines.append(f"[Embed] {' | '.join(parts)}" if parts else "[Embed]")
+	lines.append(f"[Message link] {message.jump_url}")
+	return "\n".join(lines)
+
+
+def _transcript_filename(thread_name: str) -> str:
+	slug = re.sub(r"[^A-Za-z0-9_-]+", "-", thread_name).strip("-")[:70] or "event-review"
+	return f"{slug}-transcript.txt"
 
 def _media_extension(path: str) -> str:
 	return os.path.splitext(path)[1].lower()
@@ -513,7 +550,31 @@ class StatsLinkModal(discord.ui.Modal, title="Match Details"):
 			await interaction.followup.send(error_message or "Failed to create the war diary post. Check the forum channel config.", ephemeral=True)
 			return
 
-		await interaction.followup.send(f"Posted to {thread.mention}", ephemeral=True)
+		review_thread, review_error = await self.cog.create_event_review_thread(
+			war_diary_thread=thread,
+			submitter=interaction.user,
+			opponent_clan_name=self.opponent_clan_name,
+			map_name=self.selected_map_name,
+			match_date=match_date,
+		)
+		if review_thread is not None:
+			self.cog._link_review_thread(
+				clan_name=self.clan_name,
+				opponent_clan_name=self.opponent_clan_name,
+				match_date=match_date,
+				review_thread_id=review_thread.id,
+			)
+			await interaction.followup.send(
+				f"Posted to {thread.mention} and opened event review {review_thread.mention}.",
+				ephemeral=True,
+			)
+			return
+
+		await interaction.followup.send(
+			f"Posted to {thread.mention}, but I could not open the event review thread. "
+			f"{review_error or 'Please check the review channel permissions.'}",
+			ephemeral=True,
+		)
 
 
 class WarDiarySubmissionView(discord.ui.View):
@@ -674,6 +735,20 @@ class WarDiaryCog(commands.Cog):
 		original_len = len(records)
 		records[:] = [record for record in records if _safe_int(record.get("thread_id")) != thread_id]
 		return len(records) != original_len
+
+	def _link_review_thread(
+		self,
+		*,
+		clan_name: str,
+		opponent_clan_name: str,
+		match_date: str,
+		review_thread_id: int,
+	) -> None:
+		record = self._find_match_record(clan_name, opponent_clan_name, match_date)
+		if record is None:
+			return
+		record["review_thread_id"] = review_thread_id
+		self._save_state()
 
 	def _store_match_record(
 		self,
@@ -1175,6 +1250,75 @@ class WarDiaryCog(commands.Cog):
 				return None
 		return channel if isinstance(channel, discord.ForumChannel) else None
 
+	async def _get_event_review_channel(
+		self,
+	) -> Optional[discord.TextChannel | discord.ForumChannel]:
+		channel = self.bot.get_channel(EVENT_REVIEW_CHANNEL_ID)
+		if channel is None:
+			try:
+				channel = await self.bot.fetch_channel(EVENT_REVIEW_CHANNEL_ID)
+			except Exception:
+				log.exception("Failed to fetch event review channel")
+				return None
+		if isinstance(channel, (discord.TextChannel, discord.ForumChannel)):
+			return channel
+		return None
+
+	async def create_event_review_thread(
+		self,
+		*,
+		war_diary_thread: discord.Thread,
+		submitter: discord.Member,
+		opponent_clan_name: str,
+		map_name: str,
+		match_date: str,
+	) -> tuple[Optional[discord.Thread], Optional[str]]:
+		channel = await self._get_event_review_channel()
+		if channel is None:
+			return None, "I could not access the configured event review channel."
+
+		thread_name = _event_review_thread_name(opponent_clan_name, map_name, match_date)
+		intro = (
+			f"Discussion for the {HOME_CLAN_NAME} vs {opponent_clan_name} match on "
+			f"{map_name}, played {match_date}.\n"
+			f"War Diary result: {war_diary_thread.mention}\n\n"
+			"Run `/transcript` in this thread to download the full discussion as a text file."
+		)
+		reason = f"War Diary event review created by {submitter} ({submitter.id})"
+		try:
+			if isinstance(channel, discord.ForumChannel):
+				created = await channel.create_thread(
+					name=thread_name,
+					content=intro,
+					auto_archive_duration=EVENT_REVIEW_AUTO_ARCHIVE_MINUTES,
+					allowed_mentions=discord.AllowedMentions.none(),
+					reason=reason,
+				)
+				thread, _message = self._extract_created_post(created)
+				if thread is None:
+					return None, "Discord created the review post but did not return its thread."
+				return thread, None
+
+			thread = await channel.create_thread(
+				name=thread_name,
+				type=discord.ChannelType.public_thread,
+				auto_archive_duration=EVENT_REVIEW_AUTO_ARCHIVE_MINUTES,
+				reason=reason,
+			)
+		except (discord.Forbidden, discord.HTTPException):
+			log.exception("Failed creating event review thread in channel %s", EVENT_REVIEW_CHANNEL_ID)
+			return None, "Please check Create Public Threads and Send Messages in Threads permissions."
+
+		try:
+			await thread.send(content=intro, allowed_mentions=discord.AllowedMentions.none())
+		except (discord.Forbidden, discord.HTTPException):
+			log.warning(
+				"Created event review thread %s but could not post its introduction",
+				thread.id,
+				exc_info=True,
+			)
+		return thread, None
+
 	async def _get_thread(self, thread_id: int) -> Optional[discord.Thread]:
 		channel = self.bot.get_channel(thread_id)
 		if isinstance(channel, discord.Thread):
@@ -1548,6 +1692,57 @@ class WarDiaryCog(commands.Cog):
 		await interaction.followup.send(
 			content=f"Exported {len(self._get_match_records())} War Diary match(es).",
 			file=discord.File(io.BytesIO(payload), filename=filename),
+			ephemeral=True,
+		)
+
+	async def _build_event_review_transcript(self, thread: discord.Thread) -> tuple[bytes, int]:
+		blocks: list[str] = []
+		async for message in thread.history(limit=None, oldest_first=True):
+			blocks.append(_transcript_message_block(message))
+		header = (
+			"EVENT REVIEW THREAD TRANSCRIPT\n"
+			f"Thread: {thread.name} ({thread.id})\n"
+			f"Generated: {_utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}\n"
+			f"Messages: {len(blocks)}\n\n"
+		)
+		return (header + "\n\n---\n\n".join(blocks) + "\n").encode("utf-8"), len(blocks)
+
+	@app_commands.command(
+		name="transcript",
+		description="Download a transcript of this War Diary event review thread.",
+	)
+	@app_commands.guild_only()
+	async def transcript(self, interaction: discord.Interaction) -> None:
+		thread = interaction.channel
+		if not isinstance(thread, discord.Thread) or thread.parent_id != EVENT_REVIEW_CHANNEL_ID:
+			await interaction.response.send_message(
+				"Use `/transcript` inside a War Diary event review thread.",
+				ephemeral=True,
+			)
+			return
+
+		await interaction.response.defer(ephemeral=True, thinking=True)
+		try:
+			payload, message_count = await self._build_event_review_transcript(thread)
+		except (discord.Forbidden, discord.HTTPException):
+			log.exception("Failed reading event review thread %s for transcript", thread.id)
+			await interaction.followup.send(
+				"I could not read this thread's history. Please check my Read Message History permission.",
+				ephemeral=True,
+			)
+			return
+
+		upload_limit = interaction.guild.filesize_limit if interaction.guild else 8 * 1024 * 1024
+		if len(payload) > max(0, upload_limit - TRANSCRIPT_SIZE_MARGIN):
+			await interaction.followup.send(
+				"This transcript is too large for the server's Discord upload limit.",
+				ephemeral=True,
+			)
+			return
+
+		await interaction.followup.send(
+			content=f"Transcript generated with {message_count} message(s).",
+			file=discord.File(io.BytesIO(payload), filename=_transcript_filename(thread.name)),
 			ephemeral=True,
 		)
 
