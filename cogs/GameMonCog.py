@@ -30,9 +30,10 @@ logging.getLogger('discord.http').setLevel(logging.ERROR)
 # ---------------- CONFIG ----------------
 GUILD_ID = MAIN_GUILD_ID
 THREAD_ID = 1412934277133369494  # replace with your thread ID
-# If set, Hell Let Loose posts are routed here; other games go to THREAD_ID.
-# Can be a text channel or thread ID.
+# Hell Let Loose and Hell Let Loose: Vietnam use separate destinations; other
+# games go to THREAD_ID. Each destination can be a text channel or thread ID.
 HLL_CHANNEL_ID = 1099090838203666474
+HLLV_CHANNEL_ID = 1511085797695160501
 # Users with any of these roles will never generate GameMon posts.
 # Put role IDs in this list, e.g. [123, 456]. Leave empty to disable.
 BLUEBERRY_ROLE_ID = 1440120995171012699
@@ -527,6 +528,14 @@ class GameMonCog(commands.Cog, name="GameMonCog"):
             return False
         return str(game_name).strip().lower() == "hell let loose"
 
+    def _is_hllv_game(self, game_name: Optional[str]) -> bool:
+        if not game_name:
+            return False
+        return str(game_name).strip().lower() in {
+            "hell let loose: vietnam",
+            "hell let loose vietnam",
+        }
+
     # ---------- Preference Helpers ----------
     def ensure_user_pref_record(self, user_id: str) -> dict:
         """Return a mutable per-user record, migrating legacy string prefs on the fly."""
@@ -757,6 +766,7 @@ class GameMonCog(commands.Cog, name="GameMonCog"):
         for cid, label in (
             (THREAD_ID, "default"),
             (HLL_CHANNEL_ID, "hll"),
+            (HLLV_CHANNEL_ID, "hllv"),
         ):
             if not isinstance(cid, int) or not cid:
                 continue
@@ -792,7 +802,7 @@ class GameMonCog(commands.Cog, name="GameMonCog"):
                 logger.error(f"Failed to register persistent PreferenceView: {e}")
 
         # Apply the retention cap immediately on startup, not only after a new post.
-        for destination_id in {THREAD_ID, HLL_CHANNEL_ID}:
+        for destination_id in {THREAD_ID, HLL_CHANNEL_ID, HLLV_CHANNEL_ID}:
             if isinstance(destination_id, int) and destination_id:
                 await self.prune_channel_messages(destination_id)
 
@@ -1053,6 +1063,8 @@ class GameMonCog(commands.Cog, name="GameMonCog"):
             return None
 
     def _get_destination_channel_id_for_game(self, game_name: Optional[str]) -> int:
+        if self._is_hllv_game(game_name) and isinstance(HLLV_CHANNEL_ID, int) and HLLV_CHANNEL_ID:
+            return HLLV_CHANNEL_ID
         if self._is_hll_game(game_name) and isinstance(HLL_CHANNEL_ID, int) and HLL_CHANNEL_ID:
             return HLL_CHANNEL_ID
         return THREAD_ID
@@ -1446,16 +1458,18 @@ class GameMonCog(commands.Cog, name="GameMonCog"):
 
     async def handle_about_feed_select(self, interaction: discord.Interaction) -> None:
         """Send an ephemeral explanation of the Game Feed and dropdown options."""
-        hll_line = ""
-        try:
-            if isinstance(HLL_CHANNEL_ID, int) and HLL_CHANNEL_ID:
-                hll_line = f" or <#{HLL_CHANNEL_ID}> if the game is Hell Let Loose (only)."
-        except Exception:
-            hll_line = ""
+        special_destinations = []
+        if isinstance(HLL_CHANNEL_ID, int) and HLL_CHANNEL_ID:
+            special_destinations.append(f"<#{HLL_CHANNEL_ID}> for Hell Let Loose")
+        if isinstance(HLLV_CHANNEL_ID, int) and HLLV_CHANNEL_ID:
+            special_destinations.append(f"<#{HLLV_CHANNEL_ID}> for Hell Let Loose: Vietnam")
+        routing_text = ""
+        if special_destinations:
+            routing_text = ", with separate feeds in " + " and ".join(special_destinations)
 
         text = (
             "**About the Game Feed❓**\n"
-            f"This bot watches your Discord activity (when you start playing a game) and posts it into the <#{THREAD_ID}> channel{hll_line}\n"
+            f"This bot watches your Discord activity (when you start playing a game) and posts it into the <#{THREAD_ID}> channel{routing_text}.\n"
             "This only works if you have opted-in and have your device/console linked to your Discord account.\n"
             "**Dropdown options**\n"
             "• **Show my games 🎮** — Opt in to posting when you start playing.\n"
