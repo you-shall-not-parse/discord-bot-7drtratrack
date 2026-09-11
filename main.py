@@ -56,10 +56,10 @@ EXTENSIONS = (
     "cogs.strategic_review_note",
     "cogs.bulkdelete",
     "cogs.hllv_names",
+    "cogs.rosterizer",
 )
 
 DISABLED_EXTENSIONS = (
-    "cogs.rosterizer",
     "cogs.mapvote",
 )
 

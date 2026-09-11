@@ -30,14 +30,9 @@ AUDIT_LOG_LOOKBACK_SECONDS = 15
 
 ROSTER_DEFINITIONS = [
     {
-        "key": "hell_eu_s4",
-        "title": "Hell EU S4",
-        "role_id": 1364639604564688917,
-    },
-    {
-        "key": "Summit_Season_6",
-        "title": "Summit Season 6",
-        "role_id": 1496218428762230814,
+        "key": "hell_eu_s5",
+        "title": "HellEU S5",
+        "role_id": 1547996166585581699,
     }
 ]
 
