@@ -27,8 +27,6 @@ LOCKED_DM_MESSAGE = (
 LOCKED_DM_COOLDOWN_SECONDS = 60
 LOCK_REVERT_SUPPRESSION_SECONDS = 5
 AUDIT_LOG_LOOKBACK_SECONDS = 15
-SOURCE_ROLE_NAME = "Basic Trained"
-POPULATE_CONFIRMATION_TIMEOUT_SECONDS = 300
 
 ROSTER_DEFINITIONS = [
     {
@@ -41,48 +39,11 @@ ROSTER_DEFINITIONS = [
 RANK_ORDER: list[tuple[str, list[str]]] = DEFAULT_RANK_ORDER
 
 
-def _members_needing_role(source_role: discord.Role, target_role: discord.Role) -> list[discord.Member]:
-    return [
-        member
-        for member in source_role.members
-        if not member.bot and all(role.id != target_role.id for role in member.roles)
-    ]
-
-
 def _can_manage_roster_lock(interaction: discord.Interaction) -> bool:
     user = interaction.user
     if not isinstance(user, discord.Member):
         return False
     return any(role.id in ROSTER_LOCK_ADMIN_ROLE_IDS for role in user.roles)
-
-
-class PopulateHellEUS5Confirmation(discord.ui.View):
-    def __init__(self, cog: "Rosterizer", requester_id: int) -> None:
-        super().__init__(timeout=POPULATE_CONFIRMATION_TIMEOUT_SECONDS)
-        self.cog = cog
-        self.requester_id = requester_id
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.requester_id:
-            await interaction.response.send_message("This confirmation belongs to another user.", ephemeral=True)
-            return False
-        return True
-
-    def _disable(self) -> None:
-        for child in self.children:
-            child.disabled = True
-        self.stop()
-
-    @discord.ui.button(label="Add HELLEU S5 role", style=discord.ButtonStyle.danger)
-    async def confirm(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
-        self._disable()
-        await interaction.response.edit_message(content="Confirmed. Applying roles…", view=self)
-        await self.cog.populate_helleu_s5_from_basic_trained(interaction)
-
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
-    async def cancel(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
-        self._disable()
-        await interaction.response.edit_message(content="Cancelled. No roles were changed.", view=self)
 
 
 class Rosterizer(commands.Cog):
@@ -93,8 +54,6 @@ class Rosterizer(commands.Cog):
         self._ran_once = False
         self._update_task: asyncio.Task | None = None
         self._update_lock = asyncio.Lock()
-        self._population_lock = asyncio.Lock()
-        self._population_in_progress = False
         self._state = self._load_state()
         self._dm_last_sent: dict[int, float] = {}
         self._locked_revert_suppression: dict[int, float] = {}
@@ -432,163 +391,6 @@ class Rosterizer(commands.Cog):
                 embeds = self._build_roster_embeds(guild, str(roster["title"]), entries, is_locked=is_locked)
                 await self._sync_roster_messages(guild, roster, embeds)
 
-    def _population_roles(self, guild: discord.Guild) -> tuple[discord.Role | None, discord.Role | None]:
-        source_role = discord.utils.get(guild.roles, name=SOURCE_ROLE_NAME)
-        target_role = guild.get_role(int(ROSTER_DEFINITIONS[0]["role_id"]))
-        return source_role, target_role
-
-    @app_commands.command(
-        name="populate_helleu_s5",
-        description="Add HELLEU S5 to every Basic Trained member.",
-    )
-    @app_commands.guilds(discord.Object(id=GUILD_ID))
-    @app_commands.check(_can_manage_roster_lock)
-    async def populate_helleu_s5(self, interaction: discord.Interaction) -> None:
-        guild = interaction.guild
-        if guild is None:
-            await interaction.response.send_message("This command can only be used in the server.", ephemeral=True)
-            return
-
-        if self._is_roster_locked(guild.id):
-            await interaction.response.send_message(
-                "The roster is locked. Run `/unlockroster` before populating HELLEU S5.",
-                ephemeral=True,
-            )
-            return
-
-        source_role, target_role = self._population_roles(guild)
-        if source_role is None:
-            await interaction.response.send_message(
-                f'I could not find the exact source role "{SOURCE_ROLE_NAME}".',
-                ephemeral=True,
-            )
-            return
-        if target_role is None:
-            await interaction.response.send_message(
-                f"I could not find the HELLEU S5 role (`{ROSTER_DEFINITIONS[0]['role_id']}`).",
-                ephemeral=True,
-            )
-            return
-
-        bot_member = guild.me
-        if bot_member is None or not bot_member.guild_permissions.manage_roles:
-            await interaction.response.send_message("I do not have Manage Roles permission.", ephemeral=True)
-            return
-        if target_role.managed or bot_member.top_role.position <= target_role.position:
-            await interaction.response.send_message(
-                "I cannot assign HELLEU S5 because it is managed or is not below my highest role.",
-                ephemeral=True,
-            )
-            return
-
-        candidates = _members_needing_role(source_role, target_role)
-        if not candidates:
-            await interaction.response.send_message(
-                "Everyone with Basic Trained already has HELLEU S5. Nothing to change.",
-                ephemeral=True,
-            )
-            return
-
-        already_assigned = sum(
-            1
-            for member in source_role.members
-            if not member.bot and any(role.id == target_role.id for role in member.roles)
-        )
-        view = PopulateHellEUS5Confirmation(self, interaction.user.id)
-        await interaction.response.send_message(
-            f"**Preview only — no roles changed yet.**\n\n"
-            f"Basic Trained members: **{len([member for member in source_role.members if not member.bot])}**\n"
-            f"Already have HELLEU S5: **{already_assigned}**\n"
-            f"Will receive HELLEU S5: **{len(candidates)}**\n\n"
-            "Press the red button to proceed.",
-            view=view,
-            ephemeral=True,
-        )
-
-    @populate_helleu_s5.error
-    async def populate_helleu_s5_error(
-        self,
-        interaction: discord.Interaction,
-        error: app_commands.AppCommandError,
-    ) -> None:
-        if isinstance(error, app_commands.CheckFailure):
-            message = "You do not have permission to use this command."
-            if interaction.response.is_done():
-                await interaction.followup.send(message, ephemeral=True)
-            else:
-                await interaction.response.send_message(message, ephemeral=True)
-            return
-        raise error
-
-    async def populate_helleu_s5_from_basic_trained(self, interaction: discord.Interaction) -> None:
-        guild = interaction.guild
-        if guild is None:
-            await interaction.edit_original_response(content="The server is no longer available.", view=None)
-            return
-
-        async with self._population_lock:
-            if self._is_roster_locked(guild.id):
-                await interaction.edit_original_response(
-                    content="The roster was locked before confirmation. No roles were changed.",
-                    view=None,
-                )
-                return
-
-            source_role, target_role = self._population_roles(guild)
-            bot_member = guild.me
-            if source_role is None or target_role is None:
-                await interaction.edit_original_response(
-                    content="One of the required roles no longer exists. No roles were changed.",
-                    view=None,
-                )
-                return
-            if (
-                bot_member is None
-                or not bot_member.guild_permissions.manage_roles
-                or target_role.managed
-                or bot_member.top_role.position <= target_role.position
-            ):
-                await interaction.edit_original_response(
-                    content="I can no longer manage the HELLEU S5 role. No roles were changed.",
-                    view=None,
-                )
-                return
-
-            candidates = _members_needing_role(source_role, target_role)
-            applied = 0
-            failed: list[discord.Member] = []
-            self._population_in_progress = True
-            try:
-                for member in candidates:
-                    try:
-                        await member.add_roles(
-                            target_role,
-                            reason=f"One-off Basic Trained to HELLEU S5 population by {interaction.user}",
-                        )
-                        applied += 1
-                    except (discord.Forbidden, discord.HTTPException):
-                        failed.append(member)
-                        self.logger.exception("Failed to add HELLEU S5 to member_id=%s", member.id)
-            finally:
-                self._population_in_progress = False
-
-            roster_refresh_failed = False
-            try:
-                await self.update_all_rosters(force_resolve=False)
-            except Exception:
-                roster_refresh_failed = True
-                self.logger.exception("HELLEU S5 population completed but roster refresh failed")
-
-            result = f"Complete. Added HELLEU S5 to **{applied}** member(s)."
-            if failed:
-                failed_mentions = ", ".join(member.mention for member in failed[:20])
-                result += f"\n\nFailed for **{len(failed)}** member(s): {failed_mentions}"
-                if len(failed) > 20:
-                    result += f" and {len(failed) - 20} more"
-            if roster_refresh_failed:
-                result += "\n\nThe roles were processed, but the roster message refresh failed. Check the bot log."
-            await interaction.edit_original_response(content=result, view=None)
-
     @app_commands.command(name="lockroster", description="Lock the roster.")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.check(_can_manage_roster_lock)
@@ -676,9 +478,6 @@ class Rosterizer(commands.Cog):
         tracked_role_ids = self._tracked_role_ids()
         before_tracked_ids = self._member_tracked_role_ids(before)
         after_tracked_ids = self._member_tracked_role_ids(after)
-
-        if self._population_in_progress and before_tracked_ids != after_tracked_ids:
-            return
 
         if self._is_locked_revert_suppressed(after.id):
             self.logger.info("roster_lock_suppressed member_id=%s", after.id)
