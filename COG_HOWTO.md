@@ -254,6 +254,12 @@ Logged-in members can open **Registered Building Inspectors**, describe an
 infringement, and take or upload a picture. A successful submission posts the
 description, login name, and image to Discord channels `1539382636483584000`
 and `1098333222540152944`.
+Each report receives an `RBI-...` reference and appears under **My reports**.
+Administrators can change its status from `/admin`. The **Server status** page
+also exposes Events/HLLV map and Events/Public/HLLV admin-cam requests through
+the existing Discord staff approval workflow. The **Knowledge base** searches
+the articles in `liberationapp/knowledge_base.json`; edit that JSON file to add
+or maintain clan-authored procedures without changing Python or JavaScript.
 
 Rules and notes: Building reports accept JPEG, PNG, GIF, WebP, or HEIC images
 up to 8 MB and descriptions up to 1,500 characters. Each website session can

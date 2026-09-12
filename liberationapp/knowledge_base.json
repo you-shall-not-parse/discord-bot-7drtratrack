@@ -1,0 +1,36 @@
+{
+  "articles": [
+    {
+      "id": "getting-started",
+      "category": "Onboarding",
+      "title": "Getting started with HLL Frontline",
+      "summary": "Sign in, find your personnel information, and use member tools safely.",
+      "keywords": ["login", "dashboard", "new member", "PIN"],
+      "content": "Sign in using the shared website PIN and enter your exact Discord display name. The Personnel area shows current roll calls and training progress. Server Status contains map and admin-cam requests. Use your real Discord name because request tools only work when the login name uniquely matches a current Discord member."
+    },
+    {
+      "id": "server-requests",
+      "category": "Server tools",
+      "title": "Requesting a map or admin cam",
+      "summary": "Send Events or HLLV map requests and temporary admin-cam requests for staff approval.",
+      "keywords": ["map", "admin cam", "spectator", "events", "public", "HLLV"],
+      "content": "Open Server Status and use Server requests. Map requests support the Events and HLLV catalogues. Admin cam supports Events, Public, and HLLV for 1 to 168 hours. Every request enters the existing Discord staff approval workflow. HLLV admin cam may require you to be connected for the first EOS-ID lookup."
+    },
+    {
+      "id": "building-inspector-reports",
+      "category": "Reporting",
+      "title": "Registered Building Inspector reports",
+      "summary": "Photograph an infringement, describe it clearly, and follow its status.",
+      "keywords": ["building", "infringement", "photo", "RBI", "report"],
+      "content": "Choose a category and severity, add the precise location, describe what is wrong, and attach a clear picture. Reports are sent to both inspector Discord channels. Keep the RBI reference shown after submission and use My reports to follow whether it is submitted, under review, requires action, resolved, or closed."
+    },
+    {
+      "id": "hllv-directory",
+      "category": "HLLV",
+      "title": "Finding an HLLV player name",
+      "summary": "Search the member-maintained directory by Discord or HLLV name.",
+      "keywords": ["directory", "player", "name", "Vietnam"],
+      "content": "Open HLLV names and enter at least two characters from a Discord nickname, username, user ID, or HLLV name. Directory records are maintained through the matching self-service Discord panel."
+    }
+  ]
+}

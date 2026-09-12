@@ -22,8 +22,10 @@ from aiohttp import ClientSession, ClientTimeout, web
 from openpyxl import Workbook
 
 from config import MAIN_GUILD_ID
+from data_paths import data_path
 from rank_order import DEFAULT_RANK_ORDER
 from spreadsheet_security import safe_spreadsheet_value
+from state_io import atomic_json_dump
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +72,9 @@ BUILDING_REPORT_IMAGE_TYPES = {
     "webp": ("image/webp", "webp"),
     "heic": ("image/heic", "heic"),
 }
+BUILDING_REPORT_STATE_PATH = Path(data_path("building_inspector_reports.json"))
+BUILDING_REPORT_STATUSES = ("Submitted", "Under review", "Action required", "Resolved", "Closed")
+KNOWLEDGE_BASE_PATH = Path(__file__).resolve().parent.parent / "liberationapp" / "knowledge_base.json"
 EXTERNAL_LINKS = {
     "bifrost": "https://frostbite.bifrostgaming.com/hll/guilds/7DR",
     "history": "https://7drhistostats.hllfrontline.com/",
@@ -84,6 +89,22 @@ class WebSession:
     expires_at: int
     claimed_name: str
     last_seen_at: int
+
+
+class _WebsiteInteractionFollowup:
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+
+    async def send(self, content: str | None = None, **_kwargs: Any) -> None:
+        self.messages.append(str(content or "Request completed."))
+
+
+class _WebsiteInteraction:
+    def __init__(self, member: discord.Member) -> None:
+        self.user = member
+        self.guild = member.guild
+        self.channel_id = None
+        self.followup = _WebsiteInteractionFollowup()
 
 
 class FrontlineWeb:
@@ -106,6 +127,8 @@ class FrontlineWeb:
         self._login_failures: dict[str, list[float]] = {}
         self._hllv_searches: dict[str, list[float]] = {}
         self._building_report_submissions: dict[str, list[float]] = {}
+        self._building_reports = self._load_building_reports()
+        self._building_reports_lock = asyncio.Lock()
         self._server_status_cache: tuple[float, list[dict[str, Any]]] = (0.0, [])
         self._server_status_lock = asyncio.Lock()
         self._highlights_cache: tuple[float, list[dict[str, Any]]] = (0.0, [])
@@ -131,7 +154,16 @@ class FrontlineWeb:
         app.router.add_post("/admin/logout", self.admin_logout)
         app.router.add_get("/api/dashboard", self.dashboard)
         app.router.add_get("/api/hllv-search", self.hllv_search)
+        app.router.add_get("/api/building-inspector-reports", self.building_inspector_reports)
         app.router.add_post("/api/building-inspector-reports", self.submit_building_inspector_report)
+        app.router.add_get("/api/game-request-options", self.game_request_options)
+        app.router.add_post("/api/game-requests", self.submit_game_request)
+        app.router.add_get("/api/knowledge-base", self.knowledge_base)
+        app.router.add_get("/api/building-inspector-reports", self.building_inspector_reports)
+        app.router.add_get("/api/game-request-options", self.game_request_options)
+        app.router.add_post("/api/game-requests", self.submit_game_request)
+        app.router.add_get("/api/knowledge-base", self.knowledge_base)
+        app.router.add_post("/admin/building-reports/{reference}", self.admin_update_building_report)
         app.router.add_get("/assets/maps/{filename}", self.map_asset)
         app.router.add_get("/assets/{filename}", self.asset)
         app.router.add_get("/exports/rollcalls/{key}.html", self.rollcall_html_export)
@@ -461,6 +493,64 @@ class FrontlineWeb:
         response.del_cookie(ADMIN_SESSION_COOKIE, path="/")
         return response
 
+    @staticmethod
+    def _load_building_reports() -> dict[str, dict[str, Any]]:
+        try:
+            payload = json.loads(BUILDING_REPORT_STATE_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        reports = payload.get("reports") if isinstance(payload, dict) else None
+        return reports if isinstance(reports, dict) else {}
+
+    def _save_building_reports(self) -> None:
+        atomic_json_dump(
+            BUILDING_REPORT_STATE_PATH,
+            {"reports": self._building_reports},
+            indent=2,
+            ensure_ascii=False,
+        )
+
+    def _building_report_admin_rows(self) -> str:
+        reports = sorted(
+            self._building_reports.values(),
+            key=lambda item: str(item.get("created_at") or ""),
+            reverse=True,
+        )[:100]
+        rows = []
+        for report in reports:
+            reference = html.escape(str(report.get("reference") or ""), quote=True)
+            current_status = str(report.get("status") or "Submitted")
+            options = "".join(
+                f'<option value="{html.escape(status, quote=True)}"'
+                f'{" selected" if status == current_status else ""}>{html.escape(status)}</option>'
+                for status in BUILDING_REPORT_STATUSES
+            )
+            rows.append(
+                "<tr>"
+                f"<td><strong>{reference}</strong><br><small>{html.escape(str(report.get('created_at') or ''))}</small></td>"
+                f"<td>{html.escape(str(report.get('claimed_name') or 'Unknown'))}</td>"
+                f"<td>{html.escape(str(report.get('description') or ''))}</td>"
+                f'<td><form class="status-form" method="post" action="/admin/building-reports/{reference}">'
+                f'<select name="status">{options}</select><button type="submit">Update</button></form></td>'
+                "</tr>"
+            )
+        return "".join(rows) or '<tr><td class="admin-empty" colspan="4">No building reports submitted.</td></tr>'
+
+    async def admin_update_building_report(self, request: web.Request) -> web.Response:
+        reference = str(request.match_info.get("reference") or "")
+        form = await request.post()
+        status = str(form.get("status") or "")
+        if status not in BUILDING_REPORT_STATUSES:
+            raise web.HTTPBadRequest(text="Invalid report status.")
+        async with self._building_reports_lock:
+            report = self._building_reports.get(reference)
+            if not isinstance(report, dict):
+                raise web.HTTPNotFound(text="Report not found.")
+            report["status"] = status
+            report["updated_at"] = datetime.now(timezone.utc).isoformat()
+            self._save_building_reports()
+        return web.HTTPSeeOther(location="/admin#building-reports")
+
     def _session_snapshot(self) -> tuple[int, int, list[WebSession]]:
         now = int(time.time())
         self._sessions = {
@@ -510,6 +600,7 @@ class FrontlineWeb:
             "{{UNIQUE_NAMES}}": str(unique_names),
             "{{SESSION_LIMIT}}": str(MAX_ACTIVE_SESSIONS),
             "{{SESSION_ROWS}}": "".join(rows),
+            "{{BUILDING_REPORT_ROWS}}": self._building_report_admin_rows(),
             "{{UPDATED_AT}}": datetime.now(timezone.utc).strftime("%d/%m/%y %H:%M:%S UTC"),
         }
         for placeholder, value in replacements.items():
@@ -667,7 +758,11 @@ class FrontlineWeb:
         image_data: bytes,
         image_content_type: str,
         image_extension: str,
-    ) -> None:
+        category: str = "Other",
+        location: str = "Not specified",
+        severity: str = "Routine",
+        reference: str = "",
+    ) -> list[Any]:
         channels = await self._building_report_channels()
         filename = f"building-infringement.{image_extension}"
         embed = discord.Embed(
@@ -677,6 +772,11 @@ class FrontlineWeb:
             timestamp=datetime.now(timezone.utc),
         )
         embed.add_field(name="Website login name", value=claimed_name, inline=False)
+        if reference:
+            embed.add_field(name="Reference", value=reference, inline=True)
+        embed.add_field(name="Category", value=category, inline=True)
+        embed.add_field(name="Severity", value=severity, inline=True)
+        embed.add_field(name="Location", value=location, inline=False)
         embed.set_image(url=f"attachment://{filename}")
         embed.set_footer(text="Submitted through HLL Frontline")
 
@@ -705,6 +805,7 @@ class FrontlineWeb:
             len(image_data),
             BUILDING_INSPECTOR_CHANNEL_IDS,
         )
+        return sent_messages
 
     async def submit_building_inspector_report(self, request: web.Request) -> web.Response:
         if not request.content_type.startswith("multipart/form-data"):
@@ -721,6 +822,9 @@ class FrontlineWeb:
             return web.json_response({"error": "Authentication required"}, status=401)
 
         description: str | None = None
+        category = "Other"
+        location = "Not specified"
+        severity = "Routine"
         image_data: bytes | None = None
         try:
             upload_request = request.clone(
@@ -733,6 +837,18 @@ class FrontlineWeb:
                     break
                 if field.name == "description":
                     description = self._normalise_infringement_description(await field.text())
+                elif field.name == "category":
+                    candidate = " ".join((await field.text()).split())
+                    if candidate in {"Fire safety", "Structural", "Access", "Services", "Site safety", "Other"}:
+                        category = candidate
+                elif field.name == "severity":
+                    candidate = " ".join((await field.text()).split())
+                    if candidate in {"Routine", "Urgent", "Immediate danger"}:
+                        severity = candidate
+                elif field.name == "location":
+                    candidate = " ".join((await field.text()).split())
+                    if candidate and len(candidate) <= 200:
+                        location = candidate
                 elif field.name == "image" and field.filename:
                     chunks = bytearray()
                     while True:
@@ -769,21 +885,189 @@ class FrontlineWeb:
             )
         image_content_type, image_extension = detected_image
 
+        reference = f"RBI-{datetime.now(timezone.utc):%Y%m%d}-{secrets.token_hex(3).upper()}"
+        report_record = {
+            "reference": reference,
+            "claimed_name": session.claimed_name,
+            "description": description,
+            "category": category,
+            "location": location,
+            "severity": severity,
+            "status": "Submitted",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "discord_messages": [],
+        }
         try:
-            await self._publish_building_report(
+            async with self._building_reports_lock:
+                self._building_reports[reference] = report_record
+                self._save_building_reports()
+            sent_messages = await self._publish_building_report(
                 claimed_name=session.claimed_name,
                 description=description,
+                category=category,
+                location=location,
+                severity=severity,
                 image_data=image_data,
                 image_content_type=image_content_type,
                 image_extension=image_extension,
+                reference=reference,
             )
         except Exception:
-            logger.exception("Could not deliver building-inspector report to both Discord channels")
+            async with self._building_reports_lock:
+                self._building_reports.pop(reference, None)
+                try:
+                    self._save_building_reports()
+                except Exception:
+                    logger.warning("Could not clean up failed building-report state", exc_info=True)
+            logger.exception("Could not store or deliver building-inspector report")
             return web.json_response(
                 {"error": "The report could not be delivered to Discord. Please try again."},
                 status=502,
             )
-        return web.json_response({"ok": True, "message": "Report sent to the building inspectors."})
+        async with self._building_reports_lock:
+            report_record["discord_messages"] = [
+                {"id": int(message.id), "url": str(getattr(message, "jump_url", ""))}
+                for message in sent_messages
+                if getattr(message, "id", None) is not None
+            ]
+            try:
+                self._save_building_reports()
+            except Exception:
+                logger.warning("Could not store Discord links for building report %s", reference, exc_info=True)
+        return web.json_response(
+            {
+                "ok": True,
+                "reference": reference,
+                "message": f"Report {reference} sent to the building inspectors.",
+            }
+        )
+
+    async def building_inspector_reports(self, request: web.Request) -> web.Response:
+        session = self._sessions.get(request.cookies.get(SESSION_COOKIE, ""))
+        if session is None:
+            return web.json_response({"error": "Authentication required"}, status=401)
+        reports = [
+            report
+            for report in self._building_reports.values()
+            if str(report.get("claimed_name") or "").casefold() == session.claimed_name.casefold()
+        ]
+        reports.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+        return web.json_response({"reports": reports[:50]})
+
+    def _session_member(self, request: web.Request) -> tuple[WebSession | None, discord.Member | None]:
+        session = self._sessions.get(request.cookies.get(SESSION_COOKIE, ""))
+        guild = self.bot.get_guild(MAIN_GUILD_ID)
+        if session is None or guild is None:
+            return session, None
+        wanted = " ".join(session.claimed_name.split()).casefold()
+        matches = []
+        for member in guild.members:
+            names = {
+                " ".join(str(value or "").split()).casefold()
+                for value in (member.display_name, member.name, member.global_name)
+                if value
+            }
+            if wanted in names:
+                matches.append(member)
+        return session, matches[0] if len(matches) == 1 else None
+
+    async def game_request_options(self, request: web.Request) -> web.Response:
+        from cogs.event_map_requests import ADMIN_CAM_SERVER_OPTIONS, MAP_SERVER_OPTIONS, _variant_label
+
+        _session, member = self._session_member(request)
+        request_cog = self.bot.get_cog("EventMapRequests")
+        if request_cog is None:
+            return web.json_response({"error": "The request service is unavailable."}, status=503)
+        map_options: dict[str, list[dict[str, str]]] = {}
+        for server_name, server_label in MAP_SERVER_OPTIONS.items():
+            try:
+                maps = await request_cog._map_catalogue(server_name)
+            except Exception:
+                logger.warning("Website map catalogue unavailable for %s", server_name, exc_info=True)
+                maps = []
+            map_options[server_name] = [
+                {
+                    **map_data,
+                    "label": f"{map_data['friendly_name']} — {_variant_label(map_data)}",
+                }
+                for map_data in maps
+            ]
+        return web.json_response(
+            {
+                "member_resolved": member is not None,
+                "map_servers": MAP_SERVER_OPTIONS,
+                "admin_cam_servers": ADMIN_CAM_SERVER_OPTIONS,
+                "maps": map_options,
+            }
+        )
+
+    async def submit_game_request(self, request: web.Request) -> web.Response:
+        from cogs.event_map_requests import ADMIN_CAM_SERVER_OPTIONS, MAP_SERVER_OPTIONS
+
+        _session, member = self._session_member(request)
+        if member is None:
+            return web.json_response(
+                {"error": "Your website login name does not uniquely match a Discord member. Log in again using your exact Discord name."},
+                status=400,
+            )
+        request_cog = self.bot.get_cog("EventMapRequests")
+        if request_cog is None:
+            return web.json_response({"error": "The request service is unavailable."}, status=503)
+        try:
+            payload = await request.json()
+        except (json.JSONDecodeError, web.HTTPException):
+            return web.json_response({"error": "The request could not be read."}, status=400)
+
+        kind = str(payload.get("kind") or "")
+        server_name = str(payload.get("server_name") or "")
+        interaction = _WebsiteInteraction(member)
+        if kind == "map":
+            server_label = MAP_SERVER_OPTIONS.get(server_name)
+            if server_label is None:
+                return web.json_response({"error": "Choose a valid map server."}, status=400)
+            requested_rcon = str(payload.get("rcon_name") or "")
+            try:
+                maps = await request_cog._map_catalogue(server_name)
+            except Exception:
+                logger.warning("Website map request catalogue failed", exc_info=True)
+                return web.json_response({"error": "The map catalogue is unavailable."}, status=503)
+            map_data = next((item for item in maps if item.get("rcon_name") == requested_rcon), None)
+            if map_data is None:
+                return web.json_response({"error": "Choose a valid map."}, status=400)
+            await request_cog.create_request(
+                interaction,
+                {**map_data, "server_name": server_name, "server_label": server_label},
+            )
+        elif kind == "admin_cam":
+            server_label = ADMIN_CAM_SERVER_OPTIONS.get(server_name)
+            try:
+                duration_hours = int(payload.get("duration_hours"))
+            except (TypeError, ValueError):
+                duration_hours = 0
+            if server_label is None or not 1 <= duration_hours <= 168:
+                return web.json_response({"error": "Choose a valid server and duration from 1 to 168 hours."}, status=400)
+            await request_cog.create_admin_cam_request(
+                interaction,
+                duration_hours=duration_hours,
+                server_name=server_name,
+                server_label=server_label,
+            )
+        else:
+            return web.json_response({"error": "Choose a valid request type."}, status=400)
+
+        message = interaction.followup.messages[-1] if interaction.followup.messages else "Request completed."
+        success = "sent to staff" in message
+        return web.json_response({"ok": success, "message": message}, status=200 if success else 400)
+
+    async def knowledge_base(self, _request: web.Request) -> web.Response:
+        try:
+            payload = json.loads(KNOWLEDGE_BASE_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return web.json_response({"error": "The knowledge base is unavailable."}, status=503)
+        articles = payload.get("articles") if isinstance(payload, dict) else None
+        if not isinstance(articles, list):
+            return web.json_response({"error": "The knowledge base is unavailable."}, status=503)
+        return web.json_response({"articles": articles})
 
     @staticmethod
     def _event_payload(guild) -> list[dict[str, Any]]:

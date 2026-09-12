@@ -41,6 +41,7 @@
       <button class="tab" data-view="statistics">Statistics</button>
       <button class="tab" data-view="directory">HLLV names</button>
       <button class="tab" data-view="building-inspectors">Registered Building Inspectors</button>
+      <button class="tab" data-view="knowledge-base">Knowledge base</button>
     </nav>
 
     <section id="loading" class="loading-state">
@@ -72,6 +73,16 @@
     <section id="server-status" class="dashboard-view" hidden>
       <div class="section-heading"><div><p class="eyebrow">LIVE SERVERS</p><h2>Server status</h2></div><p>The latest status cards published into Discord by the configured webhooks.</p></div>
       <div id="server-grid" class="server-status-grid"></div>
+      <div class="subsection-heading spaced"><h3>Server requests</h3><span>Staff approval required</span></div>
+      <form id="game-request-form" class="building-report-form compact-form">
+        <label for="game-request-kind">Request type</label>
+        <select id="game-request-kind" required><option value="map">Map change</option><option value="admin_cam">Temporary admin cam</option></select>
+        <label for="game-request-server">Server</label><select id="game-request-server" required></select>
+        <div id="map-request-fields"><label for="game-request-map">Map and variant</label><select id="game-request-map" required></select></div>
+        <div id="admin-cam-request-fields" hidden><label for="game-request-duration">Duration in hours</label><input id="game-request-duration" type="number" min="1" max="168" value="24"></div>
+        <button id="game-request-submit" type="submit">Send for approval</button>
+      </form>
+      <p id="game-request-status" class="muted-copy" role="status" aria-live="polite">Your website login name must exactly match your Discord name.</p>
     </section>
 
     <section id="upcoming" class="dashboard-view" hidden>
@@ -114,6 +125,9 @@
     <section id="building-inspectors" class="dashboard-view" hidden>
       <div class="section-heading"><div><p class="eyebrow">INFRINGEMENT REPORTING</p><h2>Registered Building Inspectors</h2></div><p>Send a photographed building infringement directly to the inspection team.</p></div>
       <form id="building-report-form" class="building-report-form" enctype="multipart/form-data">
+        <div class="form-columns"><div><label for="building-report-category">Category</label><select id="building-report-category" name="category"><option>Fire safety</option><option>Structural</option><option>Access</option><option>Services</option><option>Site safety</option><option>Other</option></select></div><div><label for="building-report-severity">Severity</label><select id="building-report-severity" name="severity"><option>Routine</option><option>Urgent</option><option>Immediate danger</option></select></div></div>
+        <label for="building-report-location">Location</label>
+        <input id="building-report-location" name="location" maxlength="200" placeholder="Building, floor, room, or grid reference">
         <label for="building-report-description">Infringement description</label>
         <textarea id="building-report-description" name="description" maxlength="1500" rows="7" placeholder="Describe the infringement, its location, and any relevant details." required></textarea>
         <label for="building-report-image">Picture of the infringement</label>
@@ -123,6 +137,15 @@
         <button id="building-report-submit" type="submit">Send report</button>
       </form>
       <p id="building-report-status" class="muted-copy" role="status" aria-live="polite">Reports are sent to both Registered Building Inspector Discord channels.</p>
+      <div class="subsection-heading spaced"><h3>My reports</h3><span>Latest 50</span></div>
+      <div id="building-report-history"></div>
+    </section>
+
+    <section id="knowledge-base" class="dashboard-view" hidden>
+      <div class="section-heading"><div><p class="eyebrow">UNIT REFERENCE</p><h2>Knowledge base</h2></div><p>Search guides for onboarding, website tools, server requests, and clan procedures.</p></div>
+      <form id="knowledge-search-form" class="directory-search"><label for="knowledge-query">Search articles</label><div><input id="knowledge-query" autocomplete="off" placeholder="Search by title, category, or keyword"><button type="submit">Search</button></div></form>
+      <p id="knowledge-status" class="muted-copy">Loading articles…</p>
+      <div id="knowledge-grid" class="knowledge-grid"></div>
     </section>
 
   </main>

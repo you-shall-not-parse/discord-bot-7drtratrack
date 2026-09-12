@@ -14,6 +14,7 @@ from cogs.frontline_web import (
     EXTERNAL_LINKS,
     FRONTEND_DIR,
     HIGHLIGHTS_CHANNEL_ID,
+    KNOWLEDGE_BASE_PATH,
     MAP_IMAGES_DIR,
     MAX_ACTIVE_SESSIONS,
     SESSION_SECONDS,
@@ -62,6 +63,11 @@ def test_frontend_assets_exist_and_are_wired() -> None:
     assert 'capture="environment"' in index
     assert 'fetch("/api/building-inspector-reports"' in javascript
     assert 'new FormData(form)' in javascript
+    assert 'id="game-request-form"' in index
+    assert 'apiJson("/api/game-requests"' in javascript
+    assert 'data-view="knowledge-base"' in index
+    assert 'id="knowledge-search-form"' in index
+    assert 'apiJson("/api/knowledge-base"' in javascript
     assert 'id="highlight-grid"' in index
     assert 'data-view="community"' not in index
     assert 'id="server-grid"' in index
@@ -108,6 +114,9 @@ def test_frontend_assets_exist_and_are_wired() -> None:
     assert "background-attachment: fixed" not in css
     assert "position: absolute; bottom: auto; height: 100svh" in css
     assert "Matches, server activity, clan records and personnel readiness" not in index
+    knowledge = json.loads(KNOWLEDGE_BASE_PATH.read_text(encoding="utf-8"))
+    assert len(knowledge["articles"]) >= 4
+    assert all(article.get("title") and article.get("content") for article in knowledge["articles"])
 
 
 def test_optimized_war_diary_map_card_assets_exist() -> None:
@@ -312,6 +321,15 @@ def test_admin_page_reports_activity_and_escapes_claimed_names(monkeypatch) -> N
     now = 1_000
     monkeypatch.setattr("cogs.frontline_web.time.time", lambda: now)
     service = FrontlineWeb(SimpleNamespace())
+    service._building_reports = {
+        "RBI-TEST": {
+            "reference": "RBI-TEST",
+            "claimed_name": "<Inspector>",
+            "description": "<unsafe report>",
+            "status": "Under review",
+            "created_at": "2026-09-12T12:00:00+00:00",
+        }
+    }
     unsafe_token = service._new_session("<script>alert(1)</script>")
     active_token = service._new_session("Active User")
     assert unsafe_token is not None and active_token is not None
@@ -325,6 +343,10 @@ def test_admin_page_reports_activity_and_escapes_claimed_names(monkeypatch) -> N
     assert "<strong>2</strong><small>Logged-in sessions</small>" in document
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in document
     assert "<script>alert(1)</script>" not in document
+    assert "RBI-TEST" in document
+    assert "&lt;Inspector&gt;" in document
+    assert "&lt;unsafe report&gt;" in document
+    assert '<option value="Under review" selected>' in document
 
 
 def test_admin_route_requires_a_separate_admin_session() -> None:

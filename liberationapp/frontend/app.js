@@ -1,6 +1,8 @@
-const VIEWS = new Set(["overview", "personnel", "server-status", "upcoming", "war-diary", "highlights", "statistics", "directory", "building-inspectors"]);
+const VIEWS = new Set(["overview", "personnel", "server-status", "upcoming", "war-diary", "highlights", "statistics", "directory", "building-inspectors", "knowledge-base"]);
 const requestedView = location.hash.replace(/^#/, "");
 const state = { data: null, view: VIEWS.has(requestedView) ? requestedView : "overview", eventLayout: "list" };
+let gameRequestOptions = null;
+let knowledgeArticles = [];
 const $ = selector => document.querySelector(selector);
 
 const escapeHtml = value => String(value ?? "").replace(/[&<>'"]/g, character => ({
@@ -120,6 +122,71 @@ function render() {
   renderLeaderboards();
   applyMapBackgrounds();
   showView(state.view, false);
+  loadSupportingFeatures();
+}
+
+async function apiJson(url, options = {}) {
+  const response = await fetch(url, { ...options, headers: { Accept: "application/json", ...(options.headers || {}) } });
+  if (response.status === 401) {
+    location.assign(`/login?next=${encodeURIComponent(location.pathname + location.search + location.hash)}`);
+    throw new Error("Authentication required.");
+  }
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || `Request returned ${response.status}.`);
+  return payload;
+}
+
+async function loadSupportingFeatures() {
+  if (!gameRequestOptions) {
+    try { gameRequestOptions = await apiJson("/api/game-request-options"); renderGameRequestFields(); }
+    catch (error) { $("#game-request-status").textContent = error.message; }
+  }
+  loadBuildingReportHistory();
+  if (!knowledgeArticles.length) {
+    try {
+      knowledgeArticles = (await apiJson("/api/knowledge-base")).articles || [];
+      renderKnowledgeBase("");
+    } catch (error) { $("#knowledge-status").textContent = error.message; }
+  }
+}
+
+function renderGameRequestFields() {
+  if (!gameRequestOptions) return;
+  const kind = $("#game-request-kind").value;
+  const servers = kind === "map" ? gameRequestOptions.map_servers : gameRequestOptions.admin_cam_servers;
+  const serverSelect = $("#game-request-server");
+  const selected = serverSelect.value;
+  serverSelect.innerHTML = Object.entries(servers).map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`).join("");
+  if (servers[selected]) serverSelect.value = selected;
+  $("#map-request-fields").hidden = kind !== "map";
+  $("#admin-cam-request-fields").hidden = kind !== "admin_cam";
+  $("#game-request-map").required = kind === "map";
+  renderMapOptions();
+  if (!gameRequestOptions.member_resolved) $("#game-request-status").textContent = "Your login name does not uniquely match Discord. Log in again with your exact Discord name.";
+}
+
+function renderMapOptions() {
+  if (!gameRequestOptions || $("#game-request-kind").value !== "map") return;
+  const maps = gameRequestOptions.maps[$("#game-request-server").value] || [];
+  $("#game-request-map").innerHTML = maps.map(map => `<option value="${escapeHtml(map.rcon_name)}">${escapeHtml(map.label)}</option>`).join("");
+}
+
+async function loadBuildingReportHistory() {
+  try {
+    const reports = (await apiJson("/api/building-inspector-reports")).reports || [];
+    $("#building-report-history").innerHTML = reports.length ? `<div class="report-history-grid">${reports.map(report => `<article class="report-history-card">
+      <span class="card-kicker">${escapeHtml(report.reference)}</span><h4>${escapeHtml(report.status)}</h4>
+      <div class="report-meta"><span>${escapeHtml(report.category)}</span><span>${escapeHtml(report.severity)}</span><span>${escapeHtml(new Date(report.created_at).toLocaleDateString("en-GB"))}</span></div>
+      <p><strong>${escapeHtml(report.location)}</strong>\n${escapeHtml(report.description)}</p>
+    </article>`).join("")}</div>` : emptyState("You have not submitted any building reports yet.");
+  } catch (error) { $("#building-report-history").innerHTML = emptyState(error.message); }
+}
+
+function renderKnowledgeBase(query) {
+  const wanted = query.trim().toLowerCase();
+  const articles = knowledgeArticles.filter(article => !wanted || `${article.title} ${article.category} ${(article.keywords || []).join(" ")} ${article.summary} ${article.content}`.toLowerCase().includes(wanted));
+  $("#knowledge-status").textContent = `${articles.length} article${articles.length === 1 ? "" : "s"}${wanted ? ` matching “${query.trim()}”` : " available"}.`;
+  $("#knowledge-grid").innerHTML = articles.map(article => `<article class="knowledge-card"><span class="card-kicker">${escapeHtml(article.category)}</span><h3>${escapeHtml(article.title)}</h3><p>${escapeHtml(article.summary)}</p><details><summary>Read guide</summary><p>${escapeHtml(article.content)}</p></details></article>`).join("") || emptyState("No knowledge-base articles matched your search.");
 }
 
 function renderOverview() {
@@ -383,6 +450,41 @@ $("#hllv-search-form").addEventListener("submit", async event => {
   }
 });
 
+$("#game-request-kind").addEventListener("change", renderGameRequestFields);
+$("#game-request-server").addEventListener("change", renderMapOptions);
+$("#game-request-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  const kind = $("#game-request-kind").value;
+  const submit = $("#game-request-submit");
+  const status = $("#game-request-status");
+  submit.disabled = true;
+  status.textContent = "Sending request…";
+  try {
+    const payload = await apiJson("/api/game-requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind,
+        server_name: $("#game-request-server").value,
+        rcon_name: $("#game-request-map").value,
+        duration_hours: Number($("#game-request-duration").value)
+      }),
+      signal: AbortSignal.timeout(30_000)
+    });
+    status.textContent = payload.message;
+    status.className = "muted-copy form-status success";
+  } catch (error) {
+    status.textContent = error.name === "TimeoutError" ? "The request timed out. Please try again." : error.message;
+    status.className = "muted-copy form-status error";
+  } finally { submit.disabled = false; }
+});
+
+$("#knowledge-search-form").addEventListener("submit", event => {
+  event.preventDefault();
+  renderKnowledgeBase($("#knowledge-query").value);
+});
+$("#knowledge-query").addEventListener("input", event => renderKnowledgeBase(event.target.value));
+
 let buildingReportPreviewUrl = "";
 $("#building-report-image").addEventListener("change", event => {
   if (buildingReportPreviewUrl) URL.revokeObjectURL(buildingReportPreviewUrl);
@@ -431,6 +533,7 @@ $("#building-report-form").addEventListener("submit", async event => {
     $("#building-report-preview").hidden = true;
     status.textContent = payload.message || "Report sent to the building inspectors.";
     status.className = "muted-copy form-status success";
+    await loadBuildingReportHistory();
   } catch (error) {
     status.textContent = error.name === "TimeoutError" ? "The report took too long to send. Please try again." : error.message;
     status.className = "muted-copy form-status error";
