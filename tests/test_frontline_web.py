@@ -37,11 +37,12 @@ def test_frontend_assets_exist_and_are_wired() -> None:
 
     admin = (FRONTEND_DIR / "admin.html").read_text(encoding="utf-8")
 
-    assert '<link rel="stylesheet" href="/assets/app.css?v=19">' in index
-    assert '<link rel="stylesheet" href="/assets/app.css?v=19">' in login
-    assert '<link rel="stylesheet" href="/assets/app.css?v=19">' in report
-    assert '<link rel="stylesheet" href="/assets/app.css?v=19">' in admin
+    assert '<link rel="stylesheet" href="/assets/app.css?v=20">' in index
+    assert '<link rel="stylesheet" href="/assets/app.css?v=20">' in login
+    assert '<link rel="stylesheet" href="/assets/app.css?v=20">' in report
+    assert '<link rel="stylesheet" href="/assets/app.css?v=20">' in admin
     assert '<script defer src="/assets/app.js?v=14"></script>' in index
+    assert '<div class="hub-tabs-scroll">' in index
     assert 'src="/assets/emblem_7dr.png"' in index
     assert "7th Armoured Division" in index
     assert "<dialog" not in index
