@@ -22,9 +22,14 @@ REQUEST_CHANNEL_ID = 1530939155067174933
 APPROVAL_CHANNEL_ID = 1279831955935854712
 MAP_APPROVER_ROLE_ID = 1279832920479109160
 EVENTS_BACKEND_NAME = "events"
+MAP_SERVER_OPTIONS = {
+    EVENTS_BACKEND_NAME: "Events",
+    "hllv": "HLLV",
+}
 ADMIN_CAM_SERVER_OPTIONS = {
     "main": "Events",
     "server_2": "Public",
+    "hllv": "HLLV",
 }
 T17_ROLE_NAME = "131st Infantry Brigade"
 MAP_CACHE_MAX_AGE = timedelta(hours=4)
@@ -34,6 +39,7 @@ PANEL_HISTORY_LIMIT = 2
 PANEL_STATE_PATH = Path(data_path("event_map_request_panel.json"))
 REQUEST_STATE_PATH = Path(data_path("event_map_requests.json"))
 MAP_CACHE_PATH = Path(data_path("event_map_catalogue.json"))
+HLLV_MAP_CACHE_PATH = Path(data_path("hllv_map_catalogue.json"))
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -87,15 +93,11 @@ class EventMapPanelView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ) -> None:
-        cog = interaction.client.get_cog("EventMapRequests")
-        if not isinstance(cog, EventMapRequests):
-            await interaction.response.send_message(
-                "The event map request tool is unavailable.",
-                ephemeral=True,
-            )
-            return
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        await cog.open_map_picker(interaction)
+        await interaction.response.send_message(
+            "Choose which server you want to request a map for:",
+            view=MapServerView(),
+            ephemeral=True,
+        )
 
     @discord.ui.button(
         label="Request Admin Cam Access",
@@ -136,7 +138,7 @@ class EventMapPanelView(discord.ui.View):
 class AdminCamServerSelect(discord.ui.Select):
     def __init__(self) -> None:
         super().__init__(
-            placeholder="Choose Events or Public…",
+            placeholder="Choose Events, Public, or HLLV…",
             min_values=1,
             max_values=1,
             options=[
@@ -160,6 +162,42 @@ class AdminCamServerView(discord.ui.View):
     def __init__(self) -> None:
         super().__init__(timeout=180)
         self.add_item(AdminCamServerSelect())
+
+
+class MapServerSelect(discord.ui.Select):
+    def __init__(self) -> None:
+        super().__init__(
+            placeholder="Choose Events or HLLV...",
+            min_values=1,
+            max_values=1,
+            options=[
+                discord.SelectOption(label=label, value=server_name)
+                for server_name, label in MAP_SERVER_OPTIONS.items()
+            ],
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        cog = interaction.client.get_cog("EventMapRequests")
+        if not isinstance(cog, EventMapRequests):
+            await interaction.response.send_message(
+                "The map request tool is unavailable.",
+                ephemeral=True,
+            )
+            return
+        server_name = self.values[0]
+        server_label = MAP_SERVER_OPTIONS[server_name]
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        await cog.open_map_picker(
+            interaction,
+            server_name=server_name,
+            server_label=server_label,
+        )
+
+
+class MapServerView(discord.ui.View):
+    def __init__(self) -> None:
+        super().__init__(timeout=180)
+        self.add_item(MapServerSelect())
 
 
 class AdminCamRequestModal(discord.ui.Modal, title="Request Admin Cam Access"):
@@ -551,14 +589,17 @@ class EventMapRequests(commands.Cog):
                     str(request.get("friendly_name") or "Unknown map")
                 )
                 variant = discord.utils.escape_markdown(_variant_label(request))
+                server_label = discord.utils.escape_markdown(
+                    str(request.get("server_label") or "Events")
+                )
                 if status == "approved":
                     decision = (
-                        f"✅ <@{requester_id}> your events server map request was approved. "
+                        f"✅ <@{requester_id}> your **{server_label}** server map request was approved. "
                         f"Changing now to **{friendly_name} — {variant}**."
                     )
                 else:
                     decision = (
-                        f"❌ <@{requester_id}> your events server map request for "
+                        f"❌ <@{requester_id}> your **{server_label}** server map request for "
                         f"**{friendly_name} — {variant}** was denied."
                     )
             lines.append(f"{decision} By <@{resolver_id}> • <t:{timestamp}:R>")
@@ -569,11 +610,13 @@ class EventMapRequests(commands.Cog):
             title="7DR Map & Admin Cam Requests",
             colour=discord.Colour.blue(),
             description=(
-                "Use this panel to request a scouting map on the 7DR **Events Server**, or "
-                "temporary admin cam access on the **Events** or **Public** server.\n\n"
+                "Use this panel to request a scouting map on the 7DR **Events** or **HLLV** "
+                "server, or temporary admin cam access on **Events**, **Public**, or **HLLV**.\n\n"
                 "For a map request, choose the map, game mode, and time-of-day variant. "
                 "For admin cam, choose the server and how long you need access.\n\n"
-                "Use **Show My T17 ID** to view your stored T17 ID and profile links.\n\n"
+                "HLLV admin cam uses your HLLV EOS ID, resolved the same way as `/t17admincam`; "
+                "the first lookup requires you to be connected with a matching Discord name.\n\n"
+                "Use **Show My T17 ID** to view your stored HLL T17 ID and profile links.\n\n"
                 "Every request requires staff approval. Approved maps change immediately, "
                 "while approved admin cam requests receive temporary Spectator access."
             ),
@@ -664,11 +707,12 @@ class EventMapRequests(commands.Cog):
                 "denied": "❌ Admin Cam Access Request Denied",
             }
         else:
+            server_label = str(request.get("server_label") or "Events")
             titles = {
-                "pending": "🗺️ Events Map Change Request",
-                "processing": "⏳ Events Map Change Request",
-                "approved": "✅ Events Map Changed",
-                "denied": "❌ Events Map Request Denied",
+                "pending": f"🗺️ {server_label} Map Change Request",
+                "processing": f"⏳ {server_label} Map Change Request",
+                "approved": f"✅ {server_label} Map Changed",
+                "denied": f"❌ {server_label} Map Request Denied",
             }
         embed = discord.Embed(
             title=titles.get(status, titles["pending"]),
@@ -688,7 +732,7 @@ class EventMapRequests(commands.Cog):
                 inline=True,
             )
             embed.add_field(
-                name="T17 ID",
+                name=str(request.get("identity_label") or "T17 ID"),
                 value=f"`{str(request.get('player_id') or 'unresolved')}`",
                 inline=False,
             )
@@ -700,6 +744,11 @@ class EventMapRequests(commands.Cog):
                     inline=False,
                 )
         else:
+            embed.add_field(
+                name="Server",
+                value=str(request.get("server_label") or "Events"),
+                inline=True,
+            )
             embed.add_field(name="Map", value=str(request["friendly_name"]), inline=True)
             embed.add_field(name="Variant", value=_variant_label(request), inline=True)
             embed.add_field(name="RCON name", value=f"`{request['rcon_name']}`", inline=False)
@@ -724,8 +773,16 @@ class EventMapRequests(commands.Cog):
             embed.set_thumbnail(url=image_url)
         return embed
 
-    def _backend(self):
-        return get_hll_backend_client(EVENTS_BACKEND_NAME)
+    def _backend(self, server_name: str = EVENTS_BACKEND_NAME):
+        return get_hll_backend_client(server_name)
+
+    @staticmethod
+    def _map_cache_path(server_name: str) -> Path:
+        if server_name == EVENTS_BACKEND_NAME:
+            return MAP_CACHE_PATH
+        if server_name == "hllv":
+            return HLLV_MAP_CACHE_PATH
+        raise KeyError(f"Unknown map request server: {server_name}")
 
     async def _get_channel(
         self,
@@ -796,9 +853,10 @@ class EventMapRequests(commands.Cog):
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             LOGGER.exception("Could not refresh event map request panel %s", message_id)
 
-    async def _map_catalogue(self) -> list[dict[str, str]]:
+    async def _map_catalogue(self, server_name: str) -> list[dict[str, str]]:
         async with self._map_lock:
-            cached = _read_json(MAP_CACHE_PATH)
+            cache_path = self._map_cache_path(server_name)
+            cached = _read_json(cache_path)
             cached_maps = cached.get("maps")
             fetched_at_raw = str(cached.get("fetched_at") or "")
             fresh = False
@@ -814,10 +872,14 @@ class EventMapRequests(commands.Cog):
                 return [item for item in cached_maps if isinstance(item, dict)]
 
             try:
-                raw_maps = await self._backend().get_available_maps()
+                raw_maps = await self._backend(server_name).get_available_maps()
             except HLLBackendError:
                 if isinstance(cached_maps, list) and cached_maps:
-                    LOGGER.warning("Using stale Bifrost map catalogue", exc_info=True)
+                    LOGGER.warning(
+                        "Using stale Bifrost map catalogue for %s",
+                        server_name,
+                        exc_info=True,
+                    )
                     return [item for item in cached_maps if isinstance(item, dict)]
                 raise
 
@@ -835,9 +897,11 @@ class EventMapRequests(commands.Cog):
                 )
             )
             if not maps:
-                raise HLLBackendError("Bifrost returned no valid HLL maps")
+                raise HLLBackendError(
+                    f"Bifrost returned no valid maps for {MAP_SERVER_OPTIONS[server_name]}"
+                )
             atomic_json_dump(
-                MAP_CACHE_PATH,
+                cache_path,
                 {
                     "fetched_at": datetime.now(timezone.utc).isoformat(),
                     "maps": maps,
@@ -847,22 +911,39 @@ class EventMapRequests(commands.Cog):
             )
             return maps
 
-    async def open_map_picker(self, interaction: discord.Interaction) -> None:
-        try:
-            maps = await self._map_catalogue()
-        except (HLLBackendError, KeyError) as exc:
-            LOGGER.warning("Could not open event map catalogue: %s", exc)
+    async def open_map_picker(
+        self,
+        interaction: discord.Interaction,
+        *,
+        server_name: str,
+        server_label: str,
+    ) -> None:
+        if MAP_SERVER_OPTIONS.get(server_name) != server_label:
             await interaction.followup.send(
-                "The events server map catalogue is unavailable. Please contact staff.",
+                "That map server selection is invalid. Please start the request again.",
+                ephemeral=True,
+            )
+            return
+        try:
+            maps = await self._map_catalogue(server_name)
+        except (HLLBackendError, KeyError) as exc:
+            LOGGER.warning("Could not open %s map catalogue: %s", server_name, exc)
+            await interaction.followup.send(
+                f"The {server_label} server map catalogue is unavailable. Please contact staff.",
                 ephemeral=True,
             )
             return
 
         maps_by_name: dict[str, list[dict[str, str]]] = {}
         for map_data in maps:
-            maps_by_name.setdefault(map_data["friendly_name"], []).append(map_data)
+            request_map = {
+                **map_data,
+                "server_name": server_name,
+                "server_label": server_label,
+            }
+            maps_by_name.setdefault(map_data["friendly_name"], []).append(request_map)
         await interaction.followup.send(
-            BaseMapView.prompt(maps_by_name, page=0),
+            f"**{server_label} server**\n{BaseMapView.prompt(maps_by_name, page=0)}",
             view=BaseMapView(self, maps_by_name, page=0),
             ephemeral=True,
         )
@@ -872,6 +953,14 @@ class EventMapRequests(commands.Cog):
         interaction: discord.Interaction,
         map_data: dict[str, str],
     ) -> None:
+        server_name = str(map_data.get("server_name") or "")
+        server_label = str(map_data.get("server_label") or "")
+        if MAP_SERVER_OPTIONS.get(server_name) != server_label:
+            await interaction.followup.send(
+                "That map server selection is invalid. Please start the request again.",
+                ephemeral=True,
+            )
+            return
         approval_channel = await self._get_channel(APPROVAL_CHANNEL_ID)
         if approval_channel is None:
             await interaction.followup.send(
@@ -885,11 +974,12 @@ class EventMapRequests(commands.Cog):
                 str(request.get("status")) in {"pending", "processing"}
                 and int(request.get("requester_id") or 0) == interaction.user.id
                 and str(request.get("request_type") or "map") == "map"
+                and str(request.get("server_name") or EVENTS_BACKEND_NAME) == server_name
                 for request in self._requests.values()
                 if isinstance(request, dict)
             ):
                 await interaction.followup.send(
-                    "You already have a pending map request.",
+                    f"You already have a pending map request for **{server_label}**.",
                     ephemeral=True,
                 )
                 return
@@ -922,7 +1012,8 @@ class EventMapRequests(commands.Cog):
             atomic_json_dump(REQUEST_STATE_PATH, self._requests, indent=2, ensure_ascii=False)
 
         await interaction.followup.send(
-            f"Your request for **{map_data['friendly_name']} — {_variant_label(map_data)}** "
+            f"Your **{server_label}** request for "
+            f"**{map_data['friendly_name']} — {_variant_label(map_data)}** "
             "has been sent to staff.",
             ephemeral=True,
         )
@@ -958,28 +1049,45 @@ class EventMapRequests(commands.Cog):
             )
             return
 
+        admin_cog = self.bot.get_cog("[API] T17ServerAdmin")
+        resolve_identity = getattr(admin_cog, "resolve_admin_cam_identity", None)
+        if not callable(resolve_identity):
+            await interaction.followup.send(
+                "The temporary admin cam service is unavailable.",
+                ephemeral=True,
+            )
+            return
+
         try:
-            t17_id, source, queries = await self._t17_lookup.resolve_member_for_role(
+            player_id, source, queries, identity_label = await resolve_identity(
                 member,
-                role_name="t17serveradmin",
+                server_name,
             )
         except Exception as exc:
             LOGGER.exception(
-                "Could not resolve T17 ID for admin cam request member_id=%s: %s",
+                "Could not resolve admin cam identity server=%s member_id=%s: %s",
+                server_name,
                 member.id,
                 exc,
             )
             await interaction.followup.send(
-                "The T17 lookup is temporarily unavailable. Please try again later.",
+                "The player identity lookup is temporarily unavailable. Please try again later.",
                 ephemeral=True,
             )
             return
-        if not t17_id:
-            await interaction.followup.send(
-                "I could not resolve your T17 ID. Use **Show My T17 ID** to check your stored record, "
-                "or contact an admin to correct it.",
-                ephemeral=True,
-            )
+        if not player_id:
+            if server_name == "hllv":
+                message = (
+                    "I could not resolve your HLLV EOS ID. For the first lookup, you must be "
+                    "connected to the HLLV server with an in-game name matching your Discord "
+                    "display name, username, or global name."
+                )
+            else:
+                message = (
+                    "I could not resolve your T17 ID. Use **Show My T17 ID** to check your stored "
+                    "record, or contact an admin to correct it."
+                )
+            await interaction.followup.send(message, ephemeral=True)
             return
 
         description = (
@@ -1015,7 +1123,8 @@ class EventMapRequests(commands.Cog):
                 "request_channel_id": interaction.channel_id,
                 "status": "pending",
                 "created_at": datetime.now(timezone.utc).isoformat(),
-                "player_id": t17_id,
+                "player_id": player_id,
+                "identity_label": identity_label,
                 "description": description,
                 "source": source,
                 "queries": queries,
@@ -1126,7 +1235,12 @@ class EventMapRequests(commands.Cog):
                 if request_type == "admin_cam":
                     result = await self._grant_admin_cam_request(request, interaction.user)
                 else:
-                    result = await self._backend().change_map(str(request["rcon_name"]))
+                    server_name = str(request.get("server_name") or EVENTS_BACKEND_NAME)
+                    if server_name not in MAP_SERVER_OPTIONS:
+                        raise HLLBackendError(f"Unknown map request server: {server_name}")
+                    result = await self._backend(server_name).change_map(
+                        str(request["rcon_name"])
+                    )
             except Exception as exc:
                 error_message = str(exc) or type(exc).__name__
                 async with self._request_lock:

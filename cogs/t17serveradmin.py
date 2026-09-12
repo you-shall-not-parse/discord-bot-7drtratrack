@@ -243,6 +243,22 @@ class T17ServerAdmin(commands.Cog, name="[API] T17ServerAdmin"):
         normalized = self.lookup.normalize_discord_username(member.display_name, strip_rank_prefix=True)
         return normalized or member.display_name
 
+    async def resolve_admin_cam_identity(
+        self,
+        member: discord.Member,
+        server_name: str,
+    ) -> tuple[str | None, str, list[str], str]:
+        """Resolve the correct game identity for an admin-cam target server."""
+        if server_name == HLLV_SERVER_NAME:
+            player_id, source, queries = await self._resolve_hllv_platform_id(member)
+            return player_id, source, queries, "HLLV EOS ID"
+
+        player_id, source, queries = await self.lookup.resolve_member_for_role(
+            member,
+            role_name="t17serveradmin",
+        )
+        return player_id, source, queries, "T17 ID"
+
     async def grant_temporary_admin_cam(
         self,
         *,
@@ -351,15 +367,10 @@ class T17ServerAdmin(commands.Cog, name="[API] T17ServerAdmin"):
 
         selected_server = server.value
         try:
-            if selected_server == HLLV_SERVER_NAME:
-                identity_label = "HLLV EOS ID"
-                player_id, source, queries = await self._resolve_hllv_platform_id(member)
-            else:
-                identity_label = "T17 ID"
-                player_id, source, queries = await self.lookup.resolve_member_for_role(
-                    member,
-                    role_name="t17serveradmin",
-                )
+            player_id, source, queries, identity_label = await self.resolve_admin_cam_identity(
+                member,
+                selected_server,
+            )
         except HLLBackendError as exc:
             self.logger.exception(
                 "t17admincam_identity_lookup_failed server=%s member_id=%s error=%s",
