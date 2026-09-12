@@ -315,6 +315,7 @@ footer { padding: 28px clamp(22px, 5vw, 72px); border-top: 1px solid var(--line)
   .status span:last-child { display: none; }
   .topbar-actions { gap: 9px; }
   .member-picker summary { max-width: 90px; font-size: 11px; }
+  .member-picker-panel { position: fixed; top: 66px; left: 12px; right: 12px; width: auto; max-height: calc(100dvh - 82px); box-sizing: border-box; }
   main { padding: 0 14px 52px; }
   .hero { min-height: 205px; padding: 24px 0 20px; }
   .hero-emblem { display: none; }

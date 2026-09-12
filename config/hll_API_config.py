@@ -22,6 +22,10 @@ HLL_BACKEND_SERVERS: dict[str, dict[str, Any]] = {
         "bifrost": {
             "server_id": os.getenv("BIFROST_SERVER_ID1", os.getenv("BIFROST_SERVER_ID", "")).strip(),
             "game_type": os.getenv("BIFROST_GAME_TYPE", "HLL").strip() or "HLL",
+            # Events admin cam uses this alias. Use the same Guild OAuth
+            # endpoints as Events map requests, regardless of legacy globals.
+            "oauth_url": "https://api.dev.bifrostgaming.com/v1/oauth/token",
+            "graphql_url": "https://api.dev.bifrostgaming.com/v1/graphql",
         },
     },
     "server_2": {
@@ -100,8 +104,8 @@ def get_hll_backend_status(server_name: str | None = None) -> dict[str, Any]:
         client_secret = os.getenv(BIFROST_CLIENT_SECRET_ENV, "").strip()
         status.update(
             {
-                "oauth_url": BIFROST_OAUTH_URL,
-                "graphql_url": BIFROST_GRAPHQL_URL,
+                "oauth_url": str(bifrost_config.get("oauth_url") or BIFROST_OAUTH_URL),
+                "graphql_url": str(bifrost_config.get("graphql_url") or BIFROST_GRAPHQL_URL),
                 "client_id_env": BIFROST_CLIENT_ID_ENV,
                 "client_secret_env": BIFROST_CLIENT_SECRET_ENV,
                 "client_id_present": bool(client_id),
