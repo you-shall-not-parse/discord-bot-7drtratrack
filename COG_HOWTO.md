@@ -219,13 +219,13 @@ Rules and notes: Because this cog is automation-heavy, wrong channel config or w
 
 ## `multi_trainee_tracker.py`
 
-Overview: Tracks trainee progress across multiple categories or training paths.
+Overview: Provides Infantry, Recon, and Armour trainee progress for the website.
 
 Slash commands: none exposed here in the current bot loadout.
 
-How to use: Staff use it to record where someone is in the process instead of relying on scattered manual notes.
+How to use: Open Personnel on the website and select a trainee tracker. Membership and qualifications are read from current Discord roles.
 
-Rules and notes: Keep one clear source of truth. If staff track trainees in several places at once, this loses value quickly.
+Rules and notes: This cog no longer posts embeds or HTML attachments to Discord, schedules posting jobs, or requires tracker channels. The old channels can be deleted. Website tables and HTML/Excel exports remain available.
 
 ## `rollcall.py`
 

@@ -159,10 +159,6 @@ class FrontlineWeb:
         app.router.add_get("/api/game-request-options", self.game_request_options)
         app.router.add_post("/api/game-requests", self.submit_game_request)
         app.router.add_get("/api/knowledge-base", self.knowledge_base)
-        app.router.add_get("/api/building-inspector-reports", self.building_inspector_reports)
-        app.router.add_get("/api/game-request-options", self.game_request_options)
-        app.router.add_post("/api/game-requests", self.submit_game_request)
-        app.router.add_get("/api/knowledge-base", self.knowledge_base)
         app.router.add_post("/admin/building-reports/{reference}", self.admin_update_building_report)
         app.router.add_get("/assets/maps/{filename}", self.map_asset)
         app.router.add_get("/assets/{filename}", self.asset)
@@ -204,7 +200,7 @@ class FrontlineWeb:
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; "
             f"script-src 'self'{turnstile_script}; {turnstile_frame}connect-src 'self'; "
-            "img-src 'self' data: https://cdn.discordapp.com https://media.discordapp.net https://*.discordapp.net; "
+            "img-src 'self' data: blob: https://cdn.discordapp.com https://media.discordapp.net https://*.discordapp.net; "
             "media-src 'self' https://cdn.discordapp.com https://media.discordapp.net https://*.discordapp.net; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
             "font-src 'self' https://fonts.gstatic.com"
@@ -213,7 +209,7 @@ class FrontlineWeb:
             response.headers["Strict-Transport-Security"] = "max-age=31536000"
         if request.path.startswith(
             ("/api/", "/exports/", "/admin", "/rollcalls/", "/trainees/")
-        ) or request.path == "/login":
+        ) or request.path in {"/login", "/"}:
             response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -981,7 +977,7 @@ class FrontlineWeb:
         map_options: dict[str, list[dict[str, str]]] = {}
         for server_name, server_label in MAP_SERVER_OPTIONS.items():
             try:
-                maps = await request_cog._map_catalogue(server_name)
+                maps = await asyncio.wait_for(request_cog._map_catalogue(server_name), timeout=10)
             except Exception:
                 logger.warning("Website map catalogue unavailable for %s", server_name, exc_info=True)
                 maps = []
@@ -1852,7 +1848,7 @@ class FrontlineWeb:
             raise web.HTTPNotFound()
         if not path.is_file():
             raise web.HTTPNotFound()
-        return web.FileResponse(path)
+        return web.FileResponse(path, headers={"Cache-Control": "no-cache"})
 
     async def map_asset(self, request: web.Request) -> web.StreamResponse:
         from cogs.wardiary import WAR_DIARY_MAP_IMAGE_FILES

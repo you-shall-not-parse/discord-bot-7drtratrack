@@ -9,8 +9,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/assets/app.css?v=16">
-  <script defer src="/assets/app.js?v=12"></script>
+  <link rel="stylesheet" href="/assets/app.css?v=17">
+  <script defer src="/assets/app.js?v=13"></script>
 </head>
 <body>
   <div class="grain" aria-hidden="true"></div>
@@ -72,7 +72,6 @@
 
     <section id="server-status" class="dashboard-view" hidden>
       <div class="section-heading"><div><p class="eyebrow">LIVE SERVERS</p><h2>Server status</h2></div><p>The latest status cards published into Discord by the configured webhooks.</p></div>
-      <div id="server-grid" class="server-status-grid"></div>
       <div class="subsection-heading spaced"><h3>Server requests</h3><span>Staff approval required</span></div>
       <form id="game-request-form" class="building-report-form compact-form">
         <label for="game-request-kind">Request type</label>
@@ -83,6 +82,7 @@
         <button id="game-request-submit" type="submit">Send for approval</button>
       </form>
       <p id="game-request-status" class="muted-copy" role="status" aria-live="polite">Your website login name must exactly match your Discord name.</p>
+      <div id="server-grid" class="server-status-grid"></div>
     </section>
 
     <section id="upcoming" class="dashboard-view" hidden>
@@ -131,7 +131,7 @@
         <label for="building-report-description">Infringement description</label>
         <textarea id="building-report-description" name="description" maxlength="1500" rows="7" placeholder="Describe the infringement, its location, and any relevant details." required></textarea>
         <label for="building-report-image">Picture of the infringement</label>
-        <input id="building-report-image" name="image" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/heic,.heic" capture="environment" required>
+        <input id="building-report-image" name="image" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/heic,.heic" required>
         <small>Take a new picture or choose one from your device. Maximum file size: 8 MB.</small>
         <div id="building-report-preview" class="building-report-preview" hidden><img alt="Selected infringement preview"></div>
         <button id="building-report-submit" type="submit">Send report</button>

@@ -37,11 +37,11 @@ def test_frontend_assets_exist_and_are_wired() -> None:
 
     admin = (FRONTEND_DIR / "admin.html").read_text(encoding="utf-8")
 
-    assert '<link rel="stylesheet" href="/assets/app.css?v=16">' in index
-    assert '<link rel="stylesheet" href="/assets/app.css?v=16">' in login
-    assert '<link rel="stylesheet" href="/assets/app.css?v=16">' in report
-    assert '<link rel="stylesheet" href="/assets/app.css?v=16">' in admin
-    assert '<script defer src="/assets/app.js?v=12"></script>' in index
+    assert '<link rel="stylesheet" href="/assets/app.css?v=17">' in index
+    assert '<link rel="stylesheet" href="/assets/app.css?v=17">' in login
+    assert '<link rel="stylesheet" href="/assets/app.css?v=17">' in report
+    assert '<link rel="stylesheet" href="/assets/app.css?v=17">' in admin
+    assert '<script defer src="/assets/app.js?v=13"></script>' in index
     assert 'src="/assets/emblem_7dr.png"' in index
     assert "7th Armoured Division" in index
     assert "<dialog" not in index
@@ -60,10 +60,11 @@ def test_frontend_assets_exist_and_are_wired() -> None:
     assert 'data-view="highlights"' in index
     assert 'data-view="building-inspectors"' in index
     assert 'id="building-report-form"' in index
-    assert 'capture="environment"' in index
+    assert 'capture="environment"' not in index
     assert 'fetch("/api/building-inspector-reports"' in javascript
     assert 'new FormData(form)' in javascript
     assert 'id="game-request-form"' in index
+    assert index.index('id="game-request-form"') < index.index('id="server-grid"')
     assert 'apiJson("/api/game-requests"' in javascript
     assert 'data-view="knowledge-base"' in index
     assert 'id="knowledge-search-form"' in index

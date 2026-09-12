@@ -78,7 +78,7 @@ async function loadDashboard() {
   const initialLoad = state.data === null;
   $("#loading").hidden = !initialLoad;
   $("#error").hidden = true;
-  if (initialLoad) document.querySelectorAll(".dashboard-view").forEach(section => { section.hidden = true; });
+  if (initialLoad) showView(state.view, false);
   try {
     const response = await fetch("/api/dashboard", {
       headers: { Accept: "application/json" },
@@ -122,7 +122,6 @@ function render() {
   renderLeaderboards();
   applyMapBackgrounds();
   showView(state.view, false);
-  loadSupportingFeatures();
 }
 
 async function apiJson(url, options = {}) {
@@ -137,11 +136,17 @@ async function apiJson(url, options = {}) {
 }
 
 async function loadSupportingFeatures() {
+  await Promise.allSettled([loadGameRequestOptions(), loadBuildingReportHistory(), loadKnowledgeBase()]);
+}
+
+async function loadGameRequestOptions() {
   if (!gameRequestOptions) {
-    try { gameRequestOptions = await apiJson("/api/game-request-options"); renderGameRequestFields(); }
+    try { gameRequestOptions = await apiJson("/api/game-request-options", { signal: AbortSignal.timeout(25_000) }); renderGameRequestFields(); }
     catch (error) { $("#game-request-status").textContent = error.message; }
   }
-  loadBuildingReportHistory();
+}
+
+async function loadKnowledgeBase() {
   if (!knowledgeArticles.length) {
     try {
       knowledgeArticles = (await apiJson("/api/knowledge-base")).articles || [];
@@ -161,6 +166,7 @@ function renderGameRequestFields() {
   $("#map-request-fields").hidden = kind !== "map";
   $("#admin-cam-request-fields").hidden = kind !== "admin_cam";
   $("#game-request-map").required = kind === "map";
+  $("#game-request-submit").disabled = false;
   renderMapOptions();
   if (!gameRequestOptions.member_resolved) $("#game-request-status").textContent = "Your login name does not uniquely match Discord. Log in again with your exact Discord name.";
 }
@@ -169,6 +175,11 @@ function renderMapOptions() {
   if (!gameRequestOptions || $("#game-request-kind").value !== "map") return;
   const maps = gameRequestOptions.maps[$("#game-request-server").value] || [];
   $("#game-request-map").innerHTML = maps.map(map => `<option value="${escapeHtml(map.rcon_name)}">${escapeHtml(map.label)}</option>`).join("");
+  $("#game-request-submit").disabled = maps.length === 0;
+  if (!maps.length) {
+    $("#game-request-map").innerHTML = '<option value="">Map catalogue unavailable</option>';
+    $("#game-request-status").textContent = "The map catalogue is unavailable. Try again shortly.";
+  }
 }
 
 async function loadBuildingReportHistory() {
@@ -417,9 +428,16 @@ function showView(view, updateHash = true) {
   if (updateHash) history.replaceState(null, "", `#${state.view}`);
 }
 
+window.addEventListener("hashchange", () => showView(location.hash.replace(/^#/, ""), false));
+
 document.addEventListener("click", event => {
   const tab = event.target.closest(".tab");
-  if (tab) showView(tab.dataset.view);
+  if (tab) {
+    showView(tab.dataset.view);
+    if (state.view === "server-status") loadGameRequestOptions();
+    if (state.view === "knowledge-base") loadKnowledgeBase();
+    if (state.view === "building-inspectors") loadBuildingReportHistory();
+  }
 });
 
 $("#event-view-toggle").addEventListener("click", () => {
@@ -543,5 +561,6 @@ $("#building-report-form").addEventListener("submit", async event => {
 });
 
 $("#retry").addEventListener("click", loadDashboard);
+loadSupportingFeatures();
 loadDashboard();
 setInterval(loadDashboard, 60_000);
