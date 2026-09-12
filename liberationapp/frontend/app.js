@@ -168,7 +168,7 @@ function renderGameRequestFields() {
   $("#game-request-map").required = kind === "map";
   $("#game-request-submit").disabled = false;
   renderMapOptions();
-  if (!gameRequestOptions.member_resolved) $("#game-request-status").textContent = "Your login name does not uniquely match Discord. Log in again with your exact Discord name.";
+  if (!gameRequestOptions.member_resolved) $("#game-request-status").textContent = "Use 'I am' at the top of the page to select yourself.";
 }
 
 function renderMapOptions() {
@@ -558,6 +558,58 @@ $("#building-report-form").addEventListener("submit", async event => {
   } finally {
     submit.disabled = false;
   }
+});
+
+function showSelectedMember(member) {
+  $("#member-current").textContent = member ? `I am ${member.display_name}` : "I am…";
+}
+
+apiJson("/api/session-member").then(payload => showSelectedMember(payload.member)).catch(error => {
+  $("#member-search-status").textContent = error.message;
+});
+
+let memberSearchTimer;
+let memberSearchVersion = 0;
+$("#member-query").addEventListener("input", event => {
+  clearTimeout(memberSearchTimer);
+  const query = event.target.value.trim();
+  const version = ++memberSearchVersion;
+  $("#member-results").replaceChildren();
+  $("#member-search-status").textContent = query.length < 2 ? "Enter at least two characters." : "Searching…";
+  if (query.length < 2) return;
+  memberSearchTimer = setTimeout(async () => {
+    try {
+      const payload = await apiJson(`/api/member-search?q=${encodeURIComponent(query)}`, { signal: AbortSignal.timeout(10_000) });
+      if (version !== memberSearchVersion) return;
+      $("#member-search-status").textContent = payload.members.length ? "Choose your Discord account." : "No members found.";
+      $("#member-results").innerHTML = payload.members.map(member =>
+        `<button type="button" data-member-id="${escapeHtml(member.id)}">${escapeHtml(member.display_name)}<small>@${escapeHtml(member.username)} · ${escapeHtml(member.id)}</small></button>`
+      ).join("");
+    } catch (error) {
+      if (version === memberSearchVersion) $("#member-search-status").textContent = error.message;
+    }
+  }, 350);
+});
+
+$("#member-results").addEventListener("click", async event => {
+  const button = event.target.closest("[data-member-id]");
+  if (!button) return;
+  const buttons = [...$("#member-results").querySelectorAll("button")];
+  buttons.forEach(item => { item.disabled = true; });
+  try {
+    const payload = await apiJson("/api/session-member", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Requested-With": "HLLFrontline" },
+      body: JSON.stringify({ member_id: button.dataset.memberId })
+    });
+    showSelectedMember(payload.member);
+    $("#member-picker").open = false;
+    $("#member-search-status").textContent = "Selection saved for this login.";
+    if (gameRequestOptions) gameRequestOptions.member_resolved = true;
+    $("#game-request-status").textContent = `Requests will be for ${payload.member.display_name}.`;
+  } catch (error) {
+    $("#member-search-status").textContent = error.message;
+  } finally { buttons.forEach(item => { item.disabled = false; }); }
 });
 
 $("#retry").addEventListener("click", loadDashboard);

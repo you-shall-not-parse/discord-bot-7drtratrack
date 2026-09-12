@@ -255,6 +255,10 @@ infringement, and take or upload a picture. A successful submission posts the
 description, login name, and image to Discord channels `1539382636483584000`
 and `1098333222540152944`.
 Each report receives an `RBI-...` reference and appears under **My reports**.
+The top-right **I am** search lets members select their Discord account by
+nickname, username, or user ID. That selection lasts for the current website
+login and supplies the member identity for map and admin-cam requests. It is
+self-selected, not a verified Discord login; staff approval is still required.
 Administrators can change its status from `/admin`. The **Server status** page
 also exposes Events/HLLV map and Events/Public/HLLV admin-cam requests through
 the existing Discord staff approval workflow. The **Knowledge base** searches

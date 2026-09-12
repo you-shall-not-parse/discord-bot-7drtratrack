@@ -9,8 +9,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/assets/app.css?v=17">
-  <script defer src="/assets/app.js?v=13"></script>
+  <link rel="stylesheet" href="/assets/app.css?v=18">
+  <script defer src="/assets/app.js?v=14"></script>
 </head>
 <body>
   <div class="grain" aria-hidden="true"></div>
@@ -19,7 +19,19 @@
       <img class="brand-mark" src="/assets/emblem_7dr.png" alt="7th Armoured Division emblem">
       <span><b>HLL</b> FRONTLINE<small>7TH ARMOURED DIVISION OPERATIONS</small></span>
     </a>
-    <div class="topbar-actions"><div class="status"><span class="status-dot"></span><span id="sync-status">Connecting to command</span></div><form method="post" action="/logout"><button class="logout-button" type="submit">Log out</button></form></div>
+    <div class="topbar-actions">
+      <details class="member-picker" id="member-picker">
+        <summary id="member-current">I am…</summary>
+        <div class="member-picker-panel">
+          <label for="member-query">Find yourself in Discord</label>
+          <input id="member-query" type="search" maxlength="80" autocomplete="off" placeholder="Name or Discord user ID">
+          <p id="member-search-status" role="status" aria-live="polite">Enter at least two characters.</p>
+          <div id="member-results"></div>
+          <small>Self-selected identity. Requests still need staff approval.</small>
+        </div>
+      </details>
+      <div class="status"><span class="status-dot"></span><span id="sync-status">Connecting to command</span></div><form method="post" action="/logout"><button class="logout-button" type="submit">Log out</button></form>
+    </div>
   </header>
 
   <main>
@@ -81,7 +93,7 @@
         <div id="admin-cam-request-fields" hidden><label for="game-request-duration">Duration in hours</label><input id="game-request-duration" type="number" min="1" max="168" value="24"></div>
         <button id="game-request-submit" type="submit">Send for approval</button>
       </form>
-      <p id="game-request-status" class="muted-copy" role="status" aria-live="polite">Your website login name must exactly match your Discord name.</p>
+      <p id="game-request-status" class="muted-copy" role="status" aria-live="polite">Use “I am” above to select yourself before requesting access.</p>
       <div id="server-grid" class="server-status-grid"></div>
     </section>
 

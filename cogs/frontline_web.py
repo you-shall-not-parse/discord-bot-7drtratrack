@@ -11,7 +11,7 @@ import re
 import secrets
 import sqlite3
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -89,6 +89,7 @@ class WebSession:
     expires_at: int
     claimed_name: str
     last_seen_at: int
+    member_id: int | None = None
 
 
 class _WebsiteInteractionFollowup:
@@ -154,6 +155,9 @@ class FrontlineWeb:
         app.router.add_post("/admin/logout", self.admin_logout)
         app.router.add_get("/api/dashboard", self.dashboard)
         app.router.add_get("/api/hllv-search", self.hllv_search)
+        app.router.add_get("/api/session-member", self.session_member)
+        app.router.add_post("/api/session-member", self.select_session_member)
+        app.router.add_get("/api/member-search", self.member_search)
         app.router.add_get("/api/building-inspector-reports", self.building_inspector_reports)
         app.router.add_post("/api/building-inspector-reports", self.submit_building_inspector_report)
         app.router.add_get("/api/game-request-options", self.game_request_options)
@@ -288,6 +292,7 @@ class FrontlineWeb:
                 expires_at=session.expires_at,
                 claimed_name=session.claimed_name,
                 last_seen_at=now,
+                member_id=session.member_id,
             )
         return True
 
@@ -955,6 +960,8 @@ class FrontlineWeb:
         guild = self.bot.get_guild(MAIN_GUILD_ID)
         if session is None or guild is None:
             return session, None
+        if session.member_id is not None:
+            return session, guild.get_member(session.member_id)
         wanted = " ".join(session.claimed_name.split()).casefold()
         matches = []
         for member in guild.members:
@@ -966,6 +973,52 @@ class FrontlineWeb:
             if wanted in names:
                 matches.append(member)
         return session, matches[0] if len(matches) == 1 else None
+
+    @staticmethod
+    def _member_summary(member) -> dict[str, str]:
+        return {"id": str(member.id), "display_name": member.display_name, "username": member.name}
+
+    async def session_member(self, request: web.Request) -> web.Response:
+        _session, member = self._session_member(request)
+        return web.json_response({"member": self._member_summary(member) if member else None})
+
+    async def member_search(self, request: web.Request) -> web.Response:
+        if not self._allow_hllv_search(request):
+            return web.json_response({"error": "Too many searches. Try again in a minute."}, status=429)
+        query = str(request.query.get("q") or "").strip().casefold()
+        if not 2 <= len(query) <= 80:
+            return web.json_response({"error": "Enter between 2 and 80 characters."}, status=400)
+        guild = self.bot.get_guild(MAIN_GUILD_ID)
+        if guild is None:
+            return web.json_response({"error": "Discord members are unavailable."}, status=503)
+        matches = [
+            member for member in guild.members
+            if not member.bot and any(
+                query in str(value or "").casefold()
+                for value in (member.display_name, member.name, member.global_name, member.id)
+            )
+        ]
+        matches.sort(key=lambda member: (member.display_name.casefold(), member.id))
+        return web.json_response({"members": [self._member_summary(member) for member in matches[:20]]})
+
+    async def select_session_member(self, request: web.Request) -> web.Response:
+        token = request.cookies.get(SESSION_COOKIE, "")
+        if not self._valid_session(token):
+            return web.json_response({"error": "Authentication required"}, status=401)
+        # A same-origin script header prevents cross-site form submissions.
+        if request.headers.get("X-Requested-With") != "HLLFrontline":
+            return web.json_response({"error": "Use the website member selector."}, status=403)
+        try:
+            payload = await request.json()
+            member_id = int(payload["member_id"])
+        except (ValueError, TypeError, KeyError):
+            return web.json_response({"error": "Select a Discord member."}, status=400)
+        guild = self.bot.get_guild(MAIN_GUILD_ID)
+        member = guild.get_member(member_id) if guild else None
+        if member is None or member.bot:
+            return web.json_response({"error": "That person is no longer a member of the server."}, status=400)
+        self._sessions[token] = replace(self._sessions[token], member_id=member.id)
+        return web.json_response({"member": self._member_summary(member)})
 
     async def game_request_options(self, request: web.Request) -> web.Response:
         from cogs.event_map_requests import ADMIN_CAM_SERVER_OPTIONS, MAP_SERVER_OPTIONS, _variant_label
@@ -1003,7 +1056,7 @@ class FrontlineWeb:
         _session, member = self._session_member(request)
         if member is None:
             return web.json_response(
-                {"error": "Your website login name does not uniquely match a Discord member. Log in again using your exact Discord name."},
+                {"error": "Select yourself using the 'I am' member search at the top of the page."},
                 status=400,
             )
         request_cog = self.bot.get_cog("EventMapRequests")
