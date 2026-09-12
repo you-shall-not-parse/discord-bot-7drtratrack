@@ -166,6 +166,18 @@ a.match-date:hover { color: var(--olive); }
 .directory-results article:first-child { border-top: 0; }
 .directory-results span { color: var(--muted); }
 .directory-results strong { color: var(--olive); }
+.building-report-form { display: grid; gap: 12px; max-width: 760px; padding: clamp(18px, 4vw, 30px); border: 1px solid var(--line); background: linear-gradient(145deg, #20231b, var(--panel)); }
+.building-report-form label { color: var(--muted); text-transform: uppercase; letter-spacing: .14em; font-size: 9px; }
+.building-report-form textarea,.building-report-form input[type="file"] { width: 100%; border: 1px solid var(--line); padding: 14px; color: var(--ink); background: #11130e; outline: none; font: 500 13px Inter; }
+.building-report-form textarea { min-height: 150px; resize: vertical; line-height: 1.55; }
+.building-report-form textarea:focus,.building-report-form input[type="file"]:focus { border-color: var(--olive); box-shadow: 0 0 0 3px #a8ad7318; }
+.building-report-form small { color: var(--muted); font-size: 10px; line-height: 1.5; }
+.building-report-form button { justify-self: start; border: 1px solid var(--olive); padding: 13px 20px; color: #151711; background: var(--olive); cursor: pointer; text-transform: uppercase; letter-spacing: .14em; font: 700 10px Inter; }
+.building-report-form button:disabled { cursor: wait; opacity: .55; }
+.building-report-preview { max-width: 520px; padding: 8px; border: 1px solid var(--line); background: #11130e; }
+.building-report-preview img { display: block; width: 100%; max-height: 420px; object-fit: contain; }
+.form-status.success { color: #b8d582; }
+.form-status.error { color: #e08b6b; }
 .inline-empty { grid-column: 1 / -1; padding: 28px; border: 1px dashed var(--line); color: var(--muted); font-size: 11px; text-align: center; }
 .community-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .ops-card { padding: 25px; background: linear-gradient(145deg, #20231b, var(--panel)); border: 1px solid var(--line); position: relative; overflow: hidden; transition: border-color .2s, transform .2s; }
@@ -308,6 +320,8 @@ footer { padding: 28px clamp(22px, 5vw, 72px); border-top: 1px solid var(--line)
   .directory-search { padding: 14px; }
   .directory-search div { grid-template-columns: 1fr; gap: 8px; }
   .directory-search button { min-height: 42px; }
+  .building-report-form { padding: 16px; }
+  .building-report-form button { width: 100%; }
   .ops-card { padding: 17px; }
   .card-top h3 { font-size: 24px; }
   .stats { grid-template-columns: repeat(3, 1fr); }

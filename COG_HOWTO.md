@@ -239,9 +239,9 @@ Rules and notes: Manual forcing should be the exception. If you use it too often
 
 ## `frontline_web.py`
 
-Overview: Serves the HLL Frontline website and its live, read-only roll-call and
-trainee-tracker API. The site reads directly from `rollcall.py` and
-`multi_trainee_tracker.py`, so Discord remains the source of truth.
+Overview: Serves the HLL Frontline website, its live dashboard APIs, and the
+authenticated Registered Building Inspector reporting form. Dashboard data is
+read from the existing Discord cogs, so Discord remains the source of truth.
 
 Slash commands: none.
 
@@ -250,11 +250,17 @@ host. In production, Cloudflare Tunnel publishes that service at `https://hllfro
 The bind address and port can be overridden with `FRONTLINE_WEB_HOST` and
 `FRONTLINE_WEB_PORT`. Set `APPPIN` to a random value of at least eight
 characters in `.env`; changing it and restarting logs out every website user.
+Logged-in members can open **Registered Building Inspectors**, describe an
+infringement, and take or upload a picture. A successful submission posts the
+description, login name, and image to Discord channels `1539382636483584000`
+and `1098333222540152944`.
 
-Rules and notes: This first release is display-only. Members continue to mark
-attendance with Discord reactions, and trainee qualifications continue to come
-from Discord roles. The website refreshes its live view every minute without
-changing either cog's existing posts, schedules, state, or commands.
+Rules and notes: Building reports accept JPEG, PNG, GIF, WebP, or HEIC images
+up to 8 MB and descriptions up to 1,500 characters. Each website session can
+submit five reports per hour. Delivery is treated as all-or-nothing: if the
+second Discord post fails, the first is deleted where possible so the member
+can retry without leaving a partial report. The bot needs View Channel, Send
+Messages, Embed Links, and Attach Files in both destination channels.
 
 ## `nameshame.py`
 

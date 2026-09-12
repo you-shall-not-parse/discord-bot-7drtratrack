@@ -171,9 +171,10 @@ Currently disabled in `main.py`:
 
 ## HLL Frontline Website
 
-The bot serves a read-only, live personnel dashboard on `127.0.0.1:7020` by
-default. It mirrors roll-call attendance and Infantry, Recon, and Armour trainee
-progress while the existing Discord features remain active. An outbound-only
+The bot serves the live HLL Frontline dashboard on `127.0.0.1:7020` by default.
+It mirrors roll-call attendance and Infantry, Recon, and Armour trainee progress,
+and includes an authenticated Registered Building Inspector form that sends an
+infringement description and image to the configured Discord channels. An outbound-only
 Cloudflare Tunnel publishes it at `hllfrontline.com`; historic stats remain at
 `7drhistostats.hllfrontline.com`. The dashboard requires the shared `APPPIN`
 configured in `.env`. See `liberationapp/DEPLOYMENT.md`.

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote, urlparse
 
+import discord
 from aiohttp import ClientSession, ClientTimeout, web
 from openpyxl import Workbook
 
@@ -57,6 +58,18 @@ HIGHLIGHTS_CACHE_SECONDS = 60
 HIGHLIGHTS_HISTORY_LIMIT = 100
 HIGHLIGHTS_MAX_POSTS = 30
 HIGHLIGHTS_MAX_MEDIA_PER_POST = 4
+BUILDING_INSPECTOR_CHANNEL_IDS = (1539382636483584000, 1098333222540152944)
+BUILDING_REPORT_MAX_IMAGE_BYTES = 8 * 1024 * 1024
+BUILDING_REPORT_MAX_DESCRIPTION_LENGTH = 1500
+BUILDING_REPORT_WINDOW_SECONDS = 60 * 60
+BUILDING_REPORT_MAX_REQUESTS = 5
+BUILDING_REPORT_IMAGE_TYPES = {
+    "gif": ("image/gif", "gif"),
+    "jpeg": ("image/jpeg", "jpg"),
+    "png": ("image/png", "png"),
+    "webp": ("image/webp", "webp"),
+    "heic": ("image/heic", "heic"),
+}
 EXTERNAL_LINKS = {
     "bifrost": "https://frostbite.bifrostgaming.com/hll/guilds/7DR",
     "history": "https://7drhistostats.hllfrontline.com/",
@@ -92,6 +105,7 @@ class FrontlineWeb:
         self._admin_sessions: dict[str, int] = {}
         self._login_failures: dict[str, list[float]] = {}
         self._hllv_searches: dict[str, list[float]] = {}
+        self._building_report_submissions: dict[str, list[float]] = {}
         self._server_status_cache: tuple[float, list[dict[str, Any]]] = (0.0, [])
         self._server_status_lock = asyncio.Lock()
         self._highlights_cache: tuple[float, list[dict[str, Any]]] = (0.0, [])
@@ -105,7 +119,10 @@ class FrontlineWeb:
         if not self._turnstile_secret_key:
             raise RuntimeError("TURNSTILE_SECRET must be set in the environment or .env file")
 
-        app = web.Application(middlewares=[self._security_headers, self._pin_auth], client_max_size=64 * 1024)
+        app = web.Application(
+            middlewares=[self._security_headers, self._pin_auth],
+            client_max_size=64 * 1024,
+        )
         app.router.add_get("/api/health", self.health)
         app.router.add_get("/login", self.login_page)
         app.router.add_post("/login", self.login)
@@ -114,6 +131,7 @@ class FrontlineWeb:
         app.router.add_post("/admin/logout", self.admin_logout)
         app.router.add_get("/api/dashboard", self.dashboard)
         app.router.add_get("/api/hllv-search", self.hllv_search)
+        app.router.add_post("/api/building-inspector-reports", self.submit_building_inspector_report)
         app.router.add_get("/assets/maps/{filename}", self.map_asset)
         app.router.add_get("/assets/{filename}", self.asset)
         app.router.add_get("/exports/rollcalls/{key}.html", self.rollcall_html_export)
@@ -148,7 +166,7 @@ class FrontlineWeb:
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        response.headers["Permissions-Policy"] = "camera=(self), microphone=(), geolocation=()"
         turnstile_script = " https://challenges.cloudflare.com" if self._turnstile_enabled else ""
         turnstile_frame = "frame-src https://challenges.cloudflare.com; " if self._turnstile_enabled else ""
         response.headers["Content-Security-Policy"] = (
@@ -585,6 +603,187 @@ class FrontlineWeb:
                 }
             )
         return web.json_response({"query": query, "results": results})
+
+    @staticmethod
+    def _normalise_infringement_description(value: object) -> str | None:
+        raw = str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+        if not raw or len(raw) > BUILDING_REPORT_MAX_DESCRIPTION_LENGTH:
+            return None
+        if any(not character.isprintable() and character not in "\n\t" for character in raw):
+            return None
+        return raw
+
+    @staticmethod
+    def _detect_report_image(data: bytes) -> tuple[str, str] | None:
+        if data.startswith(b"\xff\xd8\xff"):
+            return BUILDING_REPORT_IMAGE_TYPES["jpeg"]
+        if data.startswith(b"\x89PNG\r\n\x1a\n"):
+            return BUILDING_REPORT_IMAGE_TYPES["png"]
+        if data.startswith((b"GIF87a", b"GIF89a")):
+            return BUILDING_REPORT_IMAGE_TYPES["gif"]
+        if len(data) >= 12 and data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+            return BUILDING_REPORT_IMAGE_TYPES["webp"]
+        if len(data) >= 12 and data[4:8] == b"ftyp" and data[8:12] in {
+            b"heic", b"heix", b"hevc", b"hevx", b"mif1",
+        }:
+            return BUILDING_REPORT_IMAGE_TYPES["heic"]
+        return None
+
+    def _allow_building_report(self, request: web.Request) -> bool:
+        session_token = request.cookies.get(SESSION_COOKIE, "")
+        key = session_token or self._client_key(request)
+        cutoff = time.monotonic() - BUILDING_REPORT_WINDOW_SECONDS
+        recent = [
+            attempt
+            for attempt in self._building_report_submissions.get(key, [])
+            if attempt >= cutoff
+        ]
+        if len(recent) >= BUILDING_REPORT_MAX_REQUESTS:
+            self._building_report_submissions[key] = recent
+            return False
+        recent.append(time.monotonic())
+        self._building_report_submissions[key] = recent
+        return True
+
+    async def _building_report_channels(self) -> list[Any]:
+        channels = []
+        for channel_id in BUILDING_INSPECTOR_CHANNEL_IDS:
+            channel = self.bot.get_channel(channel_id)
+            if channel is None:
+                try:
+                    channel = await self.bot.fetch_channel(channel_id)
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException) as exc:
+                    raise RuntimeError(f"Discord channel {channel_id} is unavailable") from exc
+            if not callable(getattr(channel, "send", None)):
+                raise RuntimeError(f"Discord channel {channel_id} is not messageable")
+            channels.append(channel)
+        return channels
+
+    async def _publish_building_report(
+        self,
+        *,
+        claimed_name: str,
+        description: str,
+        image_data: bytes,
+        image_content_type: str,
+        image_extension: str,
+    ) -> None:
+        channels = await self._building_report_channels()
+        filename = f"building-infringement.{image_extension}"
+        embed = discord.Embed(
+            title="Registered Building Inspector Report",
+            description=description,
+            colour=discord.Colour.orange(),
+            timestamp=datetime.now(timezone.utc),
+        )
+        embed.add_field(name="Website login name", value=claimed_name, inline=False)
+        embed.set_image(url=f"attachment://{filename}")
+        embed.set_footer(text="Submitted through HLL Frontline")
+
+        sent_messages = []
+        try:
+            for channel in channels:
+                sent_messages.append(
+                    await channel.send(
+                        embed=embed,
+                        file=discord.File(io.BytesIO(image_data), filename=filename),
+                        allowed_mentions=discord.AllowedMentions.none(),
+                    )
+                )
+        except Exception:
+            for message in sent_messages:
+                try:
+                    await message.delete()
+                except Exception:
+                    logger.warning("Could not roll back a partial building-inspector report", exc_info=True)
+            raise
+
+        logger.info(
+            "Building inspector report submitted claimed_name=%r content_type=%s size=%s channels=%s",
+            claimed_name,
+            image_content_type,
+            len(image_data),
+            BUILDING_INSPECTOR_CHANNEL_IDS,
+        )
+
+    async def submit_building_inspector_report(self, request: web.Request) -> web.Response:
+        if not request.content_type.startswith("multipart/form-data"):
+            return web.json_response({"error": "Submit a description and image."}, status=400)
+        if not self._allow_building_report(request):
+            return web.json_response(
+                {"error": "Too many reports. Try again later."},
+                status=429,
+                headers={"Retry-After": str(BUILDING_REPORT_WINDOW_SECONDS)},
+            )
+
+        session = self._sessions.get(request.cookies.get(SESSION_COOKIE, ""))
+        if session is None:
+            return web.json_response({"error": "Authentication required"}, status=401)
+
+        description: str | None = None
+        image_data: bytes | None = None
+        try:
+            upload_request = request.clone(
+                client_max_size=BUILDING_REPORT_MAX_IMAGE_BYTES + (256 * 1024)
+            )
+            reader = await upload_request.multipart()
+            while True:
+                field = await reader.next()
+                if field is None:
+                    break
+                if field.name == "description":
+                    description = self._normalise_infringement_description(await field.text())
+                elif field.name == "image" and field.filename:
+                    chunks = bytearray()
+                    while True:
+                        chunk = await field.read_chunk(size=64 * 1024)
+                        if not chunk:
+                            break
+                        chunks.extend(chunk)
+                        if len(chunks) > BUILDING_REPORT_MAX_IMAGE_BYTES:
+                            return web.json_response(
+                                {"error": "The image must be no larger than 8 MB."},
+                                status=413,
+                            )
+                    image_data = bytes(chunks)
+        except web.HTTPRequestEntityTooLarge:
+            return web.json_response(
+                {"error": "The complete submission must be no larger than 8 MB."},
+                status=413,
+            )
+        except (ValueError, web.HTTPException):
+            return web.json_response({"error": "The submitted form could not be read."}, status=400)
+
+        if description is None:
+            return web.json_response(
+                {"error": f"Enter an infringement description of no more than {BUILDING_REPORT_MAX_DESCRIPTION_LENGTH} characters."},
+                status=400,
+            )
+        if not image_data:
+            return web.json_response({"error": "Take or upload a picture of the infringement."}, status=400)
+        detected_image = self._detect_report_image(image_data)
+        if detected_image is None:
+            return web.json_response(
+                {"error": "Upload a JPEG, PNG, GIF, WebP, or HEIC image."},
+                status=400,
+            )
+        image_content_type, image_extension = detected_image
+
+        try:
+            await self._publish_building_report(
+                claimed_name=session.claimed_name,
+                description=description,
+                image_data=image_data,
+                image_content_type=image_content_type,
+                image_extension=image_extension,
+            )
+        except Exception:
+            logger.exception("Could not deliver building-inspector report to both Discord channels")
+            return web.json_response(
+                {"error": "The report could not be delivered to Discord. Please try again."},
+                status=502,
+            )
+        return web.json_response({"ok": True, "message": "Report sent to the building inspectors."})
 
     @staticmethod
     def _event_payload(guild) -> list[dict[str, Any]]:

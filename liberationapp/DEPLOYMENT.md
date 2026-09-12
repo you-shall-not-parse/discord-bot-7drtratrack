@@ -1,7 +1,7 @@
 # HLL Frontline Deployment
 
 The original Liberation frontend, API, PostgreSQL, and Redis stack has been
-retired. The Discord bot now hosts the HLL Frontline personnel dashboard on
+retired. The Discord bot now hosts the HLL Frontline dashboard on
 `127.0.0.1:7020`, while the independently hosted historic-stats service remains
 on `127.0.0.1:7010`.
 
@@ -69,6 +69,9 @@ curl -I https://7drhistostats.hllfrontline.com
 `/api/health` remains unauthenticated for service monitoring. The homepage,
 dashboard API, report pages, and HTML/Excel exports all require a valid PIN
 session. A request to `/` should redirect to `/login` before authentication.
+The authenticated Registered Building Inspector form accepts one image up to
+8 MB and posts it to both configured Discord destinations. Ensure the bot can
+View Channel, Send Messages, Embed Links, and Attach Files in both channels.
 
 The bind address and port can be changed with `FRONTLINE_WEB_HOST` and
 `FRONTLINE_WEB_PORT`. Keep the bind address on loopback so only `cloudflared`

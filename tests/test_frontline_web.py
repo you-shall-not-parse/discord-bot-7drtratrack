@@ -8,6 +8,8 @@ from types import SimpleNamespace
 from cogs.frontline_web import (
     ACTIVE_SESSION_WINDOW_SECONDS,
     ADMIN_SESSION_COOKIE,
+    BUILDING_INSPECTOR_CHANNEL_IDS,
+    BUILDING_REPORT_MAX_DESCRIPTION_LENGTH,
     DASHBOARD_CACHE_SECONDS,
     EXTERNAL_LINKS,
     FRONTEND_DIR,
@@ -34,11 +36,11 @@ def test_frontend_assets_exist_and_are_wired() -> None:
 
     admin = (FRONTEND_DIR / "admin.html").read_text(encoding="utf-8")
 
-    assert '<link rel="stylesheet" href="/assets/app.css?v=15">' in index
-    assert '<link rel="stylesheet" href="/assets/app.css?v=15">' in login
-    assert '<link rel="stylesheet" href="/assets/app.css?v=15">' in report
-    assert '<link rel="stylesheet" href="/assets/app.css?v=15">' in admin
-    assert '<script defer src="/assets/app.js?v=11"></script>' in index
+    assert '<link rel="stylesheet" href="/assets/app.css?v=16">' in index
+    assert '<link rel="stylesheet" href="/assets/app.css?v=16">' in login
+    assert '<link rel="stylesheet" href="/assets/app.css?v=16">' in report
+    assert '<link rel="stylesheet" href="/assets/app.css?v=16">' in admin
+    assert '<script defer src="/assets/app.js?v=12"></script>' in index
     assert 'src="/assets/emblem_7dr.png"' in index
     assert "7th Armoured Division" in index
     assert "<dialog" not in index
@@ -55,6 +57,11 @@ def test_frontend_assets_exist_and_are_wired() -> None:
     assert 'id="event-calendar"' in index
     assert 'data-view="war-diary"' in index
     assert 'data-view="highlights"' in index
+    assert 'data-view="building-inspectors"' in index
+    assert 'id="building-report-form"' in index
+    assert 'capture="environment"' in index
+    assert 'fetch("/api/building-inspector-reports"' in javascript
+    assert 'new FormData(form)' in javascript
     assert 'id="highlight-grid"' in index
     assert 'data-view="community"' not in index
     assert 'id="server-grid"' in index
@@ -142,6 +149,56 @@ def test_report_pages_are_not_browser_cached() -> None:
         response = asyncio.run(service._security_headers(request, handler))
         assert response.headers["Cache-Control"] == "no-store"
         assert "media-src 'self' https://cdn.discordapp.com" in response.headers["Content-Security-Policy"]
+        assert response.headers["Permissions-Policy"].startswith("camera=(self)")
+
+
+def test_building_report_validation_accepts_real_image_signatures() -> None:
+    assert FrontlineWeb._normalise_infringement_description("  Missing fire stop\r\nLevel 2  ") == "Missing fire stop\nLevel 2"
+    assert FrontlineWeb._normalise_infringement_description("x" * (BUILDING_REPORT_MAX_DESCRIPTION_LENGTH + 1)) is None
+    assert FrontlineWeb._detect_report_image(b"\xff\xd8\xff" + b"photo") == ("image/jpeg", "jpg")
+    assert FrontlineWeb._detect_report_image(b"\x89PNG\r\n\x1a\n" + b"photo") == ("image/png", "png")
+    assert FrontlineWeb._detect_report_image(b"not-an-image") is None
+
+
+def test_building_report_is_published_to_both_discord_channels() -> None:
+    class Message:
+        async def delete(self):
+            raise AssertionError("Successful reports should not be rolled back")
+
+    class Channel:
+        def __init__(self, channel_id):
+            self.id = channel_id
+            self.calls = []
+
+        async def send(self, **kwargs):
+            self.calls.append(kwargs)
+            return Message()
+
+    channels = {channel_id: Channel(channel_id) for channel_id in BUILDING_INSPECTOR_CHANNEL_IDS}
+    bot = SimpleNamespace(
+        get_channel=lambda channel_id: channels.get(channel_id),
+        fetch_channel=None,
+    )
+    service = FrontlineWeb(bot)
+
+    asyncio.run(
+        service._publish_building_report(
+            claimed_name="Inspector Gadget",
+            description="Unprotected opening on level two.",
+            image_data=b"\xff\xd8\xffphoto",
+            image_content_type="image/jpeg",
+            image_extension="jpg",
+        )
+    )
+
+    assert set(channels) == set(BUILDING_INSPECTOR_CHANNEL_IDS)
+    for channel in channels.values():
+        assert len(channel.calls) == 1
+        call = channel.calls[0]
+        assert call["embed"].title == "Registered Building Inspector Report"
+        assert call["embed"].description == "Unprotected opening on level two."
+        assert call["file"].filename == "building-infringement.jpg"
+        call["file"].close()
 
 
 def test_highlight_message_keeps_direct_discord_images_and_videos_only() -> None:

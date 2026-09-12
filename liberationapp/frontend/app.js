@@ -1,4 +1,4 @@
-const VIEWS = new Set(["overview", "personnel", "server-status", "upcoming", "war-diary", "highlights", "statistics", "directory"]);
+const VIEWS = new Set(["overview", "personnel", "server-status", "upcoming", "war-diary", "highlights", "statistics", "directory", "building-inspectors"]);
 const requestedView = location.hash.replace(/^#/, "");
 const state = { data: null, view: VIEWS.has(requestedView) ? requestedView : "overview", eventLayout: "list" };
 const $ = selector => document.querySelector(selector);
@@ -380,6 +380,62 @@ $("#hllv-search-form").addEventListener("submit", async event => {
       <article><span>${escapeHtml(result.discord_name)}</span><strong>${escapeHtml(result.hllv_name)}</strong></article>`).join("")}</div>` : emptyState("No current member matched that search.");
   } catch (error) {
     $("#hllv-search-status").textContent = error.name === "TimeoutError" ? "The search timed out. Try again." : error.message;
+  }
+});
+
+let buildingReportPreviewUrl = "";
+$("#building-report-image").addEventListener("change", event => {
+  if (buildingReportPreviewUrl) URL.revokeObjectURL(buildingReportPreviewUrl);
+  const file = event.target.files[0];
+  const preview = $("#building-report-preview");
+  if (!file) {
+    buildingReportPreviewUrl = "";
+    preview.hidden = true;
+    return;
+  }
+  buildingReportPreviewUrl = URL.createObjectURL(file);
+  preview.querySelector("img").src = buildingReportPreviewUrl;
+  preview.hidden = false;
+});
+
+$("#building-report-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const submit = $("#building-report-submit");
+  const status = $("#building-report-status");
+  const image = $("#building-report-image").files[0];
+  if (image && image.size > 8 * 1024 * 1024) {
+    status.textContent = "The selected image is larger than 8 MB.";
+    status.className = "muted-copy form-status error";
+    return;
+  }
+  submit.disabled = true;
+  status.textContent = "Sending report to the inspection team…";
+  status.className = "muted-copy form-status";
+  try {
+    const response = await fetch("/api/building-inspector-reports", {
+      method: "POST",
+      body: new FormData(form),
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(30_000)
+    });
+    if (response.status === 401) {
+      location.assign("/login?next=%2F%23building-inspectors");
+      return;
+    }
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || `Submission returned ${response.status}.`);
+    form.reset();
+    if (buildingReportPreviewUrl) URL.revokeObjectURL(buildingReportPreviewUrl);
+    buildingReportPreviewUrl = "";
+    $("#building-report-preview").hidden = true;
+    status.textContent = payload.message || "Report sent to the building inspectors.";
+    status.className = "muted-copy form-status success";
+  } catch (error) {
+    status.textContent = error.name === "TimeoutError" ? "The report took too long to send. Please try again." : error.message;
+    status.className = "muted-copy form-status error";
+  } finally {
+    submit.disabled = false;
   }
 });
 
