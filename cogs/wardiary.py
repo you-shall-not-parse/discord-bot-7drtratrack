@@ -64,6 +64,7 @@ BACKGROUND_IMAGE_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboard
 GIF_WIN_INTERVAL: int = 5
 OTHER_MAP_OPTION: str = "Other"
 MATCH_TYPE_OPTIONS: list[str] = ["Competitive", "Friendly"]
+OTHER_MIDPOINT_OPTION: str = "Other / not listed"
 MAX_CRCON_RESPONSE_BYTES: int = 5 * 1024 * 1024
 CRCON_USER_AGENT: str = (
 	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -122,6 +123,31 @@ WAR_DIARY_MAP_OPTIONS: list[str] = [
 	"Stalingrad",
 	OTHER_MAP_OPTION,
 ]
+
+# Current neutral-sector strongpoint labels from the HLL map catalogue:
+# https://github.com/l1tku/hll-default-garrisons/blob/main/js/maps.js
+WAR_DIARY_MIDPOINTS: dict[str, tuple[str, str, str]] = {
+	"Elsenborn Ridge": ("ROAD TO ELSENBORN RIDGE", "DUGOUT TANKS", "CHECKPOINT"),
+	"Carentan": ("TRAIN STATION", "TOWN CENTER", "CANAL CROSSING"),
+	"Foy": ("WEST BEND", "SOUTHERN EDGE", "DUGOUT BARN"),
+	"Hill 400": ("FLAK PITS", "HILL 400", "SOUTHERN APPROACH"),
+	"St. Marie Du Mont": ("THE DUGOUT", "AA NETWORK", "PIERRE'S FARM"),
+	"Juno Beach": ("GRAYE-SUR-MER", "LA SEULLES RIVER", "MARKET SQUARE"),
+	"Utah Beach": ("WN7", "THE CHAPEL", "WN4"),
+	"St. Mere Eglise": ("HOSPICE", "SAINTE-MÈRE-ÉGLISE", "CHECKPOINT"),
+	"El Alamein": ("VALLEY", "OASIS", "DESERT RAT TRENCHES"),
+	"Mortain": ("SOUTHERN APPROACH", "LA PETITE CHAPELLE SAINT-MICHEL", "ABANDONED GERMAN CHECKPOINT"),
+	"Smolensk": ("PYATNITSKII OVERPASS", "ZHELYABOVA SQUARE", "84TH BATTALION BRIDGE"),
+	"Driel": ("BRICK FACTORY", "RAILWAY BRIDGE", "GARRISON EMPLACEMENTS"),
+	"Kursk": ("THE WINDMILLS", "YAMKI", "OLEG'S HOUSE"),
+	"Hurtgen Forest": ("THE SIEGFRIED LINE", "THE SCAR", "NORTH PASS"),
+	"Remagen": ("ST. SEVERIN CHAPEL", "LUDENDORFF BRIDGE", "BAUERNHOF AM RHEIN"),
+	"Omaha Beach": ("WEST VIERVILLE", "VIERVILLE SUR MER", "GARRISON BATTERY"),
+	"Kharkov": ("WATER MILL", "ST MARY", "DISTILLERY"),
+	"Purple Heart Lane": ("DEAD MAN'S CORNER", "GROULT PILLBOX", "INGOUF CROSSROADS"),
+	"Tobruk": ("DESERT RAT CAVES", "CHURCH GROUNDS", "ADMIRALTY HOUSE"),
+	"Stalingrad": ("TRAIN STATION", "CARRIAGE DEPOT", "RAILWAY CROSSING"),
+}
 
 
 def _safe_int(value: Any) -> Optional[int]:
@@ -310,6 +336,7 @@ class MatchThreadRecord:
 	opponent_clan_name: str
 	match_date: str
 	map_name: str = OTHER_MAP_OPTION
+	midpoint_name: Optional[str] = None
 	stats_link: Optional[str] = None
 	allies_clan: Optional[str] = None
 	axis_clan: Optional[str] = None
@@ -387,7 +414,12 @@ class ScoreSelect(discord.ui.Select):
 			disabled=True,
 		)
 
-	def set_matchup(self, opponent_clan_name: Optional[str], selected_score: Optional[str]) -> None:
+	def set_matchup(
+		self,
+		opponent_clan_name: Optional[str],
+		selected_score: Optional[str],
+		selected_match_type: Optional[str],
+	) -> None:
 		if not opponent_clan_name:
 			self.disabled = True
 			self.placeholder = "Select the result..."
@@ -397,13 +429,15 @@ class ScoreSelect(discord.ui.Select):
 		self.disabled = False
 		options: list[discord.SelectOption] = []
 		selected_label: Optional[str] = None
-		for left, right in _score_options():
-			value = f"{left}-{right}"
-			label = f"{HOME_CLAN_NAME} {left}-{right} {opponent_clan_name}"
-			is_default = selected_score == value
-			if is_default:
-				selected_label = label
-			options.append(discord.SelectOption(label=label, value=value, default=is_default))
+		for match_type in MATCH_TYPE_OPTIONS:
+			for left, right in _score_options():
+				score = f"{left}-{right}"
+				value = f"{match_type}|{score}"
+				label = f"{match_type}: {HOME_CLAN_NAME} {score} {opponent_clan_name}"[:100]
+				is_default = selected_score == score and selected_match_type == match_type
+				if is_default:
+					selected_label = label
+				options.append(discord.SelectOption(label=label, value=value, default=is_default))
 
 		self.options = options
 		self.placeholder = selected_label or "Select the result..."
@@ -416,8 +450,8 @@ class ScoreSelect(discord.ui.Select):
 			await interaction.response.send_message("This submission form is not yours.", ephemeral=True)
 			return
 
-		view.selected_score = str(self.values[0])
-		self.set_matchup(view.opponent_clan_name, view.selected_score)
+		view.selected_match_type, view.selected_score = str(self.values[0]).split("|", 1)
+		self.set_matchup(view.opponent_clan_name, view.selected_score, view.selected_match_type)
 		view.refresh_submit_state()
 		await interaction.response.edit_message(view=view)
 
@@ -457,29 +491,39 @@ class MapSelect(discord.ui.Select):
 
 		view.selected_map_name = str(self.values[0])
 		self.set_selected_map(view.selected_map_name)
+		view.selected_midpoint_name = None
+		view.midpoint_select.set_map(view.selected_map_name, view.selected_midpoint_name)
 		view.refresh_submit_state()
 		await interaction.response.edit_message(view=view)
 
 
-class MatchTypeSelect(discord.ui.Select):
+class MidpointSelect(discord.ui.Select):
 	def __init__(self):
 		super().__init__(
-			placeholder="Select match type...",
+			placeholder="Pick a map first...",
 			min_values=1,
 			max_values=1,
-			options=[discord.SelectOption(label=match_type, value=match_type) for match_type in MATCH_TYPE_OPTIONS],
+			options=[discord.SelectOption(label="Pick a map first", value=OTHER_MIDPOINT_OPTION)],
+			disabled=True,
 		)
 
-	def set_selected_type(self, selected_match_type: Optional[str]) -> None:
+	def set_map(self, map_name: Optional[str], selected_midpoint_name: Optional[str]) -> None:
+		if not map_name:
+			self.disabled = True
+			self.placeholder = "Pick a map first..."
+			self.options = [discord.SelectOption(label="Pick a map first", value=OTHER_MIDPOINT_OPTION)]
+			return
+
+		self.disabled = False
 		selected_label: Optional[str] = None
-		refreshed: list[discord.SelectOption] = []
-		for option in self.options:
-			is_default = str(option.value) == selected_match_type
+		options: list[discord.SelectOption] = []
+		for midpoint_name in (*WAR_DIARY_MIDPOINTS.get(map_name, ()), OTHER_MIDPOINT_OPTION):
+			is_default = midpoint_name == selected_midpoint_name
 			if is_default:
-				selected_label = option.label
-			refreshed.append(discord.SelectOption(label=option.label, value=str(option.value), default=is_default))
-		self.options = refreshed
-		self.placeholder = selected_label or "Select match type..."
+				selected_label = midpoint_name
+			options.append(discord.SelectOption(label=midpoint_name, value=midpoint_name, default=is_default))
+		self.options = options
+		self.placeholder = selected_label or "Select the midpoint..."
 
 	async def callback(self, interaction: discord.Interaction):
 		view = self.view
@@ -489,8 +533,8 @@ class MatchTypeSelect(discord.ui.Select):
 			await interaction.response.send_message("This submission form is not yours.", ephemeral=True)
 			return
 
-		view.selected_match_type = str(self.values[0])
-		self.set_selected_type(view.selected_match_type)
+		view.selected_midpoint_name = str(self.values[0])
+		self.set_map(view.selected_map_name, view.selected_midpoint_name)
 		view.refresh_submit_state()
 		await interaction.response.edit_message(view=view)
 
@@ -510,6 +554,13 @@ class StatsLinkModal(discord.ui.Modal, title="Match Details"):
 		max_length=500,
 	)
 
+	other_midpoint = discord.ui.TextInput(
+		label="Other midpoint (if not listed)",
+		placeholder="Leave blank when a listed midpoint was selected",
+		required=False,
+		max_length=100,
+	)
+
 	def __init__(self, cog: "WarDiaryCog", clan_name: str, opponent_clan_name: str, selected_score: str):
 		super().__init__()
 		self.cog = cog
@@ -517,6 +568,7 @@ class StatsLinkModal(discord.ui.Modal, title="Match Details"):
 		self.opponent_clan_name = opponent_clan_name
 		self.selected_score = selected_score
 		self.selected_map_name: str = OTHER_MAP_OPTION
+		self.selected_midpoint_name: str = OTHER_MIDPOINT_OPTION
 		self.selected_match_type: str = "Competitive"
 
 	async def on_submit(self, interaction: discord.Interaction) -> None:
@@ -528,6 +580,9 @@ class StatsLinkModal(discord.ui.Modal, title="Match Details"):
 			left, right = _parse_score(self.selected_score)
 			match_date = _normalize_match_date(str(self.match_date))
 			stats_link = _normalize_stats_link(str(self.stats_link))
+			midpoint_name = self.selected_midpoint_name
+			if midpoint_name == OTHER_MIDPOINT_OPTION:
+				midpoint_name = " ".join(str(self.other_midpoint).split()) or OTHER_MIDPOINT_OPTION
 		except ValueError as exc:
 			await interaction.response.send_message(str(exc), ephemeral=True)
 			return
@@ -544,6 +599,7 @@ class StatsLinkModal(discord.ui.Modal, title="Match Details"):
 			match_type=self.selected_match_type,
 			match_date=match_date,
 			map_name=self.selected_map_name,
+			midpoint_name=midpoint_name,
 			stats_link=stats_link,
 		)
 		if thread is None:
@@ -555,6 +611,7 @@ class StatsLinkModal(discord.ui.Modal, title="Match Details"):
 			submitter=interaction.user,
 			opponent_clan_name=self.opponent_clan_name,
 			map_name=self.selected_map_name,
+			midpoint_name=midpoint_name,
 			match_date=match_date,
 		)
 		if review_thread is not None:
@@ -586,6 +643,7 @@ class WarDiarySubmissionView(discord.ui.View):
 		self.opponent_clan_name: Optional[str] = None
 		self.selected_score: Optional[str] = None
 		self.selected_map_name: Optional[str] = None
+		self.selected_midpoint_name: Optional[str] = None
 		self.selected_match_type: Optional[str] = None
 
 		self.opponent_select = OpponentSelect(clans)
@@ -595,8 +653,8 @@ class WarDiarySubmissionView(discord.ui.View):
 		self.map_select = MapSelect()
 		self.add_item(self.map_select)
 
-		self.match_type_select = MatchTypeSelect()
-		self.add_item(self.match_type_select)
+		self.midpoint_select = MidpointSelect()
+		self.add_item(self.midpoint_select)
 
 		self.score_select = ScoreSelect()
 		self.add_item(self.score_select)
@@ -607,19 +665,27 @@ class WarDiarySubmissionView(discord.ui.View):
 	def refresh_opponent_options(self) -> None:
 		self.opponent_clan_name = None
 		self.selected_score = None
+		self.selected_match_type = None
 		self.opponent_select.set_options(self.clan_name, self.opponent_clan_name)
-		self.score_select.set_matchup(self.opponent_clan_name, self.selected_score)
+		self.score_select.set_matchup(self.opponent_clan_name, self.selected_score, self.selected_match_type)
 		self.refresh_submit_state()
 
 	def refresh_score_options(self) -> None:
 		self.selected_score = None
-		self.score_select.set_matchup(self.opponent_clan_name, self.selected_score)
+		self.selected_match_type = None
+		self.score_select.set_matchup(self.opponent_clan_name, self.selected_score, self.selected_match_type)
 		self.refresh_submit_state()
 
 	def refresh_submit_state(self) -> None:
 		for child in self.children:
 			if isinstance(child, discord.ui.Button) and child.custom_id == "wardiary:submit":
-				child.disabled = not (self.opponent_clan_name and self.selected_score and self.selected_map_name and self.selected_match_type)
+				child.disabled = not (
+					self.opponent_clan_name
+					and self.selected_score
+					and self.selected_map_name
+					and self.selected_midpoint_name
+					and self.selected_match_type
+				)
 
 	@discord.ui.button(label="Add Optional Stats Link & Submit", style=discord.ButtonStyle.success, disabled=True, custom_id="wardiary:submit")
 	async def submit(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -642,6 +708,7 @@ class WarDiarySubmissionView(discord.ui.View):
 				selected_score=self.selected_score,
 			)
 		modal.selected_map_name = self.selected_map_name or OTHER_MAP_OPTION
+		modal.selected_midpoint_name = self.selected_midpoint_name or OTHER_MIDPOINT_OPTION
 		modal.selected_match_type = self.selected_match_type or "Competitive"
 		return modal
 
@@ -671,7 +738,7 @@ class WarDiaryMainView(discord.ui.View):
 		embed = discord.Embed(
 			title="Submit War Diary Result",
 			description=(
-				f"Home clan is fixed as **{HOME_CLAN_NAME}**. Pick the opposing clan, the played map, the match type, and the result, then optionally paste a stats link in the next step."
+				f"Home clan is fixed as **{HOME_CLAN_NAME}**. Pick the opposing clan, map, midpoint, and the combined match type/result, then optionally paste a stats link in the next step."
 			),
 			colour=discord.Colour.blurple(),
 		)
@@ -758,6 +825,7 @@ class WarDiaryCog(commands.Cog):
 		opponent_clan_name: str,
 		match_date: str,
 		map_name: str,
+		midpoint_name: str,
 		stats_link: Optional[str],
 		is_7dr_win: bool,
 		submitter_score: int,
@@ -779,6 +847,7 @@ class WarDiaryCog(commands.Cog):
 				"opponent_clan_name": opponent_clan_name,
 				"match_date": match_date,
 				"map_name": map_name,
+				"midpoint_name": midpoint_name,
 				"stats_link": stats_link,
 				"is_7dr_win": is_7dr_win,
 				"result": f"{submitter_score}-{opponent_score}",
@@ -808,6 +877,7 @@ class WarDiaryCog(commands.Cog):
 			return False
 
 		map_name = OTHER_MAP_OPTION
+		midpoint_name: Optional[str] = None
 		stats_link: Optional[str] = None
 		result: Optional[str] = None
 		if starter_message.embeds:
@@ -822,6 +892,9 @@ class WarDiaryCog(commands.Cog):
 			map_match = re.search(r"(?im)^\*\*Map:\*\*\s*(.+?)\s*$", description)
 			if map_match:
 				map_name = map_match.group(1).strip()
+			midpoint_match = re.search(r"(?im)^\*\*Midpoint:\*\*\s*(.+?)\s*$", description)
+			if midpoint_match:
+				midpoint_name = midpoint_match.group(1).strip()
 			for field in embed.fields:
 				if field.name.casefold() != "stats link":
 					continue
@@ -831,6 +904,8 @@ class WarDiaryCog(commands.Cog):
 				break
 
 		record.setdefault("map_name", map_name)
+		if midpoint_name:
+			record.setdefault("midpoint_name", midpoint_name)
 		record.setdefault("stats_link", stats_link)
 		if result:
 			record["result"] = result
@@ -1064,6 +1139,7 @@ class WarDiaryCog(commands.Cog):
 			[
 				"match_date",
 				"map",
+				"midpoint",
 				"clans_played",
 				"result",
 				"allies_clan",
@@ -1090,6 +1166,7 @@ class WarDiaryCog(commands.Cog):
 				[
 					str(record.get("match_date") or ""),
 					str(record.get("map_name") or OTHER_MAP_OPTION),
+					str(record.get("midpoint_name") or ""),
 					f"{clan_name} vs {opponent}",
 					result,
 					str(record.get("allies_clan") or ""),
@@ -1271,6 +1348,7 @@ class WarDiaryCog(commands.Cog):
 		submitter: discord.Member,
 		opponent_clan_name: str,
 		map_name: str,
+		midpoint_name: str,
 		match_date: str,
 	) -> tuple[Optional[discord.Thread], Optional[str]]:
 		channel = await self._get_event_review_channel()
@@ -1280,7 +1358,7 @@ class WarDiaryCog(commands.Cog):
 		thread_name = _event_review_thread_name(opponent_clan_name, map_name, match_date)
 		intro = (
 			f"Discussion for the {HOME_CLAN_NAME} vs {opponent_clan_name} match on "
-			f"{map_name}, played {match_date}.\n"
+			f"{map_name} at {midpoint_name}, played {match_date}.\n"
 			f"War Diary result: {war_diary_thread.mention}\n\n"
 			"Run `/transcript` in this thread to download the full discussion as a text file."
 		)
@@ -1464,6 +1542,7 @@ class WarDiaryCog(commands.Cog):
 		match_type: str,
 		match_date: str,
 		map_name: str,
+		midpoint_name: str,
 		filename: str,
 		submitter: discord.Member,
 		stats_link: Optional[str],
@@ -1475,6 +1554,7 @@ class WarDiaryCog(commands.Cog):
 		)
 		if map_name != OTHER_MAP_OPTION:
 			description += f"\n**Map:** {map_name}"
+		description += f"\n**Midpoint:** {midpoint_name}"
 
 		embed = discord.Embed(
 			title="War Diary Result",
@@ -1649,7 +1729,7 @@ class WarDiaryCog(commands.Cog):
 
 	@app_commands.command(
 		name="wardiary_export",
-		description="Download War Diary matches, clan sides, and stats links as CSV.",
+		description="Download War Diary matches, midpoints, clan sides, and stats links as CSV.",
 	)
 	@app_commands.guild_only()
 	async def wardiary_export(self, interaction: discord.Interaction) -> None:
@@ -1758,6 +1838,7 @@ class WarDiaryCog(commands.Cog):
 		match_type: str,
 		match_date: str,
 		map_name: str,
+		midpoint_name: str,
 		stats_link: Optional[str],
 	) -> tuple[Optional[discord.Thread], Optional[str]]:
 		forum = await self._get_forum_channel()
@@ -1800,6 +1881,7 @@ class WarDiaryCog(commands.Cog):
 				match_type=match_type,
 				match_date=match_date,
 				map_name=map_name,
+				midpoint_name=midpoint_name,
 				filename=filename,
 				submitter=submitter,
 				stats_link=stats_link,
@@ -1808,6 +1890,7 @@ class WarDiaryCog(commands.Cog):
 			content_lines: list[str] = []
 			content_lines.append(f"Match type: {match_type}")
 			content_lines.append(f"Match date: {match_date}")
+			content_lines.append(f"Midpoint: {midpoint_name}")
 			content = "\n".join(content_lines) if content_lines else None
 			applied_tags: list[discord.ForumTag] = []
 			if map_name != OTHER_MAP_OPTION:
@@ -1837,6 +1920,7 @@ class WarDiaryCog(commands.Cog):
 				opponent_clan_name=opponent_clan_name,
 				match_date=match_date,
 				map_name=map_name,
+				midpoint_name=midpoint_name,
 				stats_link=stats_link,
 				is_7dr_win=is_7dr_win,
 				submitter_score=submitter_score,

@@ -41,7 +41,7 @@ def test_frontend_assets_exist_and_are_wired() -> None:
     assert '<link rel="stylesheet" href="/assets/app.css?v=21">' in login
     assert '<link rel="stylesheet" href="/assets/app.css?v=21">' in report
     assert '<link rel="stylesheet" href="/assets/app.css?v=21">' in admin
-    assert '<script defer src="/assets/app.js?v=16"></script>' in index
+    assert '<script defer src="/assets/app.js?v=18"></script>' in index
     assert '<div class="hub-tabs-scroll">' in index
     assert 'src="/assets/emblem_7dr.png"' in index
     assert "7th Armoured Division" in index
@@ -539,6 +539,7 @@ def test_war_diary_builds_overall_and_opponent_records() -> None:
                 "opponent_clan_name": "Example",
                 "match_date": "01/09/26",
                 "map_name": "Carentan",
+                "midpoint_name": "TOWN CENTER",
                 "stats_link": "https://stats.example.test/games/123",
                 "result": "5-2",
                 "allies_clan": "7DR",
@@ -566,10 +567,16 @@ def test_war_diary_builds_overall_and_opponent_records() -> None:
         {"name": "Kharkov", "played": 1, "wins": 0, "losses": 1, "draws": 0, "allies": 0, "axis": 1, "side_unknown": 0, "win_rate": 0.0},
         {"name": "Omaha", "played": 1, "wins": 0, "losses": 0, "draws": 1, "allies": 0, "axis": 0, "side_unknown": 1, "win_rate": 0.0},
     ]
+    assert payload["map_sides"] == [
+        {"name": "Carentan", "side": "allies", "played": 1, "wins": 1, "losses": 0, "draws": 0, "win_rate": 100.0},
+        {"name": "Kharkov", "side": "axis", "played": 1, "wins": 0, "losses": 1, "draws": 0, "win_rate": 0.0},
+        {"name": "Omaha", "side": "unknown", "played": 1, "wins": 0, "losses": 0, "draws": 1, "win_rate": 0.0},
+    ]
     assert payload["recent"][0]["opponent"] == "Another"
     carentan = next(match for match in payload["recent"] if match["map"] == "Carentan")
     kharkov = next(match for match in payload["recent"] if match["map"] == "Kharkov")
     assert carentan["map_image"] == "/assets/maps/Carentan.webp"
+    assert carentan["midpoint"] == "TOWN CENTER"
     assert carentan["stats_url"] == "https://stats.example.test/games/123"
     assert carentan["side"] == "allies"
     assert kharkov["stats_url"] == ""
@@ -601,6 +608,23 @@ def test_war_diary_returns_every_match_and_keeps_legacy_outcomes() -> None:
     assert len(payload["recent"]) == 16
     assert payload["recent"][0]["date"] == "15/08/26"
     assert payload["recent"][-1]["score"] == "Loss"
+
+
+def test_war_diary_builds_separate_records_for_each_map_side() -> None:
+    records = [
+        {"map_name": "Hurtgen Forest", "result": "5-0", "allies_clan": "CROWS", "axis_clan": "7DR"},
+        {"map_name": "Hurtgen Forest", "result": "3-2", "allies_clan": "CROWS", "axis_clan": "7DR"},
+        {"map_name": "Hurtgen Forest", "result": "4-1", "allies_clan": "7DR", "axis_clan": "CROWS"},
+        {"map_name": "Kharkov", "result": "1-4", "allies_clan": "CROWS", "axis_clan": "7DR"},
+    ]
+
+    payload = FrontlineWeb._war_diary_payload(SimpleNamespace(_get_match_records=lambda: records))
+
+    assert payload["map_sides"] == [
+        {"name": "Hurtgen Forest", "side": "axis", "played": 2, "wins": 2, "losses": 0, "draws": 0, "win_rate": 100.0},
+        {"name": "Hurtgen Forest", "side": "allies", "played": 1, "wins": 1, "losses": 0, "draws": 0, "win_rate": 100.0},
+        {"name": "Kharkov", "side": "axis", "played": 1, "wins": 0, "losses": 1, "draws": 0, "win_rate": 0.0},
+    ]
 
 
 def test_website_infantry_leaderboard_filters_members_and_backfills_top_three(tmp_path, monkeypatch) -> None:

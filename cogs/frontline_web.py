@@ -1154,6 +1154,7 @@ class FrontlineWeb:
                 "summary": {"played": 0, "wins": 0, "losses": 0},
                 "opponents": [],
                 "maps": [],
+                "map_sides": [],
                 "recent": [],
             }
 
@@ -1162,6 +1163,7 @@ class FrontlineWeb:
         matches: list[dict[str, Any]] = []
         opponents: dict[str, dict[str, Any]] = {}
         maps: dict[str, dict[str, Any]] = {}
+        map_sides: dict[tuple[str, str], dict[str, Any]] = {}
         for raw in cog._get_match_records():
             score_match = re.fullmatch(r"\s*(\d+)\s*[-:]\s*(\d+)\s*", str(raw.get("result") or ""))
             if score_match is not None:
@@ -1215,6 +1217,19 @@ class FrontlineWeb:
             map_record["played"] += 1
             map_record[{"win": "wins", "loss": "losses", "draw": "draws"}[outcome]] += 1
             map_record[{"allies": "allies", "axis": "axis", "unknown": "side_unknown"}[side]] += 1
+            map_side_record = map_sides.setdefault(
+                (map_name.casefold(), side),
+                {
+                    "name": map_name,
+                    "side": side,
+                    "played": 0,
+                    "wins": 0,
+                    "losses": 0,
+                    "draws": 0,
+                },
+            )
+            map_side_record["played"] += 1
+            map_side_record[{"win": "wins", "loss": "losses", "draw": "draws"}[outcome]] += 1
             source_map_filename = WAR_DIARY_MAP_IMAGE_FILES.get(map_name, "")
             map_filename = Path(source_map_filename).with_suffix(".webp").name if source_map_filename else ""
             try:
@@ -1229,6 +1244,7 @@ class FrontlineWeb:
                     "opponent": opponent,
                     "date": str(raw.get("match_date") or ""),
                     "map": map_name,
+                    "midpoint": " ".join(str(raw.get("midpoint_name") or "").split()),
                     "map_image": f"/assets/maps/{quote(map_filename, safe='')}" if map_filename else "",
                     "stats_url": stats_url,
                     "score": display_score,
@@ -1250,12 +1266,24 @@ class FrontlineWeb:
         map_rows = sorted(maps.values(), key=lambda row: (-row["played"], row["name"].casefold()))
         for row in map_rows:
             row["win_rate"] = round(row["wins"] / row["played"] * 100, 1)
+        side_order = {"axis": 0, "allies": 1, "unknown": 2}
+        map_side_rows = sorted(
+            map_sides.values(),
+            key=lambda row: (
+                -maps[row["name"].casefold()]["played"],
+                row["name"].casefold(),
+                side_order[row["side"]],
+            ),
+        )
+        for row in map_side_rows:
+            row["win_rate"] = round(row["wins"] / row["played"] * 100, 1)
         wins = sum(match["outcome"] == "win" for match in matches)
         losses = sum(match["outcome"] == "loss" for match in matches)
         return {
             "summary": {"played": len(matches), "wins": wins, "losses": losses},
             "opponents": opponent_rows,
             "maps": map_rows,
+            "map_sides": map_side_rows,
             "recent": matches,
         }
 

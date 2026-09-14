@@ -1,3 +1,4 @@
+import asyncio
 import csv
 import io
 import sys
@@ -7,7 +8,14 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 from cogs.wardiary import (
+    OTHER_MAP_OPTION,
+    OTHER_MIDPOINT_OPTION,
+    WAR_DIARY_MAP_OPTIONS,
+    WAR_DIARY_MIDPOINTS,
+    ClanConfig,
+    MidpointSelect,
     WarDiaryCog,
+    WarDiarySubmissionView,
     _display_stats_link,
     _event_review_thread_name,
     _normalize_stats_link,
@@ -16,6 +24,36 @@ from cogs.wardiary import (
 
 
 class WarDiaryExportTests(unittest.TestCase):
+
+    def test_every_named_map_has_three_midpoint_options(self) -> None:
+        named_maps = set(WAR_DIARY_MAP_OPTIONS) - {OTHER_MAP_OPTION}
+        self.assertEqual(set(WAR_DIARY_MIDPOINTS), named_maps)
+        self.assertTrue(all(len(midpoints) == 3 for midpoints in WAR_DIARY_MIDPOINTS.values()))
+
+    def test_submission_view_updates_midpoints_for_selected_map(self) -> None:
+        midpoint_select = MidpointSelect()
+        midpoint_select.set_map("Carentan", "TOWN CENTER")
+
+        self.assertFalse(midpoint_select.disabled)
+        self.assertEqual(
+            [option.value for option in midpoint_select.options],
+            ["TRAIN STATION", "TOWN CENTER", "CANAL CROSSING", OTHER_MIDPOINT_OPTION],
+        )
+        selected = [option.value for option in midpoint_select.options if option.default]
+        self.assertEqual(selected, ["TOWN CENTER"])
+
+    def test_submission_view_fits_discord_component_limit(self) -> None:
+        async def build_view() -> None:
+            view = WarDiarySubmissionView(
+                object.__new__(WarDiaryCog),
+                owner_id=1,
+                clans=[ClanConfig("7DR"), ClanConfig("CROWS")],
+            )
+            self.assertEqual(len(view.children), 5)
+            view.stop()
+
+        asyncio.run(build_view())
+
     def test_event_review_thread_name_contains_match_details(self) -> None:
         self.assertEqual(
             _event_review_thread_name("CROWS", "Carentan", "20/08/26"),
@@ -176,6 +214,7 @@ class WarDiaryExportTests(unittest.TestCase):
                 {
                     "match_date": "20/08/26",
                     "map_name": "Carentan",
+                    "midpoint_name": "TOWN CENTER",
                     "clan_name": "7DR",
                     "opponent_clan_name": "CROWS",
                     "result": "3-2",
@@ -192,6 +231,7 @@ class WarDiaryExportTests(unittest.TestCase):
                 [
                     "match_date",
                     "map",
+                    "midpoint",
                     "clans_played",
                     "result",
                     "allies_clan",
@@ -201,6 +241,7 @@ class WarDiaryExportTests(unittest.TestCase):
                 [
                     "20/08/26",
                     "Carentan",
+                    "TOWN CENTER",
                     "7DR vs CROWS",
                     '=\"3-2\"',
                     "CROWS",
@@ -226,7 +267,7 @@ class WarDiaryExportTests(unittest.TestCase):
         }
 
         rows = list(csv.reader(io.StringIO(cog._build_export_csv().decode("utf-8-sig"))))
-        self.assertEqual(rows[1][3], "Loss")
+        self.assertEqual(rows[1][4], "Loss")
 
     def test_csv_marks_score_as_spreadsheet_text(self) -> None:
         cog = object.__new__(WarDiaryCog)
@@ -243,7 +284,7 @@ class WarDiaryExportTests(unittest.TestCase):
         }
 
         rows = list(csv.reader(io.StringIO(cog._build_export_csv().decode("utf-8-sig"))))
-        self.assertEqual(rows[1][3], '=\"4-1\"')
+        self.assertEqual(rows[1][4], '=\"4-1\"')
 
 
     def test_links_event_review_thread_to_saved_match(self) -> None:

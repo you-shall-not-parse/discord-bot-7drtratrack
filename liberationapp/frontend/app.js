@@ -361,8 +361,9 @@ function opponentTable(rows) {
 
 function mapTable(rows) {
   if (!rows.length) return emptyState("No recorded results yet.");
-  const body = rows.map(row => `<tr><td>${escapeHtml(row.name)}</td><td>${row.played}</td><td>${row.wins}</td><td>${row.losses}</td><td>${row.draws}</td><td>${row.allies}</td><td>${row.axis}</td><td>${row.side_unknown}</td><td>${Number(row.win_rate).toLocaleString("en-GB", { maximumFractionDigits: 1 })}%</td></tr>`).join("");
-  const headers = ["Map", "P", "W", "L", "D", "Allies", "Axis", "Unknown", "Win %"];
+  const sideLabels = { axis: "Axis", allies: "Allies", unknown: "Unknown" };
+  const body = rows.map(row => `<tr><td>${escapeHtml(row.name)}</td><td>${sideLabels[row.side] || "Unknown"}</td><td><strong>${row.wins}&ndash;${row.losses}</strong></td><td>${row.played}</td><td>${row.draws}</td><td>${Number(row.win_rate).toLocaleString("en-GB", { maximumFractionDigits: 1 })}%</td></tr>`).join("");
+  const headers = ["Map", "Side", "W–L", "P", "D", "Win %"];
   return `<div class="table-wrap"><table><thead><tr>${headers.map(header => `<th>${header}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
@@ -373,7 +374,7 @@ function resultCards(rows) {
       <div class="match-result-content">
         <div class="match-result-top">${statsDate(row.date, row.stats_url)}<span class="result ${escapeHtml(row.outcome)}">${escapeHtml(row.outcome)}</span></div>
         <h4><span>7DR</span> ${escapeHtml(row.score)} ${escapeHtml(row.opponent)}</h4>
-        <small>${escapeHtml(row.map)} · ${row.side === "allies" ? "7DR played Allies" : row.side === "axis" ? "7DR played Axis" : "Side unknown"}</small>
+        <small>${escapeHtml(row.map)}${row.midpoint ? ` · ${escapeHtml(row.midpoint)}` : ""} · ${row.side === "allies" ? "7DR played Allies" : row.side === "axis" ? "7DR played Axis" : "Side unknown"}</small>
       </div>
     </article>`).join("")}</div>`;
 }
@@ -387,7 +388,7 @@ function renderWarDiary() {
     <div class="stat"><strong>${diary.summary.losses}</strong><small>Losses</small></div>`;
   $("#recent-results").innerHTML = resultCards(diary.recent);
   $("#opponent-records").innerHTML = opponentTable(diary.opponents);
-  $("#map-records").innerHTML = mapTable(diary.maps || []);
+  $("#map-records").innerHTML = mapTable(diary.map_sides || []);
 }
 
 function renderHighlights() {
