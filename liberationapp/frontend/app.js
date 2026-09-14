@@ -359,6 +359,13 @@ function opponentTable(rows) {
   return `<div class="table-wrap"><table><thead><tr>${headers.map(header => `<th>${header}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
+function mapTable(rows) {
+  if (!rows.length) return emptyState("No recorded results yet.");
+  const body = rows.map(row => `<tr><td>${escapeHtml(row.name)}</td><td>${row.played}</td><td>${row.wins}</td><td>${row.losses}</td><td>${row.draws}</td><td>${Number(row.win_rate).toLocaleString("en-GB", { maximumFractionDigits: 1 })}%</td></tr>`).join("");
+  const headers = ["Map", "P", "W", "L", "D", "Win %"];
+  return `<div class="table-wrap"><table><thead><tr>${headers.map(header => `<th>${header}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
 function resultCards(rows) {
   if (!rows.length) return emptyState("No recorded results yet.");
   return `<div class="match-result-grid">${rows.map(row => `
@@ -380,6 +387,7 @@ function renderWarDiary() {
     <div class="stat"><strong>${diary.summary.losses}</strong><small>Losses</small></div>`;
   $("#recent-results").innerHTML = resultCards(diary.recent);
   $("#opponent-records").innerHTML = opponentTable(diary.opponents);
+  $("#map-records").innerHTML = mapTable(diary.maps || []);
 }
 
 function renderHighlights() {

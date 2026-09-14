@@ -1150,12 +1150,18 @@ class FrontlineWeb:
     @staticmethod
     def _war_diary_payload(cog) -> dict[str, Any]:
         if cog is None:
-            return {"summary": {"played": 0, "wins": 0, "losses": 0}, "opponents": [], "recent": []}
+            return {
+                "summary": {"played": 0, "wins": 0, "losses": 0},
+                "opponents": [],
+                "maps": [],
+                "recent": [],
+            }
 
         from cogs.wardiary import WAR_DIARY_MAP_IMAGE_FILES, _normalize_stats_link
 
         matches: list[dict[str, Any]] = []
         opponents: dict[str, dict[str, Any]] = {}
+        maps: dict[str, dict[str, Any]] = {}
         for raw in cog._get_match_records():
             score_match = re.fullmatch(r"\s*(\d+)\s*[-:]\s*(\d+)\s*", str(raw.get("result") or ""))
             if score_match is not None:
@@ -1175,7 +1181,13 @@ class FrontlineWeb:
             )
             record["played"] += 1
             record[{"win": "wins", "loss": "losses", "draw": "draws"}[outcome]] += 1
-            map_name = str(raw.get("map_name") or "Unknown")
+            map_name = " ".join(str(raw.get("map_name") or "Unknown").split())
+            map_record = maps.setdefault(
+                map_name.casefold(),
+                {"name": map_name, "played": 0, "wins": 0, "losses": 0, "draws": 0},
+            )
+            map_record["played"] += 1
+            map_record[{"win": "wins", "loss": "losses", "draw": "draws"}[outcome]] += 1
             source_map_filename = WAR_DIARY_MAP_IMAGE_FILES.get(map_name, "")
             map_filename = Path(source_map_filename).with_suffix(".webp").name if source_map_filename else ""
             try:
@@ -1207,11 +1219,15 @@ class FrontlineWeb:
 
         matches.sort(key=date_key, reverse=True)
         opponent_rows = sorted(opponents.values(), key=lambda row: (-row["played"], row["name"].casefold()))
+        map_rows = sorted(maps.values(), key=lambda row: (-row["played"], row["name"].casefold()))
+        for row in map_rows:
+            row["win_rate"] = round(row["wins"] / row["played"] * 100, 1)
         wins = sum(match["outcome"] == "win" for match in matches)
         losses = sum(match["outcome"] == "loss" for match in matches)
         return {
             "summary": {"played": len(matches), "wins": wins, "losses": losses},
             "opponents": opponent_rows,
+            "maps": map_rows,
             "recent": matches,
         }
 

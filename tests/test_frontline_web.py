@@ -37,11 +37,11 @@ def test_frontend_assets_exist_and_are_wired() -> None:
 
     admin = (FRONTEND_DIR / "admin.html").read_text(encoding="utf-8")
 
-    assert '<link rel="stylesheet" href="/assets/app.css?v=20">' in index
-    assert '<link rel="stylesheet" href="/assets/app.css?v=20">' in login
-    assert '<link rel="stylesheet" href="/assets/app.css?v=20">' in report
-    assert '<link rel="stylesheet" href="/assets/app.css?v=20">' in admin
-    assert '<script defer src="/assets/app.js?v=14"></script>' in index
+    assert '<link rel="stylesheet" href="/assets/app.css?v=21">' in index
+    assert '<link rel="stylesheet" href="/assets/app.css?v=21">' in login
+    assert '<link rel="stylesheet" href="/assets/app.css?v=21">' in report
+    assert '<link rel="stylesheet" href="/assets/app.css?v=21">' in admin
+    assert '<script defer src="/assets/app.js?v=15"></script>' in index
     assert '<div class="hub-tabs-scroll">' in index
     assert 'src="/assets/emblem_7dr.png"' in index
     assert "7th Armoured Division" in index
@@ -96,6 +96,8 @@ def test_frontend_assets_exist_and_are_wired() -> None:
     assert 'name="name" type="text" minlength="1" maxlength="80" autocomplete="name" autofocus>' in login
     assert 'action="/logout"' in index
     assert "function resultCards(rows)" in javascript
+    assert "function mapTable(rows)" in javascript
+    assert 'id="map-records"' in index
     assert "function renderHighlights()" in javascript
     assert "function renderEventCalendar(events)" in javascript
     assert 'state.eventLayout === "calendar"' in javascript
@@ -555,6 +557,11 @@ def test_war_diary_builds_overall_and_opponent_records() -> None:
 
     assert payload["summary"] == {"played": 3, "wins": 1, "losses": 1}
     assert payload["opponents"][0] == {"name": "Example", "played": 2, "wins": 1, "losses": 1, "draws": 0}
+    assert payload["maps"] == [
+        {"name": "Carentan", "played": 1, "wins": 1, "losses": 0, "draws": 0, "win_rate": 100.0},
+        {"name": "Kharkov", "played": 1, "wins": 0, "losses": 1, "draws": 0, "win_rate": 0.0},
+        {"name": "Omaha", "played": 1, "wins": 0, "losses": 0, "draws": 1, "win_rate": 0.0},
+    ]
     assert payload["recent"][0]["opponent"] == "Another"
     carentan = next(match for match in payload["recent"] if match["map"] == "Carentan")
     kharkov = next(match for match in payload["recent"] if match["map"] == "Kharkov")
