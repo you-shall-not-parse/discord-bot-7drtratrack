@@ -361,8 +361,8 @@ function opponentTable(rows) {
 
 function mapTable(rows) {
   if (!rows.length) return emptyState("No recorded results yet.");
-  const body = rows.map(row => `<tr><td>${escapeHtml(row.name)}</td><td>${row.played}</td><td>${row.wins}</td><td>${row.losses}</td><td>${row.draws}</td><td>${Number(row.win_rate).toLocaleString("en-GB", { maximumFractionDigits: 1 })}%</td></tr>`).join("");
-  const headers = ["Map", "P", "W", "L", "D", "Win %"];
+  const body = rows.map(row => `<tr><td>${escapeHtml(row.name)}</td><td>${row.played}</td><td>${row.wins}</td><td>${row.losses}</td><td>${row.draws}</td><td>${row.allies}</td><td>${row.axis}</td><td>${row.side_unknown}</td><td>${Number(row.win_rate).toLocaleString("en-GB", { maximumFractionDigits: 1 })}%</td></tr>`).join("");
+  const headers = ["Map", "P", "W", "L", "D", "Allies", "Axis", "Unknown", "Win %"];
   return `<div class="table-wrap"><table><thead><tr>${headers.map(header => `<th>${header}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
@@ -373,7 +373,7 @@ function resultCards(rows) {
       <div class="match-result-content">
         <div class="match-result-top">${statsDate(row.date, row.stats_url)}<span class="result ${escapeHtml(row.outcome)}">${escapeHtml(row.outcome)}</span></div>
         <h4><span>7DR</span> ${escapeHtml(row.score)} ${escapeHtml(row.opponent)}</h4>
-        <small>${escapeHtml(row.map)}</small>
+        <small>${escapeHtml(row.map)} · ${row.side === "allies" ? "7DR played Allies" : row.side === "axis" ? "7DR played Axis" : "Side unknown"}</small>
       </div>
     </article>`).join("")}</div>`;
 }

@@ -41,7 +41,7 @@ def test_frontend_assets_exist_and_are_wired() -> None:
     assert '<link rel="stylesheet" href="/assets/app.css?v=21">' in login
     assert '<link rel="stylesheet" href="/assets/app.css?v=21">' in report
     assert '<link rel="stylesheet" href="/assets/app.css?v=21">' in admin
-    assert '<script defer src="/assets/app.js?v=15"></script>' in index
+    assert '<script defer src="/assets/app.js?v=16"></script>' in index
     assert '<div class="hub-tabs-scroll">' in index
     assert 'src="/assets/emblem_7dr.png"' in index
     assert "7th Armoured Division" in index
@@ -541,6 +541,8 @@ def test_war_diary_builds_overall_and_opponent_records() -> None:
                 "map_name": "Carentan",
                 "stats_link": "https://stats.example.test/games/123",
                 "result": "5-2",
+                "allies_clan": "7DR",
+                "axis_clan": "Example",
             },
             {
                 "opponent_clan_name": "example",
@@ -548,6 +550,8 @@ def test_war_diary_builds_overall_and_opponent_records() -> None:
                 "map_name": "Kharkov",
                 "stats_link": "javascript:alert(1)",
                 "result": "1-3",
+                "allies_clan": "example",
+                "axis_clan": "[7DR]",
             },
             {"opponent_clan_name": "Another", "match_date": "03/09/26", "map_name": "Omaha", "result": "3-3"},
         ]
@@ -558,16 +562,19 @@ def test_war_diary_builds_overall_and_opponent_records() -> None:
     assert payload["summary"] == {"played": 3, "wins": 1, "losses": 1}
     assert payload["opponents"][0] == {"name": "Example", "played": 2, "wins": 1, "losses": 1, "draws": 0}
     assert payload["maps"] == [
-        {"name": "Carentan", "played": 1, "wins": 1, "losses": 0, "draws": 0, "win_rate": 100.0},
-        {"name": "Kharkov", "played": 1, "wins": 0, "losses": 1, "draws": 0, "win_rate": 0.0},
-        {"name": "Omaha", "played": 1, "wins": 0, "losses": 0, "draws": 1, "win_rate": 0.0},
+        {"name": "Carentan", "played": 1, "wins": 1, "losses": 0, "draws": 0, "allies": 1, "axis": 0, "side_unknown": 0, "win_rate": 100.0},
+        {"name": "Kharkov", "played": 1, "wins": 0, "losses": 1, "draws": 0, "allies": 0, "axis": 1, "side_unknown": 0, "win_rate": 0.0},
+        {"name": "Omaha", "played": 1, "wins": 0, "losses": 0, "draws": 1, "allies": 0, "axis": 0, "side_unknown": 1, "win_rate": 0.0},
     ]
     assert payload["recent"][0]["opponent"] == "Another"
     carentan = next(match for match in payload["recent"] if match["map"] == "Carentan")
     kharkov = next(match for match in payload["recent"] if match["map"] == "Kharkov")
     assert carentan["map_image"] == "/assets/maps/Carentan.webp"
     assert carentan["stats_url"] == "https://stats.example.test/games/123"
+    assert carentan["side"] == "allies"
     assert kharkov["stats_url"] == ""
+    assert kharkov["side"] == "axis"
+    assert payload["recent"][0]["side"] == "unknown"
 
 
 def test_war_diary_returns_every_match_and_keeps_legacy_outcomes() -> None:

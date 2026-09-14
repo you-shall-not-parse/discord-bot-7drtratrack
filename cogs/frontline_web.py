@@ -1157,7 +1157,7 @@ class FrontlineWeb:
                 "recent": [],
             }
 
-        from cogs.wardiary import WAR_DIARY_MAP_IMAGE_FILES, _normalize_stats_link
+        from cogs.wardiary import HOME_CLAN_NAME, WAR_DIARY_MAP_IMAGE_FILES, _normalize_stats_link
 
         matches: list[dict[str, Any]] = []
         opponents: dict[str, dict[str, Any]] = {}
@@ -1181,13 +1181,40 @@ class FrontlineWeb:
             )
             record["played"] += 1
             record[{"win": "wins", "loss": "losses", "draw": "draws"}[outcome]] += 1
+            clan_name = str(raw.get("clan_name") or HOME_CLAN_NAME)
+            normalized_clan = re.sub(r"[^a-z0-9]", "", clan_name.casefold())
+            allies_clan = str(raw.get("allies_clan") or raw.get("allied_clan") or "")
+            axis_clan = str(raw.get("axis_clan") or "")
+            clan_is_allies = bool(normalized_clan) and re.sub(
+                r"[^a-z0-9]", "", allies_clan.casefold()
+            ) == normalized_clan
+            clan_is_axis = bool(normalized_clan) and re.sub(
+                r"[^a-z0-9]", "", axis_clan.casefold()
+            ) == normalized_clan
+            side = (
+                "allies"
+                if clan_is_allies and not clan_is_axis
+                else "axis"
+                if clan_is_axis and not clan_is_allies
+                else "unknown"
+            )
             map_name = " ".join(str(raw.get("map_name") or "Unknown").split())
             map_record = maps.setdefault(
                 map_name.casefold(),
-                {"name": map_name, "played": 0, "wins": 0, "losses": 0, "draws": 0},
+                {
+                    "name": map_name,
+                    "played": 0,
+                    "wins": 0,
+                    "losses": 0,
+                    "draws": 0,
+                    "allies": 0,
+                    "axis": 0,
+                    "side_unknown": 0,
+                },
             )
             map_record["played"] += 1
             map_record[{"win": "wins", "loss": "losses", "draw": "draws"}[outcome]] += 1
+            map_record[{"allies": "allies", "axis": "axis", "unknown": "side_unknown"}[side]] += 1
             source_map_filename = WAR_DIARY_MAP_IMAGE_FILES.get(map_name, "")
             map_filename = Path(source_map_filename).with_suffix(".webp").name if source_map_filename else ""
             try:
@@ -1206,6 +1233,7 @@ class FrontlineWeb:
                     "stats_url": stats_url,
                     "score": display_score,
                     "outcome": outcome,
+                    "side": side,
                 }
             )
 
