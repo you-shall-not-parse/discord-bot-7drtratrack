@@ -49,13 +49,13 @@ Rules and notes: Discord publishes only rank labels and member counts; names app
 
 ## `hll_maps.py`
 
-Overview: Posts one of the bot's bundled Hell Let Loose map images in the channel where it is requested.
+Overview: Posts one of the bot's bundled Hell Let Loose tactical overview maps in the channel where it is requested.
 
 Slash commands: `/map`.
 
-How to use: Run `/map`, choose a map from the `map` list, and submit the command. The selected image is posted publicly in the current channel.
+How to use: Run `/map`, choose a map from the `map` list, and submit the command. The selected tactical map is posted publicly in the current channel.
 
-Rules and notes: Every member can use this command; it has no rank or staff-role restriction. Discord channel permissions still determine whether the member can use application commands and whether the bot can post there.
+Rules and notes: Every member can use this command; it has no rank or staff-role restriction. Images are read from `data/tac_maps`; the six `wdeva`–`wdevf` placeholders are excluded. Discord channel permissions still determine whether the member can use application commands and whether the bot can post in the destination channel.
 
 ## `quick_exit.py`
 

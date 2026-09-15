@@ -11,33 +11,33 @@ from data_paths import data_path
 
 
 MAP_IMAGE_FILES: dict[str, str] = {
-    "Carentan": "Carentan.png",
-    "Driel": "Driel.png",
-    "El Alamein": "El Alamein.png",
-    "Elsenborn Ridge": "Elsenborn Ridge.png",
-    "Foy": "Foy.png",
-    "Hill 400": "Hill 400.png",
-    "Hurtgen Forest": "Hurtgen Forest.png",
-    "Juno Beach": "Juno Beach.png",
-    "Kharkov": "Kharkov.png",
-    "Kursk": "Kursk.png",
-    "Mortain": "Mortain.png",
-    "Omaha Beach": "Omaha Beach.png",
-    "Purple Heart Lane": "Purple Heart Lane.png",
-    "Remagen": "Remagen.png",
-    "Smolensk": "Smolensk.png",
-    "St. Marie Du Mont": "St. Marie Du Mont.png",
-    "St. Mere Eglise": "St. Mere Eglise.png",
-    "Stalingrad": "Stalingrad.png",
-    "Tobruk": "Tobruk.png",
-    "Utah Beach": "Utah Beach.png",
+    "Carentan": "carentan.webp",
+    "Driel": "driel.webp",
+    "El Alamein": "elalamein.webp",
+    "Elsenborn Ridge": "elsenbornridge.webp",
+    "Foy": "foy.webp",
+    "Hill 400": "hill400.webp",
+    "Hurtgen Forest": "hurtgenforest.webp",
+    "Juno Beach": "junobeach.webp",
+    "Kharkov": "kharkov.webp",
+    "Kursk": "kursk.webp",
+    "Mortain": "mortain.webp",
+    "Omaha Beach": "omahabeach.webp",
+    "Purple Heart Lane (PHL)": "purpleheartlane.webp",
+    "Remagen": "remagen.webp",
+    "Smolensk": "smolensk.webp",
+    "St. Marie Du Mont (SMDM)": "stmariedumont.webp",
+    "St. Mere Eglise (SME)": "stmereeglise.webp",
+    "Stalingrad": "stalingrad.webp",
+    "Tobruk": "tobruk.webp",
+    "Utah Beach": "utahbeach.webp",
 }
 
 MAP_CHOICES = [
     app_commands.Choice(name=map_name, value=map_name)
     for map_name in sorted(MAP_IMAGE_FILES, key=str.casefold)
 ]
-MAP_IMAGES_DIR = Path(data_path("map_images", ensure_dir=False))
+MAP_IMAGES_DIR = Path(data_path("tac_maps", ensure_dir=False))
 
 
 class HLLMaps(commands.Cog):
@@ -72,7 +72,7 @@ class HLLMaps(commands.Cog):
             )
             return
 
-        upload_name = "hll-map.png"
+        upload_name = "hll-tactical-map.webp"
         embed = discord.Embed(title=map_name.value, color=discord.Color.from_rgb(97, 107, 75))
         embed.set_image(url=f"attachment://{upload_name}")
         embed.set_footer(text=f"Requested by {interaction.user.display_name}")
