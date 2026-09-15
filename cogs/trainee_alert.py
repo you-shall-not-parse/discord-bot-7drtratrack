@@ -23,6 +23,7 @@ class TraineeAlertConfig:
     trainee_role_name: str | None = None
     trainer_role_id: int | None = None
     trainer_role_name: str | None = None
+    mention_trainer_role: bool = True
 
 
 INFANTRY_ALERT = TraineeAlertConfig(
@@ -34,6 +35,16 @@ INFANTRY_ALERT = TraineeAlertConfig(
     trainer_role_name="Infantry School Trainer",
 )
 
+SQUAD_LEADER_ALERT = TraineeAlertConfig(
+    key="squad_leader",
+    label="Squad Leader Trainee",
+    training_name="SL",
+    alert_channel_id=1237437502248452227,
+    trainee_role_id=1107595211862966283,
+    trainer_role_name="Infantry School Trainer",
+    mention_trainer_role=False,
+)
+
 TANK_CREW_ALERT = TraineeAlertConfig(
     key="tank_crew",
     label="Tank Crew Trainee",
@@ -43,7 +54,7 @@ TANK_CREW_ALERT = TraineeAlertConfig(
     trainer_role_id=1337743860532645930,
 )
 
-ALERTS = (INFANTRY_ALERT, TANK_CREW_ALERT)
+ALERTS = (INFANTRY_ALERT, SQUAD_LEADER_ALERT, TANK_CREW_ALERT)
 ALERTS_BY_KEY = {config.key: config for config in ALERTS}
 
 
@@ -70,15 +81,20 @@ def _can_test_alert(member: discord.Member, config: TraineeAlertConfig) -> bool:
 
 def _alert_content(
     trainee_id: int,
-    trainer_role_id: int,
+    trainer_role_id: int | None,
     config: TraineeAlertConfig,
     *,
     is_test: bool = False,
 ) -> str:
+    trainer_prompt = (
+        f"<@&{trainer_role_id}>, please contact them"
+        if config.mention_trainer_role and trainer_role_id is not None
+        else "Please contact them"
+    )
     prefix = "🧪 **TEST ALERT**\n" if is_test else ""
     return (
         f"{prefix}🎓 <@{trainee_id}> has joined with the **{config.label}** role.\n"
-        f"<@&{trainer_role_id}>, please contact them to arrange their {config.training_name} training."
+        f"{trainer_prompt} to arrange their {config.training_name} training."
     )
 
 
@@ -147,8 +163,8 @@ class TraineeAlert(commands.Cog):
         *,
         is_test: bool = False,
     ) -> discord.Message | None:
-        trainer_role = self._trainer_role(member.guild, config)
-        if trainer_role is None:
+        trainer_role = self._trainer_role(member.guild, config) if config.mention_trainer_role else None
+        if config.mention_trainer_role and trainer_role is None:
             LOGGER.error("Cannot post %s trainee alert: trainer role was not found in guild %s.", config.key, member.guild.id)
             return None
 
@@ -167,7 +183,12 @@ class TraineeAlert(commands.Cog):
 
         try:
             return await channel.send(
-                _alert_content(member.id, trainer_role.id, config, is_test=is_test),
+                _alert_content(
+                    member.id,
+                    trainer_role.id if trainer_role is not None else None,
+                    config,
+                    is_test=is_test,
+                ),
                 allowed_mentions=discord.AllowedMentions(users=True, roles=True, everyone=False),
             )
         except (discord.Forbidden, discord.HTTPException):
@@ -194,6 +215,7 @@ class TraineeAlert(commands.Cog):
     @app_commands.choices(
         track=[
             app_commands.Choice(name="Infantry", value="infantry"),
+            app_commands.Choice(name="Squad Leader", value="squad_leader"),
             app_commands.Choice(name="Tank Crew", value="tank_crew"),
         ]
     )

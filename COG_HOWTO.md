@@ -149,13 +149,13 @@ Rules and notes: Keep the greeting flow clear and short. If too much information
 
 ## `trainee_alert.py`
 
-Overview: Alerts the appropriate training team when a newly joined member receives the Infantry Trainee or Tank Crew Trainee role.
+Overview: Alerts the appropriate training team when a newly joined member receives the Infantry Trainee, Squad Leader Trainee, or Tank Crew Trainee role.
 
-Slash commands: `/test_trainee_alert` with an Infantry or Tank Crew choice.
+Slash commands: `/test_trainee_alert` with an Infantry, Squad Leader, or Tank Crew choice.
 
 How to use: The bot posts automatically in the configured trainer channel and pings the trainee and matching trainer role. A matching trainer or member with Manage Server permission can use `/test_trainee_alert` to post a clearly labelled test alert using themselves as the trainee.
 
-Rules and notes: Infantry continues to use the exact role names **Infantry Trainee** and **Infantry School Trainer**. Tank Crew uses configured Discord role IDs. The bot must be able to view and send messages in both configured channels and must have permission to mention the trainer roles.
+Rules and notes: Infantry continues to use the exact role names **Infantry Trainee** and **Infantry School Trainer**. Squad Leader Trainee uses role ID `1107595211862966283` and posts to the Infantry training channel without pinging a trainer role. Tank Crew uses configured Discord role IDs. The bot must be able to view and send messages in the configured channels and must have permission to mention the trainer roles used by the other alerts.
 
 ## `echo.py`
 

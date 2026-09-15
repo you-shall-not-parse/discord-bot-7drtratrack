@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from cogs.trainee_alert import (
     INFANTRY_ALERT,
+    SQUAD_LEADER_ALERT,
     TANK_CREW_ALERT,
     TraineeAlert,
     _alert_content,
@@ -27,6 +28,14 @@ class TraineeAlertTests(unittest.TestCase):
         self.assertEqual(TANK_CREW_ALERT.alert_channel_id, 1334213005055102977)
         self.assertEqual(TANK_CREW_ALERT.trainer_role_id, 1337743860532645930)
 
+    def test_squad_leader_role_check_uses_configured_id(self) -> None:
+        trainee = SimpleNamespace(roles=[SimpleNamespace(id=1107595211862966283, name="Renamed role")])
+
+        self.assertTrue(_has_trainee_role(trainee, SQUAD_LEADER_ALERT))
+        self.assertEqual(SQUAD_LEADER_ALERT.alert_channel_id, INFANTRY_ALERT.alert_channel_id)
+        self.assertEqual(SQUAD_LEADER_ALERT.trainer_role_name, INFANTRY_ALERT.trainer_role_name)
+        self.assertFalse(SQUAD_LEADER_ALERT.mention_trainer_role)
+
     def test_alert_mentions_trainee_and_trainer_role_without_button_text(self) -> None:
         content = _alert_content(123, 456, INFANTRY_ALERT)
 
@@ -40,6 +49,13 @@ class TraineeAlertTests(unittest.TestCase):
         self.assertIn("TEST ALERT", content)
         self.assertIn("Tank Crew Trainee", content)
         self.assertIn("tank crew training", content)
+
+    def test_squad_leader_alert_uses_sl_wording(self) -> None:
+        content = _alert_content(123, None, SQUAD_LEADER_ALERT)
+
+        self.assertIn("<@123> has joined with the **Squad Leader Trainee** role", content)
+        self.assertIn("Please contact them to arrange their SL training", content)
+        self.assertNotIn("<@&", content)
 
     def test_matching_trainer_can_run_test(self) -> None:
         member = SimpleNamespace(
