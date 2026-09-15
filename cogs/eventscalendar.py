@@ -89,29 +89,6 @@ KEYWORD_EMOJI_TAGS: dict[str, str] = {
 }
 
 
-class EventCalendarRefreshView(discord.ui.View):
-    def __init__(self, cog: "EventDisplayCog") -> None:
-        super().__init__(timeout=None)
-        self.cog = cog
-
-    @discord.ui.button(
-        label="Refresh calendar",
-        emoji="🔄",
-        style=discord.ButtonStyle.secondary,
-        custom_id="event_calendar:refresh",
-    )
-    async def refresh_calendar(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        refreshed = await self.cog._update_once(reason=f"manual:{interaction.user.id}")
-        if refreshed:
-            await interaction.followup.send("Calendar refreshed.", ephemeral=True)
-        else:
-            await interaction.followup.send(
-                "The calendar could not be refreshed. Please try again shortly.",
-                ephemeral=True,
-            )
-
-
 class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
     """
     A cog that reads Discord scheduled events and displays them in an embed.
@@ -127,8 +104,6 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
         self._notification_state = self._load_notification_state()
         self._raw_events_cache: dict[int, dict] = {}
         self._raw_events_cache_time = 0.0
-        self._refresh_view = EventCalendarRefreshView(self)
-        self.bot.add_view(self._refresh_view)
         self.update_events_display.start()
         logger.info("EventDisplayCog initialized")
 
@@ -137,7 +112,6 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
         self.update_events_display.cancel()
         if self._debounce_task and not self._debounce_task.done():
             self._debounce_task.cancel()
-        self.bot.remove_view(self._refresh_view)
 
     async def _retry_discord_request(
         self,
@@ -981,14 +955,13 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
                         except Exception:
                             logger.warning("Failed to fetch events display page %s.", page_index + 1, exc_info=True)
 
-                    page_view = self._refresh_view if page_index == 0 else None
                     if message is not None:
                         try:
                             message = await self._retry_discord_request(
                                 f"editing events display page {page_index + 1}",
-                                lambda message=message, embed=embed, page_view=page_view: message.edit(
+                                lambda message=message, embed=embed: message.edit(
                                     embed=embed,
-                                    view=page_view,
+                                    view=None,
                                 ),
                             )
                         except discord.Forbidden:
@@ -999,7 +972,7 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
                             message = None
 
                     if message is None:
-                        message = await channel.send(embed=embed, view=page_view)
+                        message = await channel.send(embed=embed)
                     updated_ids.append(message.id)
 
                 for stale_id in previous_ids[len(embeds):]:

@@ -14,6 +14,8 @@ from cogs.wardiary import (
     WAR_DIARY_MIDPOINTS,
     ClanConfig,
     MidpointSelect,
+    PLAYED_AS_OPTIONS,
+    PlayedAsSelect,
     WarDiaryCog,
     WarDiarySubmissionView,
     _display_stats_link,
@@ -50,9 +52,52 @@ class WarDiaryExportTests(unittest.TestCase):
                 clans=[ClanConfig("7DR"), ClanConfig("CROWS")],
             )
             self.assertEqual(len(view.children), 5)
+            self.assertIsInstance(view.children[-1], PlayedAsSelect)
+            self.assertTrue(view.played_as_select.disabled)
+            view.opponent_clan_name = "CROWS"
+            view.selected_score = "3-2"
+            view.selected_map_name = "Carentan"
+            view.selected_midpoint_name = "TOWN CENTER"
+            view.selected_match_type = "Competitive"
+            view.refresh_submit_state()
+            self.assertFalse(view.played_as_select.disabled)
             view.stop()
 
         asyncio.run(build_view())
+
+    def test_played_as_dropdown_has_requested_factions(self) -> None:
+        select = PlayedAsSelect()
+
+        self.assertEqual([option.value for option in select.options], list(PLAYED_AS_OPTIONS))
+        self.assertEqual(list(PLAYED_AS_OPTIONS), ["Axis", "Allies", "British", "Canadians"])
+
+    def test_stored_played_as_sets_clan_sides(self) -> None:
+        for played_as, expected_allies, expected_axis in (
+            ("Axis", "CROWS", "7DR"),
+            ("Allies", "7DR", "CROWS"),
+            ("British", "7DR", "CROWS"),
+            ("Canadians", "7DR", "CROWS"),
+        ):
+            cog = object.__new__(WarDiaryCog)
+            cog._state = {"match_threads": []}
+            cog._store_match_record(
+                thread_id=1,
+                clan_name="7DR",
+                opponent_clan_name="CROWS",
+                match_date="20/08/26",
+                map_name="Carentan",
+                midpoint_name="TOWN CENTER",
+                stats_link=None,
+                played_as=played_as,
+                is_7dr_win=True,
+                submitter_score=3,
+                opponent_score=2,
+            )
+
+            record = cog._state["match_threads"][0]
+            self.assertEqual(record["played_as"], played_as)
+            self.assertEqual(record["allies_clan"], expected_allies)
+            self.assertEqual(record["axis_clan"], expected_axis)
 
     def test_event_review_thread_name_contains_match_details(self) -> None:
         self.assertEqual(
@@ -218,6 +263,7 @@ class WarDiaryExportTests(unittest.TestCase):
                     "clan_name": "7DR",
                     "opponent_clan_name": "CROWS",
                     "result": "3-2",
+                    "played_as": "Axis",
                     "allies_clan": "CROWS",
                     "axis_clan": "7DR",
                     "stats_link": "https://stats.example.test/games/123",
@@ -234,6 +280,7 @@ class WarDiaryExportTests(unittest.TestCase):
                     "midpoint",
                     "clans_played",
                     "result",
+                    "played_as",
                     "allies_clan",
                     "axis_clan",
                     "stats_link",
@@ -244,6 +291,7 @@ class WarDiaryExportTests(unittest.TestCase):
                     "TOWN CENTER",
                     "7DR vs CROWS",
                     '=\"3-2\"',
+                    "Axis",
                     "CROWS",
                     "7DR",
                     "https://stats.example.test/games/123",

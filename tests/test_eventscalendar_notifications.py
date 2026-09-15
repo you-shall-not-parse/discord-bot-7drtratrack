@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, Mock
 import discord
 from PIL import Image
 
-from cogs.eventscalendar import EVENT_NOTIFICATION_BACKGROUND_DIR, EventCalendarRefreshView, EventDisplayCog
+from cogs.eventscalendar import EVENT_NOTIFICATION_BACKGROUND_DIR, EventDisplayCog
 
 
 class EventCalendarNotificationTests(unittest.IsolatedAsyncioTestCase):
@@ -140,13 +140,6 @@ class EventCalendarNotificationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(len(embed) <= 6000 for embed in embeds))
         self.assertTrue(all(f"({index}/{len(embeds)})" in embed.title for index, embed in enumerate(embeds, 1)))
 
-    async def test_refresh_button_is_persistent_and_available_to_everyone(self) -> None:
-        view = EventCalendarRefreshView(SimpleNamespace())
-        button = next(item for item in view.children if item.custom_id == "event_calendar:refresh")
-
-        self.assertIsNone(view.timeout)
-        self.assertEqual(button.label, "Refresh calendar")
-        self.assertTrue(await view.interaction_check(SimpleNamespace()))
 
 
 if __name__ == "__main__":

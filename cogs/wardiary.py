@@ -64,6 +64,7 @@ BACKGROUND_IMAGE_PATH: str = os.path.join(os.path.dirname(__file__), "scoreboard
 GIF_WIN_INTERVAL: int = 5
 OTHER_MAP_OPTION: str = "Other"
 MATCH_TYPE_OPTIONS: list[str] = ["Competitive", "Friendly"]
+PLAYED_AS_OPTIONS: tuple[str, ...] = ("Axis", "Allies", "British", "Canadians")
 OTHER_MIDPOINT_OPTION: str = "Other / not listed"
 MAX_CRCON_RESPONSE_BYTES: int = 5 * 1024 * 1024
 CRCON_USER_AGENT: str = (
@@ -338,6 +339,7 @@ class MatchThreadRecord:
 	map_name: str = OTHER_MAP_OPTION
 	midpoint_name: Optional[str] = None
 	stats_link: Optional[str] = None
+	played_as: Optional[str] = None
 	allies_clan: Optional[str] = None
 	axis_clan: Optional[str] = None
 	is_7dr_win: bool = False
@@ -539,6 +541,37 @@ class MidpointSelect(discord.ui.Select):
 		await interaction.response.edit_message(view=view)
 
 
+class PlayedAsSelect(discord.ui.Select):
+	def __init__(self):
+		super().__init__(
+			placeholder="Complete the match details first...",
+			min_values=1,
+			max_values=1,
+			options=[discord.SelectOption(label=label, value=label) for label in PLAYED_AS_OPTIONS],
+			disabled=True,
+		)
+
+	def set_enabled(self, enabled: bool, selected_played_as: Optional[str]) -> None:
+		self.disabled = not enabled
+		self.placeholder = selected_played_as or ("Select played as & continue..." if enabled else "Complete the match details first...")
+		self.options = [
+			discord.SelectOption(label=label, value=label, default=label == selected_played_as)
+			for label in PLAYED_AS_OPTIONS
+		]
+
+	async def callback(self, interaction: discord.Interaction) -> None:
+		view = self.view
+		if not isinstance(view, WarDiarySubmissionView):
+			return
+		if not view.is_owner(interaction.user.id):
+			await interaction.response.send_message("This submission form is not yours.", ephemeral=True)
+			return
+
+		view.selected_played_as = str(self.values[0])
+		self.set_enabled(True, view.selected_played_as)
+		await interaction.response.send_modal(view._build_modal())
+
+
 class StatsLinkModal(discord.ui.Modal, title="Match Details"):
 	match_date = discord.ui.TextInput(
 		label="Match date (DD/MM/YY)",
@@ -570,6 +603,7 @@ class StatsLinkModal(discord.ui.Modal, title="Match Details"):
 		self.selected_map_name: str = OTHER_MAP_OPTION
 		self.selected_midpoint_name: str = OTHER_MIDPOINT_OPTION
 		self.selected_match_type: str = "Competitive"
+		self.selected_played_as: str = "Allies"
 
 	async def on_submit(self, interaction: discord.Interaction) -> None:
 		if not interaction.guild or not isinstance(interaction.user, discord.Member):
@@ -601,6 +635,7 @@ class StatsLinkModal(discord.ui.Modal, title="Match Details"):
 			map_name=self.selected_map_name,
 			midpoint_name=midpoint_name,
 			stats_link=stats_link,
+			played_as=self.selected_played_as,
 		)
 		if thread is None:
 			await interaction.followup.send(error_message or "Failed to create the war diary post. Check the forum channel config.", ephemeral=True)
@@ -645,6 +680,7 @@ class WarDiarySubmissionView(discord.ui.View):
 		self.selected_map_name: Optional[str] = None
 		self.selected_midpoint_name: Optional[str] = None
 		self.selected_match_type: Optional[str] = None
+		self.selected_played_as: Optional[str] = None
 
 		self.opponent_select = OpponentSelect(clans)
 		self.opponent_select.set_options(self.clan_name, self.opponent_clan_name)
@@ -658,6 +694,9 @@ class WarDiarySubmissionView(discord.ui.View):
 
 		self.score_select = ScoreSelect()
 		self.add_item(self.score_select)
+
+		self.played_as_select = PlayedAsSelect()
+		self.add_item(self.played_as_select)
 
 	def is_owner(self, user_id: int) -> bool:
 		return self.owner_id == user_id
@@ -677,28 +716,16 @@ class WarDiarySubmissionView(discord.ui.View):
 		self.refresh_submit_state()
 
 	def refresh_submit_state(self) -> None:
-		for child in self.children:
-			if isinstance(child, discord.ui.Button) and child.custom_id == "wardiary:submit":
-				child.disabled = not (
-					self.opponent_clan_name
-					and self.selected_score
-					and self.selected_map_name
-					and self.selected_midpoint_name
-					and self.selected_match_type
-				)
-
-	@discord.ui.button(label="Add Optional Stats Link & Submit", style=discord.ButtonStyle.success, disabled=True, custom_id="wardiary:submit")
-	async def submit(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-		if not self.is_owner(interaction.user.id):
-			await interaction.response.send_message("This submission form is not yours.", ephemeral=True)
-			return
-		if not self.opponent_clan_name or not self.selected_score:
-			await interaction.response.send_message("Pick the opposing clan and the result first.", ephemeral=True)
-			return
-
-		await interaction.response.send_modal(
-			self._build_modal()
+		ready = bool(
+			self.opponent_clan_name
+			and self.selected_score
+			and self.selected_map_name
+			and self.selected_midpoint_name
+			and self.selected_match_type
 		)
+		if not ready:
+			self.selected_played_as = None
+		self.played_as_select.set_enabled(ready, self.selected_played_as)
 
 	def _build_modal(self) -> StatsLinkModal:
 		modal = StatsLinkModal(
@@ -710,6 +737,7 @@ class WarDiarySubmissionView(discord.ui.View):
 		modal.selected_map_name = self.selected_map_name or OTHER_MAP_OPTION
 		modal.selected_midpoint_name = self.selected_midpoint_name or OTHER_MIDPOINT_OPTION
 		modal.selected_match_type = self.selected_match_type or "Competitive"
+		modal.selected_played_as = self.selected_played_as or "Allies"
 		return modal
 
 
@@ -738,7 +766,7 @@ class WarDiaryMainView(discord.ui.View):
 		embed = discord.Embed(
 			title="Submit War Diary Result",
 			description=(
-				f"Home clan is fixed as **{HOME_CLAN_NAME}**. Pick the opposing clan, map, midpoint, and the combined match type/result, then optionally paste a stats link in the next step."
+				f"Home clan is fixed as **{HOME_CLAN_NAME}**. Pick the opposing clan, map, midpoint, and combined match type/result. Finally choose **Played as** to open the date and optional stats-link step."
 			),
 			colour=discord.Colour.blurple(),
 		)
@@ -827,6 +855,7 @@ class WarDiaryCog(commands.Cog):
 		map_name: str,
 		midpoint_name: str,
 		stats_link: Optional[str],
+		played_as: str,
 		is_7dr_win: bool,
 		submitter_score: int,
 		opponent_score: int,
@@ -840,6 +869,8 @@ class WarDiaryCog(commands.Cog):
 				str(record.get("match_date") or ""),
 			) != self._match_identity(clan_name, opponent_clan_name, match_date)
 		]
+		allies_clan = clan_name if played_as in {"Allies", "British", "Canadians"} else opponent_clan_name
+		axis_clan = clan_name if played_as == "Axis" else opponent_clan_name
 		records.append(
 			{
 				"thread_id": thread_id,
@@ -849,6 +880,9 @@ class WarDiaryCog(commands.Cog):
 				"map_name": map_name,
 				"midpoint_name": midpoint_name,
 				"stats_link": stats_link,
+				"played_as": played_as,
+				"allies_clan": allies_clan,
+				"axis_clan": axis_clan,
 				"is_7dr_win": is_7dr_win,
 				"result": f"{submitter_score}-{opponent_score}",
 			}
@@ -1142,6 +1176,7 @@ class WarDiaryCog(commands.Cog):
 				"midpoint",
 				"clans_played",
 				"result",
+				"played_as",
 				"allies_clan",
 				"axis_clan",
 				"stats_link",
@@ -1169,6 +1204,7 @@ class WarDiaryCog(commands.Cog):
 					str(record.get("midpoint_name") or ""),
 					f"{clan_name} vs {opponent}",
 					result,
+					str(record.get("played_as") or ""),
 					str(record.get("allies_clan") or ""),
 					str(record.get("axis_clan") or ""),
 					_display_stats_link(str(record.get("stats_link") or "")) or "",
@@ -1305,9 +1341,8 @@ class WarDiaryCog(commands.Cog):
 				"3. Select the played map, or choose Other to use the blank scoreboard background.\n"
 				"4. Select whether the match was Competitive or Friendly.\n"
 				"5. Select the result.\n"
-				"6. Before you go to the next step, check you have the stats link for the match, if you want to include that.\n"
-				"7. Click 'Add Optional Stats Link & Submit'.\n"
-				"8. Enter the date, paste the stats link and click Submit! Wait 20/30 seconds for the thread to appear, especially the GIF ones."
+				"6. Choose Played as: Axis, Allies, British, or Canadians. This opens the final form.\n"
+				"7. Enter the date, optionally paste the stats link, and click Submit! Wait 20/30 seconds for the thread to appear, especially the GIF ones."
 			),
 			inline=False,
 		)
@@ -1546,6 +1581,7 @@ class WarDiaryCog(commands.Cog):
 		filename: str,
 		submitter: discord.Member,
 		stats_link: Optional[str],
+		played_as: str,
 	) -> discord.Embed:
 		description = (
 			f"**{submitter_clan_name}** {submitter_score}-{opponent_score} **{opponent_clan_name}**\n"
@@ -1555,6 +1591,7 @@ class WarDiaryCog(commands.Cog):
 		if map_name != OTHER_MAP_OPTION:
 			description += f"\n**Map:** {map_name}"
 		description += f"\n**Midpoint:** {midpoint_name}"
+		description += f"\n**Played as:** {played_as}"
 
 		embed = discord.Embed(
 			title="War Diary Result",
@@ -1840,6 +1877,7 @@ class WarDiaryCog(commands.Cog):
 		map_name: str,
 		midpoint_name: str,
 		stats_link: Optional[str],
+		played_as: str,
 	) -> tuple[Optional[discord.Thread], Optional[str]]:
 		forum = await self._get_forum_channel()
 		if forum is None:
@@ -1885,12 +1923,14 @@ class WarDiaryCog(commands.Cog):
 				filename=filename,
 				submitter=submitter,
 				stats_link=stats_link,
+				played_as=played_as,
 			)
 
 			content_lines: list[str] = []
 			content_lines.append(f"Match type: {match_type}")
 			content_lines.append(f"Match date: {match_date}")
 			content_lines.append(f"Midpoint: {midpoint_name}")
+			content_lines.append(f"Played as: {played_as}")
 			content = "\n".join(content_lines) if content_lines else None
 			applied_tags: list[discord.ForumTag] = []
 			if map_name != OTHER_MAP_OPTION:
@@ -1922,6 +1962,7 @@ class WarDiaryCog(commands.Cog):
 				map_name=map_name,
 				midpoint_name=midpoint_name,
 				stats_link=stats_link,
+				played_as=played_as,
 				is_7dr_win=is_7dr_win,
 				submitter_score=submitter_score,
 				opponent_score=opponent_score,

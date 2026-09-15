@@ -1250,6 +1250,7 @@ class FrontlineWeb:
                     "score": display_score,
                     "outcome": outcome,
                     "side": side,
+                    "played_as": " ".join(str(raw.get("played_as") or "").split()),
                 }
             )
 
