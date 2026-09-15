@@ -37,6 +37,16 @@ How to use: Use `/lockroster` when a roster is final and `/unlockroster` when ch
 
 Rules and notes: Locking should be used once staff want consistency. Unlock only when changes are genuinely open again, otherwise people will assume the published roster is still flexible.
 
+## `rank_directory.py`
+
+Overview: Maintains a highest-to-lowest directory of members holding the configured General Staff, Command Staff, SNCO, NCO, and Junior Enlisted rank roles.
+
+Slash commands: none.
+
+How to use: Read the persistent directory in channel `1098316982459314279`. It updates automatically at startup and after tracked rank or display-name changes.
+
+Rules and notes: Members are resolved by role ID and shown by plain Discord display name. The directory does not mention or notify them. Bots are excluded, empty ranks remain visible, and oversized directories continue onto additional managed messages.
+
 ## `quick_exit.py`
 
 Overview: Supports the fast leave or exit path for members.

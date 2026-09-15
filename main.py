@@ -56,6 +56,7 @@ EXTENSIONS = (
     "cogs.bulkdelete",
     "cogs.hllv_names",
     "cogs.rosterizer",
+    "cogs.rank_directory",
 )
 
 DISABLED_EXTENSIONS = (

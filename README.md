@@ -157,6 +157,7 @@ features from starting. Slash commands are synchronized once during startup.
 Currently disabled in `main.py`:
 
 - `rosterizer`
+- `rank_directory`
 - `mapvote`
 
 ## Other Repo Content
