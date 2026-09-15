@@ -57,6 +57,7 @@ EXTENSIONS = (
     "cogs.hllv_names",
     "cogs.rosterizer",
     "cogs.rank_directory",
+    "cogs.hll_maps",
 )
 
 DISABLED_EXTENSIONS = (

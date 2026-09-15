@@ -47,6 +47,16 @@ How to use: Read the persistent rank-by-rank count breakdown in channel `1098316
 
 Rules and notes: Discord publishes only rank labels and member counts; names appear only in the HTML attachment and never as mentions. Bots are excluded, empty ranks remain visible, and the Discord channel uses one managed message to avoid clutter.
 
+## `hll_maps.py`
+
+Overview: Posts one of the bot's bundled Hell Let Loose map images in the channel where it is requested.
+
+Slash commands: `/map`.
+
+How to use: Run `/map`, choose a map from the `map` list, and submit the command. The selected image is posted publicly in the current channel.
+
+Rules and notes: Every member can use this command; it has no rank or staff-role restriction. Discord channel permissions still determine whether the member can use application commands and whether the bot can post there.
+
 ## `quick_exit.py`
 
 Overview: Supports the fast leave or exit path for members.

@@ -153,11 +153,12 @@ features from starting. Slash commands are synchronized once during startup.
 - `hellorleaderboard`
 - `supporters_embed`
 - `raid`
+- `rosterizer`
+- `rank_directory`
+- `hll_maps`
 
 Currently disabled in `main.py`:
 
-- `rosterizer`
-- `rank_directory`
 - `mapvote`
 
 ## Other Repo Content
