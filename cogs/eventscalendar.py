@@ -89,6 +89,29 @@ KEYWORD_EMOJI_TAGS: dict[str, str] = {
 }
 
 
+class EventCalendarRefreshView(discord.ui.View):
+    def __init__(self, cog: "EventDisplayCog") -> None:
+        super().__init__(timeout=None)
+        self.cog = cog
+
+    @discord.ui.button(
+        label="Refresh calendar",
+        emoji="🔄",
+        style=discord.ButtonStyle.secondary,
+        custom_id="event_calendar:refresh",
+    )
+    async def refresh_calendar(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        refreshed = await self.cog._update_once(reason=f"manual:{interaction.user.id}")
+        if refreshed:
+            await interaction.followup.send("Calendar refreshed.", ephemeral=True)
+        else:
+            await interaction.followup.send(
+                "The calendar could not be refreshed. Please try again shortly.",
+                ephemeral=True,
+            )
+
+
 class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
     """
     A cog that reads Discord scheduled events and displays them in an embed.
@@ -96,13 +119,16 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.display_message_id: Optional[int] = self._load_display_message_id()
+        self.display_message_ids = self._load_display_message_ids()
+        self.display_message_id: Optional[int] = self.display_message_ids[0] if self.display_message_ids else None
         self._target_guild_id: Optional[int] = None
         self._update_lock = asyncio.Lock()
         self._debounce_task: Optional[asyncio.Task] = None
         self._notification_state = self._load_notification_state()
         self._raw_events_cache: dict[int, dict] = {}
         self._raw_events_cache_time = 0.0
+        self._refresh_view = EventCalendarRefreshView(self)
+        self.bot.add_view(self._refresh_view)
         self.update_events_display.start()
         logger.info("EventDisplayCog initialized")
 
@@ -111,6 +137,7 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
         self.update_events_display.cancel()
         if self._debounce_task and not self._debounce_task.done():
             self._debounce_task.cancel()
+        self.bot.remove_view(self._refresh_view)
 
     async def _retry_discord_request(
         self,
@@ -764,28 +791,37 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
                     occurrence_start=occurrence_start,
                 )
 
-    def _load_display_message_id(self) -> Optional[int]:
+    def _load_display_message_ids(self) -> list[int]:
         try:
             if not os.path.exists(EVENTS_DISPLAY_STATE_PATH):
-                return None
+                return []
             with open(EVENTS_DISPLAY_STATE_PATH, "r", encoding="utf-8") as f:
                 state = json.load(f)
             channel_id = state.get("channel_id")
-            message_id = state.get("message_id")
             if channel_id != EVENT_DISPLAY_CHANNEL_ID:
-                return None
+                return []
+            message_ids = state.get("message_ids")
+            if isinstance(message_ids, list):
+                return [message_id for message_id in message_ids if isinstance(message_id, int)]
+            message_id = state.get("message_id")
             if isinstance(message_id, int):
-                return message_id
-            return None
+                return [message_id]
+            return []
         except Exception:
-            logger.warning("Could not read events display state; will create a new message.", exc_info=True)
-            return None
+            logger.warning("Could not read events display state; will create new messages.", exc_info=True)
+            return []
+
+    def _load_display_message_id(self) -> Optional[int]:
+        """Backward-compatible accessor for the first calendar page."""
+        message_ids = self._load_display_message_ids()
+        return message_ids[0] if message_ids else None
 
     def _save_display_message_id(self) -> None:
         try:
             state = {
                 "channel_id": EVENT_DISPLAY_CHANNEL_ID,
                 "message_id": self.display_message_id,
+                "message_ids": self.display_message_ids,
                 "updated_at": datetime.utcnow().isoformat(),
             }
             atomic_json_dump(EVENTS_DISPLAY_STATE_PATH, state, ensure_ascii=False)
@@ -886,22 +922,22 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
 
         return f"{header}\n" + "\n".join(lines)
 
-    async def _update_once(self, *, reason: str) -> None:
+    async def _update_once(self, *, reason: str) -> bool:
         async with self._update_lock:
             try:
                 channel = self.bot.get_channel(EVENT_DISPLAY_CHANNEL_ID)
                 if not channel:
                     logger.error(f"Channel with ID {EVENT_DISPLAY_CHANNEL_ID} not found")
-                    return
+                    return False
 
                 if not isinstance(channel, discord.TextChannel):
                     logger.error(f"Channel {EVENT_DISPLAY_CHANNEL_ID} is not a text channel")
-                    return
+                    return False
 
                 guild = channel.guild
                 if not guild:
                     logger.error("Guild not found for the specified channel")
-                    return
+                    return False
 
                 self._target_guild_id = guild.id
 
@@ -917,54 +953,78 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
                 display_limit = min(MAX_EVENTS_TO_DISPLAY, 25)
                 sorted_events = sorted(
                     filtered_events,
-                    key=lambda e: e.start_time if e.start_time else datetime.max
+                    key=lambda e: e.start_time if e.start_time else datetime.max.replace(tzinfo=timezone.utc)
                 )[:display_limit]
 
-                embed = await self.create_events_embed(guild, sorted_events)
+                embeds = await self.create_events_embeds(guild, sorted_events)
 
                 # Save all events (not just filtered ones) to JSON
                 await self.save_events_to_json(events)
                 await self._sync_event_notifications(guild, events)
                 self._save_notification_state()
 
-                # Edit existing display message if possible (persists across restarts)
-                message: Optional[discord.Message] = None
-                if self.display_message_id:
+                previous_ids = list(self.display_message_ids)
+                updated_ids: list[int] = []
+                for page_index, embed in enumerate(embeds):
+                    message: Optional[discord.Message] = None
+                    if page_index < len(previous_ids):
+                        message_id = previous_ids[page_index]
+                        try:
+                            message = await self._retry_discord_request(
+                                f"fetching events display page {page_index + 1}",
+                                lambda message_id=message_id: channel.fetch_message(message_id),
+                            )
+                        except discord.NotFound:
+                            message = None
+                        except discord.Forbidden:
+                            logger.warning("No permission to fetch events display page %s.", page_index + 1)
+                        except Exception:
+                            logger.warning("Failed to fetch events display page %s.", page_index + 1, exc_info=True)
+
+                    page_view = self._refresh_view if page_index == 0 else None
+                    if message is not None:
+                        try:
+                            message = await self._retry_discord_request(
+                                f"editing events display page {page_index + 1}",
+                                lambda message=message, embed=embed, page_view=page_view: message.edit(
+                                    embed=embed,
+                                    view=page_view,
+                                ),
+                            )
+                        except discord.Forbidden:
+                            logger.warning("No permission to edit events display page %s.", page_index + 1)
+                            message = None
+                        except Exception:
+                            logger.warning("Failed to edit events display page %s.", page_index + 1, exc_info=True)
+                            message = None
+
+                    if message is None:
+                        message = await channel.send(embed=embed, view=page_view)
+                    updated_ids.append(message.id)
+
+                for stale_id in previous_ids[len(embeds):]:
                     try:
-                        message = await self._retry_discord_request(
-                            "fetching the existing events display message",
-                            lambda: channel.fetch_message(self.display_message_id),
-                        )
+                        stale_message = await channel.fetch_message(stale_id)
+                        await stale_message.delete()
                     except discord.NotFound:
-                        message = None
-                    except discord.Forbidden:
-                        logger.warning("No permission to fetch the existing events message; will create a new one.")
-                        message = None
+                        pass
                     except Exception:
-                        logger.warning("Failed to fetch the existing events message; will create a new one.", exc_info=True)
-                        message = None
+                        logger.warning("Failed to remove stale events display page %s.", stale_id, exc_info=True)
 
-                if message is not None:
-                    try:
-                        await self._retry_discord_request(
-                            "editing the existing events display message",
-                            lambda: message.edit(embed=embed),
-                        )
-                        logger.info(f"Refreshed events display ({reason}) with {len(sorted_events)} events")
-                        return
-                    except discord.Forbidden:
-                        logger.warning("No permission to edit the existing events message; will create a new one.")
-                    except Exception:
-                        logger.warning("Failed to edit the existing events message; will create a new one.", exc_info=True)
-
-                # Fallback: send a new message and persist its id
-                new_message = await channel.send(embed=embed)
-                self.display_message_id = new_message.id
+                self.display_message_ids = updated_ids
+                self.display_message_id = updated_ids[0] if updated_ids else None
                 self._save_display_message_id()
-                logger.info(f"Posted new events display ({reason}) with {len(sorted_events)} events")
+                logger.info(
+                    "Refreshed events display (%s) with %s events across %s page(s)",
+                    reason,
+                    len(sorted_events),
+                    len(embeds),
+                )
+                return True
 
             except Exception as e:
                 logger.error(f"Error updating events display: {e}", exc_info=True)
+                return False
 
     def _debounced_refresh(self, *, delay_seconds: float = 3.0) -> None:
         if self._debounce_task and not self._debounce_task.done():
@@ -1061,11 +1121,11 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
         except Exception as e:
             logger.error(f"Error saving events to JSON: {e}", exc_info=True)
 
-    async def create_events_embed(
+    async def create_events_embeds(
         self,
         guild: discord.Guild,
         events: list[discord.ScheduledEvent]
-    ) -> discord.Embed:
+    ) -> list[discord.Embed]:
         """
         Create an embed displaying the scheduled events.
         
@@ -1076,10 +1136,11 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
         Returns:
             A Discord embed with event information
         """
+        embeds: list[discord.Embed] = []
         embed = discord.Embed(
             title=f"📅 Upcoming Events for {guild.name}",
             color=EMBED_COLOR,
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
         embed.set_footer(text="Last updated")
 
@@ -1151,21 +1212,31 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
                 event_title = self._truncate_text(self._format_event_title(guild, event.name), 160)
                 field_header = f"📌 **[{event_title}]({event.url})**"
 
-                remaining_embed_chars = EMBED_TOTAL_CHAR_LIMIT - len(embed) - len(field_name)
+                # Reserve room for a page suffix once the final page count is known.
+                remaining_embed_chars = EMBED_TOTAL_CHAR_LIMIT - len(embed) - len(field_name) - 24
                 minimum_detail_chars = len(field_header) + 1
-                if remaining_embed_chars <= minimum_detail_chars:
-                    break
+                if len(embed.fields) >= 25 or remaining_embed_chars <= minimum_detail_chars:
+                    embeds.append(embed)
+                    embed = discord.Embed(
+                        title=embeds[0].title,
+                        color=EMBED_COLOR,
+                        timestamp=datetime.now(timezone.utc),
+                    )
+                    embed.set_footer(text="Last updated")
+                    remaining_embed_chars = EMBED_TOTAL_CHAR_LIMIT - len(embed) - len(field_name) - 24
 
                 detail_limit = min(
                     EMBED_FIELD_VALUE_LIMIT - minimum_detail_chars,
                     remaining_embed_chars - minimum_detail_chars,
                 )
                 if detail_limit <= 0:
-                    break
+                    logger.warning("Calendar event %s cannot fit in an empty display page", event.id)
+                    continue
 
                 field_body = self._fit_event_field(field_header, fixed_lines, detail_line, len(field_header) + 1 + detail_limit)
                 if field_body is None:
-                    break
+                    logger.warning("Calendar event %s could not be rendered", event.id)
+                    continue
 
                 embed.add_field(
                     name=field_name,
@@ -1176,7 +1247,19 @@ class EventDisplayCog(commands.Cog, name="EventDisplayCog"):
         #if guild.icon:
         #    embed.set_thumbnail(url=guild.icon.url)
 
-        return embed
+        embeds.append(embed)
+        if len(embeds) > 1:
+            for page_number, page in enumerate(embeds, start=1):
+                page.title = f"{page.title} ({page_number}/{len(embeds)})"
+        return embeds
+
+    async def create_events_embed(
+        self,
+        guild: discord.Guild,
+        events: list[discord.ScheduledEvent],
+    ) -> discord.Embed:
+        """Return the first display page for callers that only need one embed."""
+        return (await self.create_events_embeds(guild, events))[0]
 
 async def setup(bot: commands.Bot):
     """Load the cog."""

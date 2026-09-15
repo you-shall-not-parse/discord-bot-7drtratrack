@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, Mock
 import discord
 from PIL import Image
 
-from cogs.eventscalendar import EVENT_NOTIFICATION_BACKGROUND_DIR, EventDisplayCog
+from cogs.eventscalendar import EVENT_NOTIFICATION_BACKGROUND_DIR, EventCalendarRefreshView, EventDisplayCog
 
 
 class EventCalendarNotificationTests(unittest.IsolatedAsyncioTestCase):
@@ -123,6 +123,30 @@ class EventCalendarNotificationTests(unittest.IsolatedAsyncioTestCase):
         with Image.open(io.BytesIO(rendered)) as image:
             self.assertEqual(image.size, (1600, 900))
             self.assertEqual(image.format, "PNG")
+
+    async def test_calendar_paginates_instead_of_dropping_later_events(self) -> None:
+        events = []
+        for index in range(25):
+            event = self._event()
+            event.id += index
+            event.name = f"Match {index + 1} with a deliberately descriptive event title"
+            event.description = "Long match details " * 20
+            events.append(event)
+
+        embeds = await self.cog.create_events_embeds(SimpleNamespace(name="7DR", emojis=[]), events)
+
+        self.assertGreater(len(embeds), 1)
+        self.assertEqual(sum(len(embed.fields) for embed in embeds), len(events))
+        self.assertTrue(all(len(embed) <= 6000 for embed in embeds))
+        self.assertTrue(all(f"({index}/{len(embeds)})" in embed.title for index, embed in enumerate(embeds, 1)))
+
+    async def test_refresh_button_is_persistent_and_available_to_everyone(self) -> None:
+        view = EventCalendarRefreshView(SimpleNamespace())
+        button = next(item for item in view.children if item.custom_id == "event_calendar:refresh")
+
+        self.assertIsNone(view.timeout)
+        self.assertEqual(button.label, "Refresh calendar")
+        self.assertTrue(await view.interaction_check(SimpleNamespace()))
 
 
 if __name__ == "__main__":

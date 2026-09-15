@@ -113,7 +113,7 @@ Overview: Builds and refreshes the public Discord event display.
 
 Slash commands: none exposed here in the current bot loadout.
 
-How to use: Members read it as the current event board. Staff keep scheduled events accurate and the cog refreshes the display.
+How to use: Members read it as the current event board. Anyone can press **Refresh calendar** to request an immediate update; the confirmation is private. Staff keep scheduled events accurate and the cog also refreshes automatically. Long calendars are split across persistent display messages so later events are not hidden by Discord's embed-size limit.
 
 Rules and notes: Treat it as the public source for upcoming events. If event titles or times are wrong in Discord scheduled events, this display will mirror that.
 
