@@ -43,9 +43,9 @@ Overview: Maintains a highest-to-lowest directory of members holding the configu
 
 Slash commands: none.
 
-How to use: Read the persistent directory in channel `1098316982459314279`. It updates automatically at startup and after tracked rank or display-name changes.
+How to use: Read the persistent rank-by-rank count breakdown in channel `1098316982459314279`, or open its HTML attachment for the complete grouped member-name directory. Both update automatically at startup and after tracked rank or display-name changes.
 
-Rules and notes: Members are resolved by role ID and shown by plain Discord display name. The directory does not mention or notify them. Bots are excluded, empty ranks remain visible, and oversized directories continue onto additional managed messages.
+Rules and notes: Discord publishes only rank labels and member counts; names appear only in the HTML attachment and never as mentions. Bots are excluded, empty ranks remain visible, and the Discord channel uses one managed message to avoid clutter.
 
 ## `quick_exit.py`
 

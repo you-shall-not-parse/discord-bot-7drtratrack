@@ -22,28 +22,44 @@ def test_rank_structure_uses_requested_channel_and_unique_role_ids() -> None:
     assert role_ids[-1] == 1098647326882541609
 
 
-def test_rank_directory_lists_plain_escaped_names_without_mentions() -> None:
+def test_discord_summary_lists_each_rank_count_without_names() -> None:
     first_role_id = RANK_GROUPS[0][1][0][1]
     role = SimpleNamespace(
         id=first_role_id,
         members=[
-            SimpleNamespace(id=2, display_name="Zulu *Rat*", name="zulu", bot=False),
-            SimpleNamespace(id=1, display_name="Alpha @everyone", name="alpha", bot=False),
+            SimpleNamespace(id=2, display_name="Zulu Rat", name="zulu", bot=False),
+            SimpleNamespace(id=1, display_name="Alpha", name="alpha", bot=False),
             SimpleNamespace(id=3, display_name="Ignored Bot", name="bot", bot=True),
         ],
     )
     cog = object.__new__(RankDirectory)
 
-    rendered = "\n".join(cog._rank_sections(FakeGuild([role])))
+    rendered = str(cog._build_summary_embed(FakeGuild([role])).to_dict())
 
-    assert "Alpha @\u200beveryone" in rendered
-    assert "Zulu \\*Rat\\*" in rendered
-    assert rendered.index("Alpha") < rendered.index("Zulu")
+    assert "**O11 Field Marshal (FM) (2)**" in rendered
+    assert "**E3 Corporal (Cpl) (0)**" in rendered
+    assert "Alpha" not in rendered
+    assert "Zulu Rat" not in rendered
     assert "Ignored Bot" not in rendered
-    assert "<@" not in rendered
 
 
-def test_rank_directory_pages_at_section_boundaries() -> None:
-    pages = RankDirectory._paginate_sections(["A" * 60, "B" * 60, "C" * 60], limit=125)
+def test_html_contains_full_grouped_member_breakdown() -> None:
+    first_role_id = RANK_GROUPS[0][1][0][1]
+    role = SimpleNamespace(
+        id=first_role_id,
+        members=[
+            SimpleNamespace(id=2, display_name="Zulu <Rat>", name="zulu", bot=False),
+            SimpleNamespace(id=1, display_name="Alpha & Co", name="alpha", bot=False),
+            SimpleNamespace(id=3, display_name="Ignored Bot", name="bot", bot=True),
+        ],
+    )
+    cog = object.__new__(RankDirectory)
 
-    assert pages == [f"{'A' * 60}\n\n{'B' * 60}", "C" * 60]
+    rendered = cog._render_html(FakeGuild([role]))
+
+    assert "General Staff" in rendered
+    assert "O11 Field Marshal (FM) <span>2</span>" in rendered
+    assert "Alpha &amp; Co" in rendered
+    assert "Zulu &lt;Rat&gt;" in rendered
+    assert rendered.index("Alpha &amp; Co") < rendered.index("Zulu &lt;Rat&gt;")
+    assert "Ignored Bot" not in rendered
