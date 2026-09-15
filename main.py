@@ -49,7 +49,6 @@ EXTENSIONS = (
     "cogs.t17serveradmin",
     "cogs.applyroletomessage",
     "cogs.hellorleaderboard",
-    "cogs.docsync",
     "cogs.supporters_embed",
     "cogs.reaction_roles",
     "cogs.raid",

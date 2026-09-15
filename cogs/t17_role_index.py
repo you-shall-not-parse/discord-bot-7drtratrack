@@ -1,8 +1,10 @@
 import asyncio
+import html
+import io
 import json
 import logging
-import os
 import urllib.parse
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 import discord
@@ -15,11 +17,11 @@ from data_paths import data_path
 from hll_API_backend import HLLBackendError
 
 GUILD_ID = MAIN_GUILD_ID
-FORUM_CHANNEL_ID = 1388644379211862096
+INDEX_CHANNEL_ID = 1549529105874165911
 SYNC_NOTIFICATION_CHANNEL_ID = 1239548993751482438
 STATE_FILE = data_path("t17_role_index_state.json")
-THREAD_NAME = "T17 Member Index"
-THREAD_INTRO = "Auto-updated index of tracked members, Discord names, nicknames, and T17 IDs."
+INDEX_FILENAME = "t17_member_index.html"
+INDEX_MESSAGE = "**T17 Member Index** — auto-updated HTML index"
 SYNC_DEBOUNCE_SECONDS = 2.0
 MEMBERSHIP_SYNC_COOLDOWN_SECONDS = 300
 MEMBERSHIP_ADD_PACING_SECONDS = 1.0
@@ -55,9 +57,13 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
     def _save_state(self) -> None:
         atomic_json_dump(STATE_FILE, self._state)
 
-    def _set_state(self, *, thread_id: int | None, message_ids: list[int]) -> None:
-        self._state["thread_id"] = thread_id
-        self._state["message_ids"] = message_ids
+    def _set_index_message_state(self, message: discord.Message) -> None:
+        self._state["index_channel_id"] = message.channel.id
+        self._state["index_message_id"] = message.id
+        self._state["index_url"] = message.attachments[0].url if message.attachments else None
+        # Discard state left by the old forum-thread implementation.
+        self._state.pop("thread_id", None)
+        self._state.pop("message_ids", None)
         self._save_state()
 
     def _synced_members_state(self) -> dict[int, dict[str, str]]:
@@ -136,76 +142,97 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
         tracked = self._tracked_role_names()
         return {role.name for role in member.roles if role.name in tracked}
 
-    def _escape_for_embed(self, text: str) -> str:
-        escaped = discord.utils.escape_mentions(text or "")
-        escaped = discord.utils.escape_markdown(escaped, as_needed=False)
-        escaped = escaped.replace("[", "\\[").replace("]", "\\]")
-        escaped = escaped.replace("(", "\\(").replace(")", "\\)")
-        return escaped
-
-    def _format_member_line(self, member: discord.Member, t17_id: str | None) -> str:
-        username = self._escape_for_embed(self.lookup.normalize_discord_username(member.name) or member.name)
-        nickname = self._escape_for_embed(self.lookup.cut_at_hash(member.display_name) or member.display_name or member.name)
-        if t17_id:
-            player_id = urllib.parse.quote(t17_id, safe="")
-            url = f"https://www.hllrecords.com/profiles/{player_id}"
-            escaped_t17 = self._escape_for_embed(t17_id)
-            return f"- Discord name: {username} | Nickname: {nickname} | T17: [{escaped_t17}]({url})"
-        return f"- Discord name: {username} | Nickname: {nickname} | T17: Unknown"
-
-    def _chunk_lines(self, lines: list[str], *, max_len: int = 3900) -> list[str]:
-        if not lines:
-            return ["No members currently have this role."]
-
-        parts: list[str] = []
-        current = ""
-        for line in lines:
-            proposed = f"{current}\n{line}" if current else line
-            if len(proposed) > max_len:
-                if current:
-                    parts.append(current)
-                current = line
-            else:
-                current = proposed
-        if current:
-            parts.append(current)
-        return parts or ["No members currently have this role."]
-
-    def _build_role_embeds(self, guild: discord.Guild, role_name: str, mapping: dict[str, Any]) -> list[discord.Embed]:
+    def _build_role_rows(self, guild: discord.Guild, role_name: str, mapping: dict[str, Any]) -> list[dict[str, str]]:
         role = discord.utils.get(guild.roles, name=role_name)
         if role is None:
-            embed = discord.Embed(
-                title=role_name,
-                description="Role not found in this guild.",
-                color=discord.Color.red(),
-            )
-            return [embed]
+            return []
 
         members = sorted(role.members, key=lambda item: item.display_name.casefold())
-        lines: list[str] = []
+        rows: list[dict[str, str]] = []
         for member in members:
             key = self.lookup.resolved_member_key(guild.id, member.id, role_name)
             entry = mapping.get("resolved_members", {}).get(key)
-            t17_id = None
+            t17_id = ""
             if isinstance(entry, dict) and entry.get("t17_id"):
                 t17_id = str(entry["t17_id"])
-            lines.append(self._format_member_line(member, t17_id))
-
-        sections = self._chunk_lines(lines)
-        color = role.color if role.color.value else discord.Color.blurple()
-        embeds: list[discord.Embed] = []
-        for index, description in enumerate(sections, start=1):
-            suffix = "" if len(sections) == 1 else f" (Part {index}/{len(sections)})"
-            embed = discord.Embed(
-                title=f"{role_name} ({len(members)}){suffix}",
-                description=description,
-                color=color,
+            rows.append(
+                {
+                    "username": self.lookup.normalize_discord_username(member.name) or member.name,
+                    "nickname": self.lookup.cut_at_hash(member.display_name) or member.display_name or member.name,
+                    "t17_id": t17_id,
+                }
             )
-            embeds.append(embed)
-        return embeds
+        return rows
 
-    def _group_embeds(self, embeds: list[discord.Embed]) -> list[list[discord.Embed]]:
-        return [[embed] for embed in embeds] or [[]]
+    @staticmethod
+    def _render_index_html(role_rows: dict[str, list[dict[str, str]]]) -> str:
+        sections: list[str] = []
+        total_members = 0
+        for role_name, rows in role_rows.items():
+            total_members += len(rows)
+            body_rows: list[str] = []
+            for row in rows:
+                t17_id = row["t17_id"]
+                if t17_id:
+                    player_id = urllib.parse.quote(t17_id, safe="")
+                    t17_cell = (
+                        f'<a href="https://www.hllrecords.com/profiles/{player_id}">'
+                        f"{html.escape(t17_id)}</a>"
+                    )
+                else:
+                    t17_cell = '<span class="unknown">Unknown</span>'
+                body_rows.append(
+                    "<tr>"
+                    f"<td>{html.escape(row['username'])}</td>"
+                    f"<td>{html.escape(row['nickname'])}</td>"
+                    f"<td>{t17_cell}</td>"
+                    "</tr>"
+                )
+            if not body_rows:
+                body_rows.append('<tr><td colspan="3" class="empty">No members currently have this role.</td></tr>')
+            sections.append(
+                f"<section><h2>{html.escape(role_name)} <span>{len(rows)}</span></h2>"
+                "<div class=\"table-wrap\"><table><thead><tr>"
+                "<th>Discord name</th><th>Nickname</th><th>T17 ID</th>"
+                f"</tr></thead><tbody>{''.join(body_rows)}</tbody></table></div></section>"
+            )
+
+        updated = datetime.now(timezone.utc).strftime("%d %B %Y at %H:%M UTC")
+        return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>T17 Member Index</title>
+  <style>
+    :root {{ color-scheme: dark; --bg:#10120e; --panel:#191d16; --line:#343b2d; --text:#f2f4ed; --muted:#aeb6a4; --accent:#b7c98b; }}
+    * {{ box-sizing:border-box; }}
+    body {{ margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif; }}
+    main {{ width:min(1050px,calc(100% - 28px)); margin:42px auto; }}
+    header {{ margin-bottom:28px; }}
+    h1 {{ margin:0 0 6px; font-size:clamp(2rem,5vw,3.4rem); letter-spacing:-.04em; }}
+    p {{ margin:0; color:var(--muted); }}
+    section {{ margin-top:24px; padding:20px; background:var(--panel); border:1px solid var(--line); border-radius:14px; }}
+    h2 {{ margin:0 0 15px; font-size:1.25rem; }}
+    h2 span {{ margin-left:7px; padding:2px 8px; border-radius:999px; background:var(--line); color:var(--accent); font-size:.8rem; }}
+    .table-wrap {{ overflow-x:auto; }}
+    table {{ width:100%; border-collapse:collapse; }}
+    th,td {{ padding:11px 13px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }}
+    th {{ color:var(--muted); font-size:.75rem; letter-spacing:.08em; text-transform:uppercase; }}
+    tbody tr:last-child td {{ border-bottom:0; }}
+    a {{ color:var(--accent); }}
+    .unknown,.empty {{ color:var(--muted); }}
+    footer {{ margin-top:18px; color:var(--muted); font-size:.85rem; }}
+  </style>
+</head>
+<body>
+  <main>
+    <header><h1>T17 Member Index</h1><p>{total_members} tracked members</p></header>
+    {''.join(sections)}
+    <footer>Automatically updated {html.escape(updated)}</footer>
+  </main>
+</body>
+</html>"""
 
     def _preferred_player_name(self, target: dict[str, Any]) -> str:
         queries = target.get("queries")
@@ -216,137 +243,64 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
                     return value
         return str(target.get("display_name") or "").strip() or str(target.get("t17_id") or "").strip()
 
-    async def _get_forum_channel(self) -> Optional[discord.ForumChannel]:
-        channel = self.bot.get_channel(FORUM_CHANNEL_ID)
+    async def _get_index_channel(self) -> Any | None:
+        channel = self.bot.get_channel(INDEX_CHANNEL_ID)
         if channel is None:
             try:
-                channel = await self.bot.fetch_channel(FORUM_CHANNEL_ID)
+                channel = await self.bot.fetch_channel(INDEX_CHANNEL_ID)
             except Exception:
-                self.logger.exception("Failed to fetch T17 index forum channel")
+                self.logger.exception("Failed to fetch T17 index channel")
                 return None
-        return channel if isinstance(channel, discord.ForumChannel) else None
-
-    async def _get_thread(self, thread_id: int | None) -> Optional[discord.Thread]:
-        if not thread_id:
+        if not hasattr(channel, "send") or not hasattr(channel, "fetch_message"):
+            self.logger.warning("T17 index channel %s is not messageable", INDEX_CHANNEL_ID)
             return None
-        channel = self.bot.get_channel(thread_id)
-        if isinstance(channel, discord.Thread):
-            return channel
-        try:
-            fetched = await self.bot.fetch_channel(thread_id)
-        except Exception:
-            return None
-        return fetched if isinstance(fetched, discord.Thread) else None
+        return channel
 
-    def _extract_created_post(self, created: Any) -> tuple[Optional[discord.Thread], Optional[discord.Message]]:
-        thread = getattr(created, "thread", None)
-        message = getattr(created, "message", None)
-        if isinstance(thread, discord.Thread):
-            return thread, message if isinstance(message, discord.Message) else None
-        if isinstance(created, tuple) and len(created) == 2:
-            maybe_thread, maybe_message = created
-            return (
-                maybe_thread if isinstance(maybe_thread, discord.Thread) else None,
-                maybe_message if isinstance(maybe_message, discord.Message) else None,
+    async def _publish_index_html(self, document: str) -> Optional[discord.Message]:
+        channel = await self._get_index_channel()
+        if channel is None:
+            return None
+
+        message = None
+        message_id = self._state.get("index_message_id")
+        channel_id = self._state.get("index_channel_id")
+        if isinstance(message_id, int) and channel_id == INDEX_CHANNEL_ID:
+            try:
+                message = await channel.fetch_message(message_id)
+            except discord.NotFound:
+                pass
+            except Exception:
+                self.logger.warning("Failed to fetch existing T17 index message", exc_info=True)
+
+        attachment = discord.File(io.BytesIO(document.encode("utf-8")), filename=INDEX_FILENAME)
+        if message is None:
+            message = await channel.send(
+                content=INDEX_MESSAGE,
+                file=attachment,
+                allowed_mentions=discord.AllowedMentions.none(),
             )
-        if isinstance(created, discord.Thread):
-            return created, None
-        return None, None
+        else:
+            message = await message.edit(
+                content=INDEX_MESSAGE,
+                attachments=[attachment],
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
 
-    async def _recover_messages(self, thread: discord.Thread) -> list[discord.Message]:
-        bot_user = self.bot.user
-        if bot_user is None:
-            return []
+        # Save immediately after the upload so a later content-edit failure does
+        # not cause a duplicate index message on the next refresh.
+        self._set_index_message_state(message)
+        if message.attachments:
+            linked_content = f"{INDEX_MESSAGE}\n{message.attachments[0].url}"
+            if message.content != linked_content:
+                message = await message.edit(
+                    content=linked_content,
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
+                self._set_index_message_state(message)
+        return message
 
-        recovered: list[discord.Message] = []
-        async for message in thread.history(limit=25, oldest_first=True):
-            if message.author.id == bot_user.id:
-                recovered.append(message)
-        return recovered
-
-    def _is_header_message(self, message: discord.Message) -> bool:
-        return (message.content or "").strip() == THREAD_INTRO.strip()
-
-    async def _normalize_header_message(self, thread: discord.Thread) -> None:
-        try:
-            starter = await thread.fetch_message(thread.id)
-        except Exception:
-            return
-
-        if self._is_header_message(starter) and starter.embeds:
-            try:
-                await starter.edit(content=THREAD_INTRO, embeds=[])
-            except Exception:
-                self.logger.warning("Failed to normalize T17 index header message", exc_info=True)
-
-    async def _ensure_thread(self, forum: discord.ForumChannel, first_batch: list[discord.Embed]) -> tuple[Optional[discord.Thread], list[discord.Message]]:
-        thread = await self._get_thread(self._state.get("thread_id"))
-        if thread is None or thread.parent_id != forum.id:
-            create_kwargs: dict[str, Any] = {
-                "name": THREAD_NAME,
-                "content": THREAD_INTRO,
-            }
-
-            created = await forum.create_thread(**create_kwargs)
-            thread, message = self._extract_created_post(created)
-            if thread is None:
-                return None, []
-            if message is not None and self._is_header_message(message) and message.embeds:
-                try:
-                    await message.edit(content=THREAD_INTRO, embeds=[])
-                except Exception:
-                    self.logger.warning("Failed to normalize new T17 index header message", exc_info=True)
-            self._set_state(thread_id=thread.id, message_ids=[])
-            return thread, []
-
-        if thread.archived:
-            try:
-                await thread.edit(archived=False)
-            except Exception:
-                self.logger.warning("Failed to unarchive T17 index thread", exc_info=True)
-
-        await self._normalize_header_message(thread)
-
-        message_ids = [int(item) for item in self._state.get("message_ids", []) if isinstance(item, int)]
-        messages: list[discord.Message] = []
-        for message_id in message_ids:
-            try:
-                message = await thread.fetch_message(message_id)
-                if self._is_header_message(message):
-                    continue
-                messages.append(message)
-            except Exception:
-                self.logger.info("T17 index message %s no longer exists", message_id)
-
-        if not messages:
-            messages = [message for message in await self._recover_messages(thread) if not self._is_header_message(message)]
-            self._set_state(thread_id=thread.id, message_ids=[item.id for item in messages])
-
-        return thread, messages
-
-    async def _sync_thread_messages(self, thread: discord.Thread, messages: list[discord.Message], batches: list[list[discord.Embed]]) -> None:
-        current_messages = list(messages)
-        updated_ids: list[int] = []
-
-        for index, embeds in enumerate(batches):
-            if index < len(current_messages):
-                message = current_messages[index]
-                await message.edit(content=None, embeds=embeds)
-            else:
-                message = await thread.send(embeds=embeds)
-                current_messages.append(message)
-            updated_ids.append(message.id)
-
-        for message in current_messages[len(batches):]:
-            try:
-                await message.delete()
-            except Exception:
-                self.logger.warning("Failed to delete stale T17 index message %s", message.id, exc_info=True)
-
-        self._set_state(thread_id=thread.id, message_ids=updated_ids)
-
-    async def _build_embed_batches(self, guild: discord.Guild) -> tuple[list[list[discord.Embed]], dict[int, dict[str, str]], set[int]]:
-        embeds: list[discord.Embed] = []
+    async def _build_index_document(self, guild: discord.Guild) -> tuple[str, dict[int, dict[str, str]], set[int]]:
+        role_rows: dict[str, list[dict[str, str]]] = {}
         current_members: dict[int, dict[str, str]] = {}
         active_member_ids: set[int] = set()
         for role_name in TRACKED_ROLE_NAMES:
@@ -366,9 +320,9 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
                         "t17_id": t17_id,
                         "player_name": self._preferred_player_name(target),
                     }
-            embeds.extend(self._build_role_embeds(guild, role_name, mapping))
+            role_rows[role_name] = self._build_role_rows(guild, role_name, mapping)
 
-        return self._group_embeds(embeds), current_members, active_member_ids
+        return self._render_index_html(role_rows), current_members, active_member_ids
 
     async def _sync_guild_membership(
         self,
@@ -595,7 +549,7 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
             pending_changes = dict(self._pending_role_changes)
             self._pending_role_changes.clear()
             try:
-                batches, current_members, active_member_ids = await self._build_embed_batches(guild)
+                document, current_members, active_member_ids = await self._build_index_document(guild)
                 sync_results = await self._sync_guild_membership(
                     current_members,
                     active_member_ids,
@@ -614,21 +568,14 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
 
             await self._post_role_change_results(pending_changes, sync_results)
 
-            forum = await self._get_forum_channel()
-            if forum is None:
+            message = await self._publish_index_html(document)
+            if message is None:
                 self.logger.warning(
-                    "T17 role index forum channel %s is unavailable or not a forum; membership sync still ran",
-                    FORUM_CHANNEL_ID,
+                    "T17 index channel %s is unavailable; membership sync still ran",
+                    INDEX_CHANNEL_ID,
                 )
                 return
-
-            first_batch = batches[0] if batches else []
-            thread, messages = await self._ensure_thread(forum, first_batch)
-            if thread is None:
-                self.logger.warning("Failed to create or resolve T17 index thread")
-                return
-            await self._sync_thread_messages(thread, messages, batches)
-            self.logger.info("t17_role_index_sync_complete reason=%s thread_id=%s", reason, thread.id)
+            self.logger.info("t17_role_index_sync_complete reason=%s message_id=%s", reason, message.id)
 
     async def _delayed_sync(self, *, reason: str, delay: float) -> None:
         try:

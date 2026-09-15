@@ -2,7 +2,7 @@
 
 This bot runs from `main.py` and loads feature cogs from `cogs/`.
 
-This README is the short summary version and is suitable for a single Discord devguide forum thread called `Ratbot Guide`.
+This README is the short summary of the bot and its features.
 For more detailed usage notes, see `COG_HOWTO.md`.
 
 This repo also contains the HLL Frontline personnel dashboard and reverse-proxy
@@ -151,7 +151,6 @@ features from starting. Slash commands are synchronized once during startup.
 - `t17serveradmin`
 - `applyroletomessage`
 - `hellorleaderboard`
-- `docsync`
 - `supporters_embed`
 - `raid`
 

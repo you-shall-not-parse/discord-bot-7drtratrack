@@ -11,10 +11,6 @@ CONFIG_DIR = PROJECT_ROOT / "config"
 # Shared Discord scope used across the bot unless a cog explicitly targets somewhere else.
 MAIN_GUILD_ID = 1097913605082579024
 
-# Shared forum/channel destinations that are reused by multiple maintenance features.
-DOCS_FORUM_CHANNEL_ID = 1388644379211862096
-DOCS_FORUM_TAG_NAME = "Guide"
-
 # Shared external service endpoints.
 CRCON_PANEL_URL = "https://7dr.hlladmin.com/api/"
 
