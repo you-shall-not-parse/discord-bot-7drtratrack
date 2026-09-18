@@ -163,9 +163,6 @@ Currently disabled in `main.py`:
 
 ## Other Repo Content
 
-- `bunker_checker.py`: standalone bulk HLLRecords Bunker-ban checker for exported
-  matches from multiple servers; see [usage and reliability notes](BUNKER_CHECKER.md).
-
 - `liberationapp/`: personnel dashboard frontend and reverse-proxy configuration
 - `cogs/`: Discord bot features loaded by `main.py`
 - `config/`: shared config files and shared constant definitions

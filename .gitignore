@@ -182,8 +182,3 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
-
-# Bulk Bunker checker runtime data and reports
-/output/bunker/
-/data/bunker_checker.sqlite3*
-/data/bunker_matches/
