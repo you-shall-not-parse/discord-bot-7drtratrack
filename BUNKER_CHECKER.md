@@ -15,8 +15,31 @@ in a Python 3.11+ environment. Tests additionally require `pytest`.
 python bunker_checker.py --server "7DR Main" ./data/7dr-main --server "7DR Training" ./data/7dr-training --output ./output/bunker --log-file ./output/bunker/run.log
 ```
 
-Each source is a directory scanned recursively for `*.json` files (or a single
-JSON file). Supply one match per file:
+You can also pass a public Bifrost server URL directly:
+
+```bash
+python3 bunker_checker.py --server "TRR Events" "https://bifroststats.com/hll/leaderboards/servers/b73ceb717668" --output ./output/bunker
+```
+
+To download and index matches without making HLLRecords requests, append
+`--download-only`. The importer reads the public `/crcon` paginated match listing,
+then retrieves each full match's `result.player_stats`. Listing rows contain empty
+player arrays and are never mistaken for complete player exports. Downloads are
+saved under `data/bunker_matches/<server-id>/` (override with `--download-dir`).
+Each file is written atomically and validated before reuse on a later run.
+Listing pages are refreshed on restart so new matches can be discovered. Saved
+exports remain available even if an older match disappears from the live listing.
+
+Use `--source-delay` to change the default 1.5-second pause between Bifrost
+requests. The timeout and retry options also apply to imports. Import errors or
+interruptions stop the run before HLLRecords checks; rerun to reuse downloaded
+matches. Source requests/download counts are logged separately from HLLRecords
+request counts. In download-only reports, all players are UNKNOWN with blank
+check timestamps; exit code 0 means importing/indexing succeeded, not that any
+ban checks were performed.
+
+Local sources are directories scanned recursively for `*.json` files (or single
+JSON files). Supply one match per file:
 
 ```json
 {
@@ -47,10 +70,12 @@ names keep histories separate. Duplicate match IDs within a server use the
 first file encountered. IDs may overlap between servers. Invalid files/players
 are logged and counted; valid inputs continue processing.
 
-Directory input is the supported ingestion method. The existing
-`cogs/wardiary.py` retrieves individual match URLs inside its Discord cog;
-there is no bulk historical crawler reused here. No server URLs or credentials
-are required, and no new API pagination assumptions are introduced.
+Local directories and recognized HTTPS server URLs on `bifroststats.com` and
+`frostbite.bifrostgaming.com` are supported; repeat `--server` to mix sources.
+No credentials are required for the public endpoints. The standalone importer
+uses the same full-match URL format as `cogs/wardiary.py`, without importing the
+Discord cog. Bifrost pagination and a full player export were verified against
+server `b73ceb717668`; this does not resolve HLLRecords access restrictions.
 
 ## Outputs
 
@@ -147,11 +172,11 @@ anti-bot bypass is attempted. Restart later to resume, preserving the database.
 ## Development
 
 Components live in `bunker/`: `loader`, `models`, `parser`, `client`, `database`,
-`reporting`, and `cli`. The entrypoint is `bunker_checker.py`. The bot and its
+`reporting`, `source`, and `cli`. The entrypoint is `bunker_checker.py`. The bot and its
 databases are unaffected.
 
 ```powershell
-python -m pytest tests/test_bunker_checker.py -q
+python -m pytest tests/test_bunker_checker.py tests/test_bunker_source.py -q
 ```
 
 Tests use local synthetic fixtures and injected HTTP/clock objects. They never

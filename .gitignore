@@ -186,3 +186,4 @@ cython_debug/
 # Bulk Bunker checker runtime data and reports
 /output/bunker/
 /data/bunker_checker.sqlite3*
+/data/bunker_matches/
