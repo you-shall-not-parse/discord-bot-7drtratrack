@@ -32,7 +32,15 @@ CONTROL_STATE_PATH = Path(data_path("raid_control.json"))
 RAID_CONTENT_DIR = Path(data_path("raid_content", ensure_dir=False))
 RAID_CHANNEL_ID = 1528077898177839244
 CLAN_MEMBER_ROLE_NAME = "Basic Trained"
-RAID_INITIATOR_ROLE_NAMES = {"Fight Arranger", "7DR-SNCO"}
+RAID_INITIATOR_ROLE_NAMES = {
+    "Comp Fixer",
+    "Scrim Fixer",
+    "Map Maker",
+    "Squad Maker",
+    "Training Fixer",
+    "7DR-SNCO",
+}
+RAID_INITIATOR_ROLE_LABEL = ", ".join(sorted(RAID_INITIATOR_ROLE_NAMES))
 RAID_COOLDOWN_BYPASS_ROLE_NAME = "Administration"
 GLOBAL_RAID_COOLDOWN_SECONDS = 5 * 60
 SCHEDULED_SEED_CHECK_SECONDS = 15
@@ -172,7 +180,7 @@ class RaidModal(discord.ui.Modal, title="Initiate Raid"):
             return
         if not self.cog.can_initiate_raid(interaction.user):
             await interaction.response.send_message(
-                "Only members with the 7DR-NCO or 7DR-SNCO role can initiate a raid.",
+                f"Only members with one of these roles ({RAID_INITIATOR_ROLE_LABEL}) can initiate a raid.",
                 ephemeral=True,
             )
             return
@@ -222,7 +230,7 @@ class InitiateRaidButton(discord.ui.Button):
             return
         if not cog.can_initiate_raid(interaction.user):
             await interaction.response.send_message(
-                "Only members with the 7DR-NCO or 7DR-SNCO role can initiate a raid.",
+                f"Only members with one of these roles ({RAID_INITIATOR_ROLE_LABEL}) can initiate a raid.",
                 ephemeral=True,
             )
             return
@@ -245,7 +253,7 @@ class Seed7DRButton(discord.ui.Button):
             return
         if not cog.can_initiate_raid(interaction.user):
             await interaction.response.send_message(
-                "Only members with the 7DR-NCO or 7DR-SNCO role can initiate a raid.",
+                f"Only members with one of these roles ({RAID_INITIATOR_ROLE_LABEL}) can initiate a raid.",
                 ephemeral=True,
             )
             return
@@ -271,7 +279,7 @@ class ScheduleSeedModal(discord.ui.Modal, title="Schedule 7DR Seeding"):
             return
         if not cog.can_initiate_raid(interaction.user):
             await interaction.response.send_message(
-                "Only members with the 7DR-NCO or 7DR-SNCO role can schedule seeding.",
+                f"Only members with one of these roles ({RAID_INITIATOR_ROLE_LABEL}) can schedule seeding.",
                 ephemeral=True,
             )
             return
@@ -309,7 +317,7 @@ class SeedTimingView(discord.ui.View):
             return
         if not cog.can_initiate_raid(interaction.user):
             await interaction.response.send_message(
-                "Only members with the 7DR-NCO or 7DR-SNCO role can initiate seeding.",
+                f"Only members with one of these roles ({RAID_INITIATOR_ROLE_LABEL}) can initiate seeding.",
                 ephemeral=True,
             )
             return
@@ -333,7 +341,7 @@ class SeedTimingView(discord.ui.View):
             return
         if not cog.can_initiate_raid(interaction.user):
             await interaction.response.send_message(
-                "Only members with the 7DR-NCO or 7DR-SNCO role can schedule seeding.",
+                f"Only members with one of these roles ({RAID_INITIATOR_ROLE_LABEL}) can schedule seeding.",
                 ephemeral=True,
             )
             return
@@ -390,7 +398,7 @@ class RaidSignupView(discord.ui.View):
             return
         if not cog.can_initiate_raid(interaction.user):
             await interaction.response.send_message(
-                "Only members with the 7DR-NCO or 7DR-SNCO role can initiate a raid.",
+                f"Only members with one of these roles ({RAID_INITIATOR_ROLE_LABEL}) can initiate a raid.",
                 ephemeral=True,
             )
             return
@@ -409,7 +417,7 @@ class RaidSignupView(discord.ui.View):
             return
         if not cog.can_initiate_raid(interaction.user):
             await interaction.response.send_message(
-                "Only members with the 7DR-NCO or 7DR-SNCO role can initiate a raid.",
+                f"Only members with one of these roles ({RAID_INITIATOR_ROLE_LABEL}) can initiate a raid.",
                 ephemeral=True,
             )
             return
@@ -592,7 +600,7 @@ class Raid(commands.Cog):
     ) -> None:
         if not self.can_initiate_raid(interaction.user):
             await interaction.response.send_message(
-                "Only members with the 7DR-NCO or 7DR-SNCO role can change raid pings.",
+                f"Only members with one of these roles ({RAID_INITIATOR_ROLE_LABEL}) can change raid pings.",
                 ephemeral=True,
             )
             return
@@ -1858,7 +1866,7 @@ class Raid(commands.Cog):
     ) -> None:
         if not self.can_initiate_raid(interaction.user):
             await interaction.followup.send(
-                "Only members with the 7DR-NCO or 7DR-SNCO role can schedule seeding.",
+                f"Only members with one of these roles ({RAID_INITIATOR_ROLE_LABEL}) can schedule seeding.",
                 ephemeral=True,
             )
             return
@@ -1949,7 +1957,7 @@ class Raid(commands.Cog):
     ) -> None:
         if not self.can_initiate_raid(interaction.user):
             await interaction.followup.send(
-                "Only members with the 7DR-NCO or 7DR-SNCO role can initiate a raid.",
+                f"Only members with one of these roles ({RAID_INITIATOR_ROLE_LABEL}) can initiate a raid.",
                 ephemeral=True,
             )
             return

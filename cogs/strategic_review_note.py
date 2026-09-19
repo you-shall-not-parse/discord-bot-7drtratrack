@@ -22,7 +22,13 @@ from state_io import atomic_json_dump
 LOGGER = logging.getLogger(__name__)
 
 STRATEGIC_REVIEW_CHANNEL_ID = 1535617056752537710
-STRATEGIC_REVIEW_ROLE_NAME = "Fight Arranger"
+STRATEGIC_REVIEW_ROLE_NAMES = {
+    "Comp Fixer",
+    "Scrim Fixer",
+    "Map Maker",
+    "Squad Maker",
+    "Training Fixer",
+}
 NOTE_TITLE_PREFIX = "Strategic Review Note: "
 MAX_USER_TITLE_LENGTH = 100 - len(NOTE_TITLE_PREFIX)
 UK_TIMEZONE = ZoneInfo("Europe/London")
@@ -199,15 +205,15 @@ def _display_title(title: str) -> str:
     return f"{NOTE_TITLE_PREFIX}{title}"
 
 
-def _has_fight_arranger_role(user: discord.abc.User) -> bool:
+def _has_strategic_review_role(user: discord.abc.User) -> bool:
     return any(
-        getattr(role, "name", None) == STRATEGIC_REVIEW_ROLE_NAME
+        getattr(role, "name", None) in STRATEGIC_REVIEW_ROLE_NAMES
         for role in getattr(user, "roles", ())
     )
 
 
-def _is_fight_arranger(interaction: discord.Interaction) -> bool:
-    return _has_fight_arranger_role(interaction.user)
+def _can_create_strategic_review_note(interaction: discord.Interaction) -> bool:
+    return _has_strategic_review_role(interaction.user)
 
 
 def _load_state() -> dict[str, Any]:
@@ -357,7 +363,7 @@ class StrategicReviewNote(commands.Cog):
     )
     @app_commands.guilds(discord.Object(id=MAIN_GUILD_ID))
     @app_commands.guild_only()
-    @app_commands.check(_is_fight_arranger)
+    @app_commands.check(_can_create_strategic_review_note)
     @app_commands.rename(from_time="from", to_time="to")
     @app_commands.describe(
         title="Title for the new strategic review thread",
@@ -514,7 +520,8 @@ class StrategicReviewNote(commands.Cog):
         error: app_commands.AppCommandError,
     ) -> None:
         if isinstance(error, app_commands.CheckFailure):
-            message = f"You need the **{STRATEGIC_REVIEW_ROLE_NAME}** role to use this command."
+            role_names = ", ".join(sorted(STRATEGIC_REVIEW_ROLE_NAMES))
+            message = f"You need one of these roles to use this command: **{role_names}**."
             if interaction.response.is_done():
                 await interaction.followup.send(message, ephemeral=True)
             else:

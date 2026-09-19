@@ -7,7 +7,7 @@ from unittest.mock import Mock
 from cogs.strategic_review_note import (
     StrategicReviewNote,
     _display_title,
-    _has_fight_arranger_role,
+    _has_strategic_review_role,
     _parse_uk_since_time,
     _parse_uk_transcript_window,
     _safe_filename,
@@ -50,14 +50,16 @@ class StrategicReviewNoteTimeTests(unittest.TestCase):
 
         self.assertEqual(filename, "strategic-review-A-review-plans-risks-20260808-1300.txt")
 
-    def test_fight_arranger_role_is_required_by_exact_name(self) -> None:
-        allowed = SimpleNamespace(roles=[SimpleNamespace(name="Fight Arranger")])
-        wrong_case = SimpleNamespace(roles=[SimpleNamespace(name="fight arranger")])
-        no_roles = SimpleNamespace()
-
-        self.assertTrue(_has_fight_arranger_role(allowed))
-        self.assertFalse(_has_fight_arranger_role(wrong_case))
-        self.assertFalse(_has_fight_arranger_role(no_roles))
+    def test_strategic_review_roles_are_required_by_exact_name(self) -> None:
+        for name in ("Comp Fixer", "Scrim Fixer", "Map Maker", "Squad Maker", "Training Fixer"):
+            with self.subTest(name=name):
+                allowed = SimpleNamespace(roles=[SimpleNamespace(name=name)])
+                self.assertTrue(_has_strategic_review_role(allowed))
+        for name in ("Fight Arranger", "comp fixer", "7DR-SNCO", "Basic Trained"):
+            with self.subTest(denied=name):
+                denied = SimpleNamespace(roles=[SimpleNamespace(name=name)])
+                self.assertFalse(_has_strategic_review_role(denied))
+        self.assertFalse(_has_strategic_review_role(SimpleNamespace()))
 
     def test_display_title_has_strategic_review_prefix(self) -> None:
         self.assertEqual(
