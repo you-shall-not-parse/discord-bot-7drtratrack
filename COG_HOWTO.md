@@ -272,8 +272,8 @@ The bind address and port can be overridden with `FRONTLINE_WEB_HOST` and
 characters in `.env`; changing it and restarting logs out every website user.
 Logged-in members can open **Registered Building Inspectors**, describe an
 infringement, and take or upload a picture. A successful submission posts the
-description, login name, and image to Discord channels `1539382636483584000`
-and `1098333222540152944`.
+description, login name, and image to Discord forum post `1550851736523112469`
+and channel `1098333222540152944`.
 Each report receives an `RBI-...` reference and appears under **My reports**.
 The top-right **I am** search lets members select their Discord account by
 nickname, username, or user ID. That selection lasts for the current website
