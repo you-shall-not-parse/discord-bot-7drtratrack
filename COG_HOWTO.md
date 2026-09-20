@@ -415,7 +415,8 @@ PDF pages with private Previous/Next controls. Readers expire after ten minutes
 of inactivity and can be reopened from the persistent panel.
 
 The website and T17 member index appear as text links in the panel. The index
-link opens message `1550858825077358643` in the same channel, where members can
-open `t17_member_index.html`, avoiding an expiring CDN link. The bot needs View Channel, Read Message History, Send Messages,
+shows the raw HTML attachment URL fetched from message `1550858825077358643`
+whenever the panel is published or refreshed. Use `/officer-info` to fetch a new
+URL if the attachment link expires. The bot needs View Channel, Read Message History, Send Messages,
 Embed Links and Attach Files. Keep `officer_info_state.json` in the data directory
 to reuse the panel across restarts.

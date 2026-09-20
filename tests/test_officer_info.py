@@ -63,7 +63,8 @@ class GuideTests(unittest.IsolatedAsyncioTestCase):
     async def test_publish_reuses_existing_message_after_restart(self):
         channel = MagicMock(spec=discord.TextChannel)
         channel.guild = SimpleNamespace(id=MAIN_GUILD_ID)
-        message = SimpleNamespace(id=123, edit=AsyncMock())
+        index_url = "https://cdn.discordapp.com/attachments/123/456/t17_member_index.html?ex=fresh"
+        message = SimpleNamespace(id=123, edit=AsyncMock(), attachments=[SimpleNamespace(filename="t17_member_index.html", url=index_url)])
         channel.send = AsyncMock(return_value=message)
         channel.fetch_message = AsyncMock(return_value=message)
         reporting = MagicMock()
@@ -77,12 +78,13 @@ class GuideTests(unittest.IsolatedAsyncioTestCase):
             await OfficerInfo(bot).publish()
             await OfficerInfo(bot).publish()
         channel.send.assert_awaited_once()
-        channel.fetch_message.assert_awaited_once_with(123)
+        channel.fetch_message.assert_any_await(123)
         message.edit.assert_awaited_once()
         self.assertNotIn("embeds", message.edit.call_args.kwargs)
         combined = message.edit.call_args.kwargs["embed"]
         fields = {field.name: field.value for field in combined.fields}
         self.assertIn("HLL Frontline", fields)
+        self.assertEqual(fields["T17 Member Index"], index_url)
         self.assertEqual(fields["Player Reporting"], reports_embed.description)
         self.assertEqual(fields["Strike list"], "<@99> — **2** strikes")
         labels = {item.label for item in message.edit.call_args.kwargs["view"].children if isinstance(item, discord.ui.Button)}

@@ -143,7 +143,21 @@ class OfficerInfo(commands.Cog):
                 raise ValueError("The officer panel channel must be a text channel in the main guild.")
             embed = discord.Embed(title="7DR Officer Information", description="Officer resources and reference guide.", color=discord.Color.dark_green())
             embed.add_field(name="HLL Frontline", value=f"[Open the website]({WEBSITE_URL})\n**PIN:** `{pin}`", inline=False)
-            embed.add_field(name="T17 Member Index", value=f"[Open the T17 member index message](https://discord.com/channels/{MAIN_GUILD_ID}/{CHANNEL_ID}/{INDEX_MESSAGE_ID})", inline=False)
+            index_url = None
+            try:
+                index_message = await channel.fetch_message(INDEX_MESSAGE_ID)
+                index_url = next(
+                    (attachment.url for attachment in index_message.attachments
+                     if attachment.filename == "t17_member_index.html"),
+                    None,
+                )
+            except discord.HTTPException:
+                LOGGER.exception("Could not retrieve the T17 HTML attachment link")
+            embed.add_field(
+                name="T17 Member Index",
+                value=index_url or "The HTML attachment is unavailable. Ask an administrator to check the original upload and refresh this panel.",
+                inline=False,
+            )
             embed.add_field(name="NCO & Admin Guide", value="Browse the PDF pages privately using the guide button below.", inline=False)
             reporting = self.bot.get_cog("NameShame")
             if reporting is None:
