@@ -66,13 +66,51 @@ class GuideTests(unittest.IsolatedAsyncioTestCase):
         message = SimpleNamespace(id=123, edit=AsyncMock())
         channel.send = AsyncMock(return_value=message)
         channel.fetch_message = AsyncMock(return_value=message)
-        bot = SimpleNamespace(get_channel=lambda _: channel)
+        reporting = MagicMock()
+        reporting.build_main_embed.return_value = discord.Embed(title="Player Reporting Tool")
+        reporting.build_details_options.return_value = []
+        reporting.retire_legacy_panel = AsyncMock()
+        bot = SimpleNamespace(get_channel=lambda _: channel, get_cog=lambda _: reporting)
         with tempfile.TemporaryDirectory() as directory, patch("cogs.officer_info.STATE_PATH", str(Path(directory) / "state.json")), patch.dict("os.environ", {"OFFICER_WEBSITE_PIN": "test-pin"}):
             await OfficerInfo(bot).publish()
             await OfficerInfo(bot).publish()
         channel.send.assert_awaited_once()
         channel.fetch_message.assert_awaited_once_with(123)
         message.edit.assert_awaited_once()
+        self.assertEqual(len(message.edit.call_args.kwargs["embeds"]), 2)
+        labels = {item.label for item in message.edit.call_args.kwargs["view"].children if isinstance(item, discord.ui.Button)}
+        self.assertTrue({"Report Player", "Admin Reports", "Browse NCO & Admin Guide"} <= labels)
+        self.assertTrue(any(isinstance(item, discord.ui.Select) for item in message.edit.call_args.kwargs["view"].children))
+        self.assertEqual(reporting.retire_legacy_panel.await_count, 2)
+
+    async def test_strike_updates_refresh_combined_panel(self):
+        panel = SimpleNamespace(publish=AsyncMock())
+        cog = SimpleNamespace(bot=SimpleNamespace(get_cog=lambda name: panel))
+        await NameShame.ensure_main_message(cog, None)
+        panel.publish.assert_awaited_once()
+
+    async def test_legacy_cleanup_preserves_reports(self):
+        message = SimpleNamespace(author=SimpleNamespace(id=7), delete=AsyncMock())
+        channel = SimpleNamespace(fetch_message=AsyncMock(return_value=message))
+        cog = SimpleNamespace(
+            main_message_id=123, main_channel_id=456,
+            bot=SimpleNamespace(get_channel=lambda _: channel, user=SimpleNamespace(id=7)),
+            _persist=MagicMock(), state={"reports": {"99": {"strikes": 2}}},
+        )
+        await NameShame.retire_legacy_panel(cog)
+        message.delete.assert_awaited_once()
+        self.assertIsNone(cog.main_message_id)
+        self.assertEqual(cog.state["reports"]["99"]["strikes"], 2)
+        cog._persist.assert_called_once()
+
+    async def test_admin_button_checks_existing_permissions(self):
+        cog = SimpleNamespace(is_admin_reports=AsyncMock(return_value=False))
+        interaction = SimpleNamespace(
+            client=SimpleNamespace(get_cog=lambda name: cog),
+            response=SimpleNamespace(send_message=AsyncMock()),
+        )
+        await OfficerPanel().admin.callback(interaction)
+        self.assertEqual(interaction.response.send_message.call_args.args[0], "You cannot use Admin Reports.")
 
     async def test_navigation_and_independent_readers(self):
         interaction = SimpleNamespace(

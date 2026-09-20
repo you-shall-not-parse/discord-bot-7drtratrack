@@ -15,6 +15,7 @@ from discord.ext import commands
 from config import MAIN_GUILD_ID
 from data_paths import data_path
 from state_io import atomic_json_dump
+from cogs.nameshame import AdminManageView, DetailsSelect
 
 LOGGER = logging.getLogger(__name__)
 CHANNEL_ID = 1549529105874165911
@@ -88,20 +89,34 @@ class GuideReader(discord.ui.View):
 
 
 class OfficerPanel(discord.ui.View):
-    def __init__(self) -> None:
+    def __init__(self, reporting=None) -> None:
         super().__init__(timeout=None)
+        if reporting is not None:
+            self.add_item(DetailsSelect(reporting))
 
     @discord.ui.button(label="Browse NCO & Admin Guide", custom_id="officer-info:guide:v1", style=discord.ButtonStyle.primary)
     async def guide(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await GuideReader().display(interaction, first=True)
 
-    @discord.ui.button(label="Report a Troop", custom_id="officer-info:report:v1", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Report Player", custom_id="officer-info:report:v1", style=discord.ButtonStyle.danger)
     async def report(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         cog = interaction.client.get_cog("NameShame")
         if cog is None:
             await interaction.response.send_message("Player reporting is currently unavailable. Please contact an administrator.", ephemeral=True)
             return
         await cog.open_report(interaction)
+
+    @discord.ui.button(label="Admin Reports", custom_id="officer-info:admin:v1", style=discord.ButtonStyle.primary)
+    async def admin(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        cog = interaction.client.get_cog("NameShame")
+        if cog is None:
+            await interaction.response.send_message("Player reporting is currently unavailable.", ephemeral=True)
+            return
+        if not await cog.is_admin_reports(interaction):
+            await interaction.response.send_message("You cannot use Admin Reports.", ephemeral=True)
+            return
+        view = AdminManageView(cog)
+        await interaction.response.send_message(content=view._content(), ephemeral=True, view=view)
 
 
 class OfficerInfo(commands.Cog):
@@ -130,9 +145,12 @@ class OfficerInfo(commands.Cog):
             embed.add_field(name="HLL Frontline", value=f"[Open the website]({WEBSITE_URL})\n**PIN:** `{pin}`", inline=False)
             embed.add_field(name="T17 Member Index", value=f"[Open the T17 member index message](https://discord.com/channels/{MAIN_GUILD_ID}/{CHANNEL_ID}/{INDEX_MESSAGE_ID})", inline=False)
             embed.add_field(name="NCO & Admin Guide", value="Browse the PDF pages privately using the guide button below.", inline=False)
-            from cogs.nameshame import NAMESHAME_MAIN_CHANNEL_ID
-
-            embed.add_field(name="Report a Troop", value=f"Use the Report a Troop button to select a player and reason for staff review.\n[Strike history and report administration](https://discord.com/channels/{MAIN_GUILD_ID}/{NAMESHAME_MAIN_CHANNEL_ID})", inline=False)
+            reporting = self.bot.get_cog("NameShame")
+            if reporting is None:
+                raise ValueError("The NameShame reporting backend must be loaded before publishing the combined panel.")
+            reports_embed = reporting.build_main_embed(channel.guild)
+            embeds = [embed, reports_embed]
+            view = OfficerPanel(reporting)
             try:
                 state = json.loads(Path(STATE_PATH).read_text(encoding="utf-8"))
             except (OSError, ValueError):
@@ -143,11 +161,17 @@ class OfficerInfo(commands.Cog):
                     message = await channel.fetch_message(state["message_id"])
                 except discord.NotFound:
                     pass
+            self.view.stop()
             if message is None:
-                message = await channel.send(embed=embed, view=self.view, allowed_mentions=discord.AllowedMentions.none())
+                message = await channel.send(embeds=embeds, view=view, allowed_mentions=discord.AllowedMentions.none())
             else:
-                await message.edit(embed=embed, view=self.view, allowed_mentions=discord.AllowedMentions.none())
+                await message.edit(embeds=embeds, view=view, allowed_mentions=discord.AllowedMentions.none())
+            self.view = view
             atomic_json_dump(STATE_PATH, {"channel_id": CHANNEL_ID, "message_id": message.id})
+            try:
+                await reporting.retire_legacy_panel()
+            except discord.HTTPException:
+                LOGGER.exception("Combined panel is live, but the old reporting message could not be removed")
             return message
 
     @commands.Cog.listener()

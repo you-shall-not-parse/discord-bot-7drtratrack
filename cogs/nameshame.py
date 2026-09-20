@@ -760,63 +760,30 @@ class NameShame(commands.Cog):
 		return embed
 
 	async def ensure_main_message(self, guild: discord.Guild | None):
-		async with self._lock:
-			# Always prefer configured channel IDs
-			self.main_channel_id = NAMESHAME_MAIN_CHANNEL_ID or self.main_channel_id
-			self.approval_channel_id = NAMESHAME_APPROVAL_CHANNEL_ID or self.approval_channel_id
-
-			if not self.main_channel_id:
-				return
-			channel = self.bot.get_channel(self.main_channel_id)
-			if channel is None:
-				try:
-					channel = await self.bot.fetch_channel(self.main_channel_id)
-				except Exception:
-					channel = None
-
-			if not isinstance(channel, discord.TextChannel):
-				return
-
-			embed = self.build_main_embed(guild)
-			view = NameShameMainView(self)
-
-			msg = None
-			if self.main_message_id:
-				try:
-					msg = await channel.fetch_message(self.main_message_id)
-				except Exception:
-					msg = None
-
-			if msg is None:
-				msg = await channel.send(embed=embed, view=view)
-				self.main_message_id = msg.id
-				self.main_channel_id = channel.id
-				self._persist()
-			else:
-				await msg.edit(embed=embed, view=view)
+		# Reporting now lives on the officer panel, including every strike update.
+		panel = self.bot.get_cog("OfficerInfo")
+		if panel is not None:
+			await panel.publish()
 
 	async def refresh_main_message(self, guild: discord.Guild | None):
 		await self.ensure_main_message(guild)
 
-	# ----------------- lifecycle -----------------
-
-	@commands.Cog.listener()
-	async def on_ready(self):
+	async def retire_legacy_panel(self) -> None:
+		"""Remove only the saved legacy bot message after its replacement is live."""
+		if not self.main_message_id or not self.main_channel_id:
+			return
+		channel = self.bot.get_channel(self.main_channel_id)
+		if channel is None:
+			channel = await self.bot.fetch_channel(self.main_channel_id)
 		try:
-			self.bot.add_view(NameShameMainView(self))
-		except Exception:
-			# add_view can be called multiple times safely; ignore if discord.py complains.
+			message = await channel.fetch_message(self.main_message_id)
+			if self.bot.user is None or message.author.id != self.bot.user.id:
+				return
+			await message.delete()
+		except discord.NotFound:
 			pass
-
-		# Auto-post/refresh only if configured.
-		guild = self.bot.get_guild(GUILD_ID)
-		if NAMESHAME_MAIN_CHANNEL_ID:
-			self.main_channel_id = NAMESHAME_MAIN_CHANNEL_ID
-		if NAMESHAME_APPROVAL_CHANNEL_ID:
-			self.approval_channel_id = NAMESHAME_APPROVAL_CHANNEL_ID
-
-		if self.main_channel_id:
-			await self.ensure_main_message(guild)
+		self.main_message_id = None
+		self._persist()
 
 	# ----------------- report flow -----------------
 

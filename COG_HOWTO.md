@@ -393,10 +393,15 @@ How to use: Members read the posted board. Staff use `/hellor_request` to force 
 Rules and notes: The leaderboard depends on valid T17 lookups. If someone is not appearing, the usual cause is missing or bad mapping data rather than the Discord side of the cog.
 # Officer information panel
 
-The **Report a Troop** button opens the existing NameShame reporting form. Both
-panels use the same reporter roles, approval destination, and strike records.
-The officer panel links to the existing reporting channel for history and admin
-controls. NameShame must be loaded for the reporting button to work.
+The officer panel replaces the standalone NameShame panel. The same message
+contains the strike list, report-details dropdown, **Report Player** and
+**Admin Reports** buttons alongside the officer resources and PDF browser.
+Approvals and admin strike changes refresh this combined panel. After successful
+publication, the bot removes its saved legacy reporting message; a deletion
+failure is logged and can be resolved by manually deleting that old message.
+Keep `cogs.nameshame` loaded: it supplies the reporting backend and continues
+using `nameshame_state.json`, existing role restrictions and approval channel.
+It no longer posts a separate panel.
 
 `cogs.officer_info` creates or updates its panel in channel `1549529105874165911`
 when the bot becomes ready. Administrators can also run `/officer-info` to refresh
