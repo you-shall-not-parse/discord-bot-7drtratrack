@@ -58,6 +58,7 @@ EXTENSIONS = (
     "cogs.rosterizer",
     "cogs.rank_directory",
     "cogs.hll_maps",
+    "cogs.officer_info",
 )
 
 DISABLED_EXTENSIONS = (

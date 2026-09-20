@@ -391,3 +391,21 @@ Slash commands: `/hellor_request`, `/hellor_t17idadmin`.
 How to use: Members read the posted board. Staff use `/hellor_request` to force a refresh and `/hellor_t17idadmin` to inspect stored T17 mappings if people are missing.
 
 Rules and notes: The leaderboard depends on valid T17 lookups. If someone is not appearing, the usual cause is missing or bad mapping data rather than the Discord side of the cog.
+# Officer information panel
+
+`cogs.officer_info` creates or updates its panel in channel `1549529105874165911`
+when the bot becomes ready. Administrators can also run `/officer-info` to refresh
+the same message. Channel permissions determine who can see the panel and PIN;
+use the officer channel's existing access restrictions.
+
+Set `OFFICER_WEBSITE_PIN` in the deployment environment or `.env`. Install the
+updated `requirements.txt` and deploy `data/7DR NCO and Admin Guide (1).pdf`
+(under `BOT_DATA_DIR` if configured). The guide uses pypdfium2 to display original
+PDF pages with private Previous/Next controls. Readers expire after ten minutes
+of inactivity and can be reopened from the persistent panel.
+
+The member-index button fetches a fresh link to `t17_member_index.html` from
+message `1550858825077358643` in the same channel, avoiding a hard-coded expiring
+CDN signature. The bot needs View Channel, Read Message History, Send Messages,
+Embed Links and Attach Files. Keep `officer_info_state.json` in the data directory
+to reuse the panel across restarts.
