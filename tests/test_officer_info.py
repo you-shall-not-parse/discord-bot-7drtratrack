@@ -10,6 +10,7 @@ import discord
 from PIL import Image
 
 from cogs.officer_info import CHANNEL_ID, MAIN_GUILD_ID, GuideReader, OfficerInfo, OfficerPanel, render_page
+from cogs.nameshame import NameShame, NAMESHAME_REPORTER_ROLE_IDS, ReportFlowView
 
 
 class GuideTests(unittest.IsolatedAsyncioTestCase):
@@ -26,6 +27,38 @@ class GuideTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_panel_is_persistent(self):
         self.assertTrue(OfficerPanel().is_persistent())
+
+    async def test_report_button_uses_loaded_nameshame(self):
+        cog = SimpleNamespace(open_report=AsyncMock())
+        interaction = SimpleNamespace(client=SimpleNamespace(get_cog=lambda name: cog))
+        await OfficerPanel().report.callback(interaction)
+        cog.open_report.assert_awaited_once_with(interaction)
+
+    async def test_report_button_handles_unavailable_cog(self):
+        interaction = SimpleNamespace(
+            client=SimpleNamespace(get_cog=lambda name: None),
+            response=SimpleNamespace(send_message=AsyncMock()),
+        )
+        await OfficerPanel().report.callback(interaction)
+        self.assertIn("unavailable", interaction.response.send_message.call_args.args[0])
+
+    async def test_report_flow_preserves_role_restrictions(self):
+        member = MagicMock(spec=discord.Member)
+        member.roles = []
+        interaction = SimpleNamespace(
+            guild_id=MAIN_GUILD_ID,
+            user=member,
+            response=SimpleNamespace(is_done=lambda: False, send_message=AsyncMock()),
+        )
+        cog = SimpleNamespace()
+        await NameShame.open_report(cog, interaction)
+        self.assertIn("not allowed", interaction.response.send_message.call_args.args[0])
+        member.roles = [SimpleNamespace(id=next(iter(NAMESHAME_REPORTER_ROLE_IDS)))]
+        await NameShame.open_report(cog, interaction)
+        kwargs = interaction.response.send_message.call_args.kwargs
+        self.assertTrue(kwargs["ephemeral"])
+        self.assertIsInstance(kwargs["view"], ReportFlowView)
+        self.assertIs(kwargs["view"].cog, cog)
 
     async def test_publish_reuses_existing_message_after_restart(self):
         channel = MagicMock(spec=discord.TextChannel)

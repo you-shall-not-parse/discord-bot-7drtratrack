@@ -90,24 +90,18 @@ class GuideReader(discord.ui.View):
 class OfficerPanel(discord.ui.View):
     def __init__(self) -> None:
         super().__init__(timeout=None)
-        self.add_item(discord.ui.Button(label="HLL Frontline Website", url=WEBSITE_URL))
-
-    @discord.ui.button(label="T17 Member Index", custom_id="officer-info:index:v1", style=discord.ButtonStyle.secondary)
-    async def member_index(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        source = f"https://discord.com/channels/{MAIN_GUILD_ID}/{CHANNEL_ID}/{INDEX_MESSAGE_ID}"
-        try:
-            channel = interaction.client.get_channel(CHANNEL_ID) or await interaction.client.fetch_channel(CHANNEL_ID)
-            message = await channel.fetch_message(INDEX_MESSAGE_ID)
-            attachment = next(a for a in message.attachments if a.filename == "t17_member_index.html")
-            content = f"[Open T17 member index]({attachment.url})\n[Original Discord message]({source})"
-        except (discord.HTTPException, StopIteration, AttributeError):
-            content = f"[Open the T17 member index message]({source})"
-        await interaction.followup.send(content, ephemeral=True)
 
     @discord.ui.button(label="Browse NCO & Admin Guide", custom_id="officer-info:guide:v1", style=discord.ButtonStyle.primary)
     async def guide(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await GuideReader().display(interaction, first=True)
+
+    @discord.ui.button(label="Report a Troop", custom_id="officer-info:report:v1", style=discord.ButtonStyle.danger)
+    async def report(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        cog = interaction.client.get_cog("NameShame")
+        if cog is None:
+            await interaction.response.send_message("Player reporting is currently unavailable. Please contact an administrator.", ephemeral=True)
+            return
+        await cog.open_report(interaction)
 
 
 class OfficerInfo(commands.Cog):
@@ -134,8 +128,11 @@ class OfficerInfo(commands.Cog):
                 raise ValueError("The officer panel channel must be a text channel in the main guild.")
             embed = discord.Embed(title="7DR Officer Information", description="Officer resources and reference guide.", color=discord.Color.dark_green())
             embed.add_field(name="HLL Frontline", value=f"[Open the website]({WEBSITE_URL})\n**PIN:** `{pin}`", inline=False)
-            embed.add_field(name="T17 Member Index", value="Use the T17 Member Index button to open the member directory.", inline=False)
+            embed.add_field(name="T17 Member Index", value=f"[Open the T17 member index message](https://discord.com/channels/{MAIN_GUILD_ID}/{CHANNEL_ID}/{INDEX_MESSAGE_ID})", inline=False)
             embed.add_field(name="NCO & Admin Guide", value="Browse the PDF pages privately using the guide button below.", inline=False)
+            from cogs.nameshame import NAMESHAME_MAIN_CHANNEL_ID
+
+            embed.add_field(name="Report a Troop", value=f"Use the Report a Troop button to select a player and reason for staff review.\n[Strike history and report administration](https://discord.com/channels/{MAIN_GUILD_ID}/{NAMESHAME_MAIN_CHANNEL_ID})", inline=False)
             try:
                 state = json.loads(Path(STATE_PATH).read_text(encoding="utf-8"))
             except (OSError, ValueError):

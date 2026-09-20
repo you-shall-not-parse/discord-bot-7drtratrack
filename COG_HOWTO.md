@@ -393,6 +393,11 @@ How to use: Members read the posted board. Staff use `/hellor_request` to force 
 Rules and notes: The leaderboard depends on valid T17 lookups. If someone is not appearing, the usual cause is missing or bad mapping data rather than the Discord side of the cog.
 # Officer information panel
 
+The **Report a Troop** button opens the existing NameShame reporting form. Both
+panels use the same reporter roles, approval destination, and strike records.
+The officer panel links to the existing reporting channel for history and admin
+controls. NameShame must be loaded for the reporting button to work.
+
 `cogs.officer_info` creates or updates its panel in channel `1549529105874165911`
 when the bot becomes ready. Administrators can also run `/officer-info` to refresh
 the same message. Channel permissions determine who can see the panel and PIN;
@@ -404,8 +409,8 @@ updated `requirements.txt` and deploy `data/7DR NCO and Admin Guide (1).pdf`
 PDF pages with private Previous/Next controls. Readers expire after ten minutes
 of inactivity and can be reopened from the persistent panel.
 
-The member-index button fetches a fresh link to `t17_member_index.html` from
-message `1550858825077358643` in the same channel, avoiding a hard-coded expiring
-CDN signature. The bot needs View Channel, Read Message History, Send Messages,
+The website and T17 member index appear as text links in the panel. The index
+link opens message `1550858825077358643` in the same channel, where members can
+open `t17_member_index.html`, avoiding an expiring CDN link. The bot needs View Channel, Read Message History, Send Messages,
 Embed Links and Attach Files. Keep `officer_info_state.json` in the data directory
 to reuse the panel across restarts.

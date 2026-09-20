@@ -515,11 +515,7 @@ class NameShameMainView(discord.ui.View):
 
 	@discord.ui.button(label="Report Player", style=discord.ButtonStyle.danger, custom_id="nameshame:report")
 	async def report_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-		await interaction.response.send_message(
-			content="Select a player and a reason, then submit:",
-			ephemeral=True,
-			view=ReportFlowView(self.cog),
-		)
+		await self.cog.open_report(interaction)
 
 	@discord.ui.button(label="Admin Reports", style=discord.ButtonStyle.primary, custom_id="nameshame:admin")
 	async def admin_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -585,6 +581,18 @@ class NameShame(commands.Cog):
 		_save_state(self.state)
 
 	# ----------------- helpers -----------------
+
+	async def open_report(self, interaction: discord.Interaction) -> None:
+		if interaction.guild_id != GUILD_ID or not isinstance(interaction.user, discord.Member):
+			return await _safe_ephemeral_reply(interaction, "Reporting must be done inside the server.")
+		allowed_roles = {rid for rid in NAMESHAME_REPORTER_ROLE_IDS if rid}
+		if allowed_roles and not any(role.id in allowed_roles for role in interaction.user.roles):
+			return await _safe_ephemeral_reply(interaction, "You are not allowed to submit reports.")
+		await interaction.response.send_message(
+			content="Select a player and a reason, then submit:",
+			ephemeral=True,
+			view=ReportFlowView(self),
+		)
 
 	async def is_approver(self, interaction: discord.Interaction) -> bool:
 		if not isinstance(interaction.user, discord.Member):
