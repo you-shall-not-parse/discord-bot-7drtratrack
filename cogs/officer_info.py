@@ -19,7 +19,7 @@ from cogs.nameshame import AdminManageView, DetailsSelect
 
 LOGGER = logging.getLogger(__name__)
 CHANNEL_ID = 1549529105874165911
-INDEX_MESSAGE_ID = 1550858825077358643
+INDEX_STATE_PATH = data_path("t17_role_index_state.json")
 WEBSITE_URL = "https://hllfrontline.com/login?next=/"
 GUIDE_PATH = Path(data_path("7DR NCO and Admin Guide (1).pdf"))
 STATE_PATH = data_path("officer_info_state.json")
@@ -131,6 +131,34 @@ class OfficerInfo(commands.Cog):
     def cog_unload(self) -> None:
         self.view.stop()
 
+    async def index_attachment_url(self) -> str | None:
+        try:
+            state = json.loads(Path(INDEX_STATE_PATH).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(state, dict):
+            return None
+        channel_id = state.get("index_channel_id")
+        message_id = state.get("index_message_id")
+        if not isinstance(channel_id, int) or not isinstance(message_id, int):
+            return None
+        try:
+            channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)
+            message = await channel.fetch_message(message_id)
+            return next((a.url for a in message.attachments if a.filename == "t17_member_index.html"), None)
+        except discord.NotFound:
+            LOGGER.info("T17 index message is missing; waiting for the index to regenerate")
+        except discord.HTTPException:
+            LOGGER.exception("Could not retrieve the T17 HTML attachment link")
+        return None
+
+    @commands.Cog.listener()
+    async def on_t17_index_updated(self) -> None:
+        try:
+            await self.publish()
+        except Exception:
+            LOGGER.exception("Could not refresh officer panel after T17 index update")
+
     async def publish(self) -> discord.Message:
         async with self.lock:
             pin = os.getenv("OFFICER_WEBSITE_PIN", "").strip()
@@ -143,16 +171,7 @@ class OfficerInfo(commands.Cog):
                 raise ValueError("The officer panel channel must be a text channel in the main guild.")
             embed = discord.Embed(title="7DR Officer Information", description="Officer resources and reference guide.", color=discord.Color.dark_green())
             embed.add_field(name="HLL Frontline", value=f"[Open the website]({WEBSITE_URL})\n**PIN:** `{pin}`", inline=False)
-            index_url = None
-            try:
-                index_message = await channel.fetch_message(INDEX_MESSAGE_ID)
-                index_url = next(
-                    (attachment.url for attachment in index_message.attachments
-                     if attachment.filename == "t17_member_index.html"),
-                    None,
-                )
-            except discord.HTTPException:
-                LOGGER.exception("Could not retrieve the T17 HTML attachment link")
+            index_url = await self.index_attachment_url()
             embed.add_field(
                 name="T17 Member Index",
                 value=index_url or "The HTML attachment is unavailable. Ask an administrator to check the original upload and refresh this panel.",

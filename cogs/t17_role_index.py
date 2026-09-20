@@ -289,14 +289,7 @@ class T17RoleIndex(commands.Cog, name="[API] T17RoleIndex"):
         # Save immediately after the upload so a later content-edit failure does
         # not cause a duplicate index message on the next refresh.
         self._set_index_message_state(message)
-        if message.attachments:
-            linked_content = f"{INDEX_MESSAGE}\n{message.attachments[0].url}"
-            if message.content != linked_content:
-                message = await message.edit(
-                    content=linked_content,
-                    allowed_mentions=discord.AllowedMentions.none(),
-                )
-                self._set_index_message_state(message)
+        self.bot.dispatch("t17_index_updated")
         return message
 
     async def _build_index_document(self, guild: discord.Guild) -> tuple[str, dict[int, dict[str, str]], set[int]]:

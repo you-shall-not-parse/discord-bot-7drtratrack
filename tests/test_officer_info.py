@@ -1,4 +1,5 @@
 import io
+import json
 import unittest
 import tempfile
 from pathlib import Path
@@ -74,11 +75,13 @@ class GuideTests(unittest.IsolatedAsyncioTestCase):
         reporting.build_details_options.return_value = []
         reporting.retire_legacy_panel = AsyncMock()
         bot = SimpleNamespace(get_channel=lambda _: channel, get_cog=lambda _: reporting)
-        with tempfile.TemporaryDirectory() as directory, patch("cogs.officer_info.STATE_PATH", str(Path(directory) / "state.json")), patch.dict("os.environ", {"OFFICER_WEBSITE_PIN": "test-pin"}):
+        with tempfile.TemporaryDirectory() as directory, patch("cogs.officer_info.STATE_PATH", str(Path(directory) / "state.json")), patch("cogs.officer_info.INDEX_STATE_PATH", str(Path(directory) / "index.json")), patch.dict("os.environ", {"OFFICER_WEBSITE_PIN": "test-pin"}):
+            Path(directory, "index.json").write_text(json.dumps({"index_channel_id": CHANNEL_ID, "index_message_id": 987654321}))
             await OfficerInfo(bot).publish()
             await OfficerInfo(bot).publish()
         channel.send.assert_awaited_once()
         channel.fetch_message.assert_any_await(123)
+        channel.fetch_message.assert_any_await(987654321)
         message.edit.assert_awaited_once()
         self.assertNotIn("embeds", message.edit.call_args.kwargs)
         combined = message.edit.call_args.kwargs["embed"]
@@ -91,6 +94,18 @@ class GuideTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue({"Report Player", "Admin Reports", "Browse NCO & Admin Guide"} <= labels)
         self.assertTrue(any(isinstance(item, discord.ui.Select) for item in message.edit.call_args.kwargs["view"].children))
         self.assertEqual(reporting.retire_legacy_panel.await_count, 2)
+
+    async def test_t17_update_refreshes_panel(self):
+        panel = OfficerInfo(SimpleNamespace())
+        panel.publish = AsyncMock()
+        await panel.on_t17_index_updated()
+        panel.publish.assert_awaited_once()
+
+    async def test_missing_index_state_does_not_fetch_obsolete_message(self):
+        bot = SimpleNamespace(get_channel=MagicMock())
+        with tempfile.TemporaryDirectory() as directory, patch("cogs.officer_info.INDEX_STATE_PATH", str(Path(directory) / "missing.json")):
+            self.assertIsNone(await OfficerInfo(bot).index_attachment_url())
+        bot.get_channel.assert_not_called()
 
     async def test_strike_updates_refresh_combined_panel(self):
         panel = SimpleNamespace(publish=AsyncMock())
