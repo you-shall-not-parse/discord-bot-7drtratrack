@@ -183,7 +183,9 @@ class OfficerInfo(commands.Cog):
             if message is None:
                 message = await channel.send(embed=embed, view=view, allowed_mentions=discord.AllowedMentions.none())
             else:
-                await message.edit(embed=embed, view=view, allowed_mentions=discord.AllowedMentions.none())
+                # Clear any old text above the panel; the raw HTML URL belongs
+                # solely in the T17 Member Index field inside the embed.
+                await message.edit(content=None, embed=embed, view=view, allowed_mentions=discord.AllowedMentions.none())
             self.view = view
             atomic_json_dump(STATE_PATH, {"channel_id": CHANNEL_ID, "message_id": message.id})
             try:

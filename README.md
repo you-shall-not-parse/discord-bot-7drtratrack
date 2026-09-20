@@ -91,12 +91,25 @@ That keeps the bot process persistent without exposing secrets in the repository
 
 ## Run
 
-Use Python 3.14, install the pinned dependencies, and set `DISCORD_BOT_TOKEN`.
+Use Python 3.12 or newer, install the pinned dependencies, and set `DISCORD_BOT_TOKEN`.
 
 ```powershell
 python -m pip install -r requirements.txt
 python main.py
 ```
+
+On the Ubuntu deployment, install into the same environment used by the service:
+
+```bash
+cd ~/discord-bot-7drtratrack
+venv/bin/python -m pip install -r requirements.txt
+venv/bin/python -m pip check
+```
+
+The officer panel also needs `OFFICER_WEBSITE_PIN` in the server environment and
+`data/7DR NCO and Admin Guide (1).pdf` (or under `BOT_DATA_DIR`). Its PDF renderer
+is included in the requirements. The disabled legacy LoreCogV2 uses `pdf2image`
+and additionally needs the Ubuntu `poppler-utils` package if enabled.
 
 Features that manage HLL servers through Bifrost also require
 `BIFROST_CLIENT_ID` and `BIFROST_CLIENT_SECRET`. The events-server map request

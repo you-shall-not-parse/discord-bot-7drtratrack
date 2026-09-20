@@ -56,7 +56,7 @@ ROLLCALL_LOCK_HOURS: Optional[float] = 144.0
 WORKBOOK_PATH = data_path("rollcall.xlsx")
 
 # Optional: path to a legacy .xls workbook to import once (only if WORKBOOK_PATH doesn't exist yet).
-# Requires pandas + xlrd==1.2.0 installed.
+# Requires pandas + xlrd from requirements.txt installed.
 IMPORT_LEGACY_XLS_PATH: Optional[str] = None
 
 # Optional: post HTML table uploads to a single channel.
