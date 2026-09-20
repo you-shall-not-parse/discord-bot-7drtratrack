@@ -67,7 +67,9 @@ class GuideTests(unittest.IsolatedAsyncioTestCase):
         channel.send = AsyncMock(return_value=message)
         channel.fetch_message = AsyncMock(return_value=message)
         reporting = MagicMock()
-        reporting.build_main_embed.return_value = discord.Embed(title="Player Reporting Tool")
+        reports_embed = discord.Embed(title="Player Reporting Tool", description="Select a player to report.")
+        reports_embed.add_field(name="Strike list", value="<@99> — **2** strikes", inline=False)
+        reporting.build_main_embed.return_value = reports_embed
         reporting.build_details_options.return_value = []
         reporting.retire_legacy_panel = AsyncMock()
         bot = SimpleNamespace(get_channel=lambda _: channel, get_cog=lambda _: reporting)
@@ -77,7 +79,12 @@ class GuideTests(unittest.IsolatedAsyncioTestCase):
         channel.send.assert_awaited_once()
         channel.fetch_message.assert_awaited_once_with(123)
         message.edit.assert_awaited_once()
-        self.assertEqual(len(message.edit.call_args.kwargs["embeds"]), 2)
+        self.assertNotIn("embeds", message.edit.call_args.kwargs)
+        combined = message.edit.call_args.kwargs["embed"]
+        fields = {field.name: field.value for field in combined.fields}
+        self.assertIn("HLL Frontline", fields)
+        self.assertEqual(fields["Player Reporting"], reports_embed.description)
+        self.assertEqual(fields["Strike list"], "<@99> — **2** strikes")
         labels = {item.label for item in message.edit.call_args.kwargs["view"].children if isinstance(item, discord.ui.Button)}
         self.assertTrue({"Report Player", "Admin Reports", "Browse NCO & Admin Guide"} <= labels)
         self.assertTrue(any(isinstance(item, discord.ui.Select) for item in message.edit.call_args.kwargs["view"].children))

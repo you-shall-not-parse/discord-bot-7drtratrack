@@ -149,7 +149,11 @@ class OfficerInfo(commands.Cog):
             if reporting is None:
                 raise ValueError("The NameShame reporting backend must be loaded before publishing the combined panel.")
             reports_embed = reporting.build_main_embed(channel.guild)
-            embeds = [embed, reports_embed]
+            if reports_embed.description:
+                embed.add_field(name="Player Reporting", value=reports_embed.description, inline=False)
+            for field in reports_embed.fields:
+                embed.add_field(name=field.name, value=field.value, inline=field.inline)
+            embed.timestamp = reports_embed.timestamp
             view = OfficerPanel(reporting)
             try:
                 state = json.loads(Path(STATE_PATH).read_text(encoding="utf-8"))
@@ -163,9 +167,9 @@ class OfficerInfo(commands.Cog):
                     pass
             self.view.stop()
             if message is None:
-                message = await channel.send(embeds=embeds, view=view, allowed_mentions=discord.AllowedMentions.none())
+                message = await channel.send(embed=embed, view=view, allowed_mentions=discord.AllowedMentions.none())
             else:
-                await message.edit(embeds=embeds, view=view, allowed_mentions=discord.AllowedMentions.none())
+                await message.edit(embed=embed, view=view, allowed_mentions=discord.AllowedMentions.none())
             self.view = view
             atomic_json_dump(STATE_PATH, {"channel_id": CHANNEL_ID, "message_id": message.id})
             try:
