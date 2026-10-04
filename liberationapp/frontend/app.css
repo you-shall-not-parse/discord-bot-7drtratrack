@@ -241,6 +241,9 @@ a.match-date:hover { color: var(--olive); }
 .table-wrap { overflow-x: auto; border: 1px solid var(--line); }
 table { width: 100%; border-collapse: collapse; font-size: 12px; }
 th { padding: 12px 14px; color: var(--muted); text-align: left; text-transform: uppercase; letter-spacing: .1em; font-size: 9px; background: #24271e; position: sticky; top: 0; }
+.leaderboard-sort { display: inline-flex; align-items: center; gap: 8px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-transform: inherit; letter-spacing: inherit; white-space: nowrap; cursor: pointer; }
+.leaderboard-sort:hover,th[aria-sort="ascending"] .leaderboard-sort,th[aria-sort="descending"] .leaderboard-sort { color: var(--ink); }
+.leaderboard-sort:focus-visible { outline: 2px solid var(--orange); outline-offset: 5px; }
 td { padding: 12px 14px; border-top: 1px solid var(--line); }
 .state { display: inline-flex; gap: 7px; align-items: center; text-transform: capitalize; }
 .state::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--red); }

@@ -1,6 +1,11 @@
 const VIEWS = new Set(["overview", "personnel", "server-status", "upcoming", "war-diary", "highlights", "statistics", "all-time-leaderboard", "directory", "building-inspectors", "knowledge-base"]);
 const requestedView = location.hash.replace(/^#/, "");
 const state = { data: null, view: VIEWS.has(requestedView) ? requestedView : "overview", eventLayout: "list" };
+const warLeaderboardSort = { key: "kills", direction: "desc" };
+const WAR_LEADERBOARD_COLUMNS = [
+  ["rank", "Rank"], ["name", "Player"], ["kills", "Kills"], ["deaths", "Deaths"],
+  ["kd", "K/D"], ["matches", "Matches"], ["kills_per_match", "Kills / match"]
+];
 let gameRequestOptions = null;
 let knowledgeArticles = [];
 const $ = selector => document.querySelector(selector);
@@ -411,8 +416,38 @@ function renderWarDiaryLeaderboard() {
     [board.pending, "awaiting import"], [board.stale, "using older stats"]
   ].filter(([count]) => count).map(([count, label]) => `${count} ${label}`);
   $("#war-kills-status").textContent = `Raw kills for 7DR-tagged players and linked clan T17 IDs. Updated automatically.${gaps.length ? ` Coverage: ${gaps.join(" · ")}.` : ""}`;
-  $("#war-kills-leaderboard").innerHTML = board.rows.length ? `<div class="table-wrap"><table><thead><tr><th>Rank</th><th>Player</th><th>Kills</th><th>Deaths</th><th>K/D</th><th>Matches</th><th>Kills / match</th></tr></thead><tbody>${board.rows.map(row => `<tr><td>${row.rank}</td><td>${escapeHtml(row.name)}</td><td>${row.kills.toLocaleString()}</td><td>${row.deaths.toLocaleString()}</td><td>${row.kd ?? "—"}</td><td>${row.matches}</td><td>${row.kills_per_match}</td></tr>`).join("")}</tbody></table></div>` : emptyState("No 7DR player stats imported yet. Match-specific stats links are required in the War Diary.");
+  const rows = [...board.rows].sort((left, right) => {
+    const a = left[warLeaderboardSort.key], b = right[warLeaderboardSort.key];
+    // Missing K/D values stay at the bottom in either direction.
+    if (a == null && b != null) return 1;
+    if (a != null && b == null) return -1;
+    const compared = a == null ? 0 : warLeaderboardSort.key === "name"
+      ? a.localeCompare(b, "en", { sensitivity: "base", numeric: true }) : a - b;
+    return (warLeaderboardSort.direction === "asc" ? compared : -compared)
+      || left.rank - right.rank || left.name.localeCompare(right.name);
+  });
+  const headers = WAR_LEADERBOARD_COLUMNS.map(([key, label]) => {
+    const active = key === warLeaderboardSort.key;
+    const direction = active ? warLeaderboardSort.direction : ["rank", "name"].includes(key) ? "desc" : "asc";
+    const next = direction === "asc" ? "descending" : "ascending";
+    const arrow = active ? direction === "asc" ? "↑" : "↓" : "↕";
+    return `<th scope="col" aria-sort="${active ? direction === "asc" ? "ascending" : "descending" : "none"}"><button type="button" class="leaderboard-sort" data-war-sort="${key}" aria-label="Sort by ${label}, ${next}">${label} <span aria-hidden="true">${arrow}</span></button></th>`;
+  }).join("");
+  $("#war-kills-leaderboard").innerHTML = rows.length ? `<div class="table-wrap"><table><thead><tr>${headers}</tr></thead><tbody>${rows.map(row => `<tr><td>${row.rank}</td><td>${escapeHtml(row.name)}</td><td>${row.kills.toLocaleString()}</td><td>${row.deaths.toLocaleString()}</td><td>${row.kd ?? "—"}</td><td>${row.matches}</td><td>${row.kills_per_match}</td></tr>`).join("")}</tbody></table></div>` : emptyState("No 7DR player stats imported yet. Match-specific stats links are required in the War Diary.");
 }
+
+$("#war-kills-leaderboard").addEventListener("click", event => {
+  const button = event.target.closest("button[data-war-sort]");
+  if (!button) return;
+  const key = button.dataset.warSort;
+  if (!WAR_LEADERBOARD_COLUMNS.some(([column]) => column === key)) return;
+  warLeaderboardSort.direction = key === warLeaderboardSort.key
+    ? warLeaderboardSort.direction === "asc" ? "desc" : "asc"
+    : ["rank", "name"].includes(key) ? "asc" : "desc";
+  warLeaderboardSort.key = key;
+  renderWarDiaryLeaderboard();
+  $("#war-kills-leaderboard").querySelector(`[data-war-sort="${key}"]`).focus({ preventScroll: true });
+});
 
 function renderHighlights() {
   const posts = state.data.highlights || [];
