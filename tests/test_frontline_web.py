@@ -735,6 +735,93 @@ def test_server_status_channel_ids_are_read_from_environment(monkeypatch) -> Non
     assert FrontlineWeb._server_status_channel_ids() == (123, 456)
 
 
+def _live_webhook(title, server_id, timestamp=None):
+    embed = SimpleNamespace(
+        title=title,
+        description=f"Currently playing: **Foy (Day)**\n0/100 Total players\n[View live server stats](https://frostbite.bifrostgaming.com/hll/leaderboards/servers/{server_id}/live)",
+        fields=[],
+    )
+    return SimpleNamespace(webhook_id=42, embeds=[embed], content="", edited_at=timestamp,
+                           created_at=datetime(2026, 10, 1, tzinfo=timezone.utc))
+
+
+def test_server_status_filters_player_records_and_finds_older_public_message() -> None:
+    records = _live_webhook("Top Players · 7th Armoured Division [PUBLIC]", "public")
+    hllv = _live_webhook("7th Armoured Division [HLLV]", "hllv")
+    public = _live_webhook("7th Armoured Division [PUBLIC]", "public")
+    captured = []
+
+    async def history(limit):
+        captured.append(limit)
+        yield records
+        yield hllv
+        for _ in range(75):
+            yield SimpleNamespace(webhook_id=42, embeds=[SimpleNamespace(title="Other announcement", description="New records!", fields=[])])
+        yield public
+
+    channel = SimpleNamespace(history=history)
+    service = FrontlineWeb(SimpleNamespace(get_channel=lambda _: channel))
+    payload = asyncio.run(service._discord_server_status_payload((123,)))
+
+    assert captured == [200]
+    assert [row["server_id"] for row in payload] == ["public", "hllv"]
+    assert all("Top Players" not in row["name"] for row in payload)
+
+
+def test_server_status_pins_and_latest_edit_win_by_server_identity() -> None:
+    fresh = _live_webhook("7DR [Public]", "public", datetime(2026, 10, 4, tzinfo=timezone.utc))
+    old = _live_webhook("Different title for same server", "public")
+    old.webhook_id = 99
+
+    async def history(limit):
+        yield old
+
+    channel = SimpleNamespace(history=history, pins=AsyncMock(return_value=[fresh]))
+    service = FrontlineWeb(SimpleNamespace(get_channel=lambda _: channel))
+    payload = asyncio.run(service._discord_server_status_payload((123,)))
+
+    assert len(payload) == 1
+    assert payload[0]["name"] == "7DR [Public]"
+    channel.pins.assert_awaited_once()
+
+
+def test_hllv_webhook_does_not_suppress_public_backend_fallback(monkeypatch) -> None:
+    service = FrontlineWeb(SimpleNamespace())
+    service._server_status_channel_ids = lambda: (123,)
+    hllv = {"name": "7DR HLLV", "source": "discord_webhook", "server_id": "hllv"}
+    service._discord_server_status_payload = AsyncMock(return_value=[hllv])
+    monkeypatch.setattr("config.hll_API_config.get_hll_backend_status", lambda _: {"server_id": "public"})
+    backend = SimpleNamespace(get_mapvote_game_state=AsyncMock(return_value={"team1": {"playerCount": 10}}))
+    client = MagicMock(return_value=backend)
+    monkeypatch.setattr("hll_API_backend.get_hll_backend_client", client)
+
+    payload = asyncio.run(service._server_status_payload())
+
+    client.assert_called_once_with("server_2")
+    assert len(payload) == 2
+    assert payload[0]["name"] == "7DR Public Server"
+    assert payload[1] == hllv
+
+
+def test_public_webhook_avoids_duplicate_api_card(monkeypatch) -> None:
+    service = FrontlineWeb(SimpleNamespace())
+    service._server_status_channel_ids = lambda: (123,)
+    public = {"name": "7th Armoured Division [Public]", "source": "discord_webhook"}
+    service._discord_server_status_payload = AsyncMock(return_value=[public])
+    client = MagicMock()
+    monkeypatch.setattr("hll_API_backend.get_hll_backend_client", client)
+
+    assert asyncio.run(service._server_status_payload()) == [public]
+    client.assert_not_called()
+
+
+def test_live_status_filter_requires_status_fields_not_just_a_webhook_title():
+    assert not FrontlineWeb._is_live_status_embed(SimpleNamespace(title="7DR [Public]", description="Infantry kills: 151", fields=[]))
+    assert FrontlineWeb._is_live_status_embed(SimpleNamespace(title="7DR", description="", fields=[
+        SimpleNamespace(name="Players", value="10/100"), SimpleNamespace(name="Current map", value="Foy"),
+    ]))
+
+
 def test_caddyfile_does_not_reopen_tunnel_origins() -> None:
     caddyfile = Path("liberationapp/Caddyfile.production").read_text(encoding="utf-8")
 

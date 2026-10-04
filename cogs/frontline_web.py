@@ -53,6 +53,7 @@ HLLV_SEARCH_WINDOW_SECONDS = 60
 HLLV_SEARCH_MAX_REQUESTS = 30
 RAT_OF_THE_WEEK_ROLE_ID = 1461087295930106020
 SERVER_STATUS_CACHE_SECONDS = 45
+SERVER_STATUS_HISTORY_LIMIT = 200
 DASHBOARD_CACHE_SECONDS = 30
 DEFAULT_SERVER_STATUS_CHANNEL_IDS = "1441751747935735878"
 HIGHLIGHTS_CHANNEL_ID = 1097913605539774485
@@ -1602,9 +1603,61 @@ class FrontlineWeb:
             "updated_at": updated_at.astimezone(timezone.utc).isoformat(),
         }
 
+    @staticmethod
+    def _live_status_server_id(embed) -> str:
+        values = [str(getattr(embed, "description", "") or "")]
+        values.extend(str(getattr(field, "value", "") or "") for field in getattr(embed, "fields", ()) or ())
+        for value in values:
+            match = re.search(r"https://[^\s)>]+/servers/([^/\s?#]+)/live\b", value, re.IGNORECASE)
+            if match:
+                return match.group(1).casefold()
+        return ""
+
+    @classmethod
+    def _is_live_status_embed(cls, embed) -> bool:
+        title = str(getattr(embed, "title", "") or getattr(getattr(embed, "author", None), "name", "") or "")
+        if re.search(r"\b(?:top\s+players|leaderboards?|high\s+scores|player\s+records)\b", title, re.IGNORECASE):
+            return False
+        values = [str(getattr(embed, "description", "") or "")]
+        for field in getattr(embed, "fields", ()) or ():
+            values.extend((str(getattr(field, "name", "") or ""), str(getattr(field, "value", "") or "")))
+        text = re.sub(r"[*_`]", "", "\n".join(values)).casefold()
+        has_players = bool(re.search(r"\b(?:players|player count|total players)\b", text))
+        has_map = bool(re.search(r"\b(?:currently playing|current map|match time remaining|time remaining)\b", text))
+        return has_players and (has_map or bool(cls._live_status_server_id(embed)))
+
+    @staticmethod
+    def _is_public_status(payload: dict[str, Any]) -> bool:
+        if re.search(r"\bpublic\b", str(payload.get("name") or ""), re.IGNORECASE):
+            return True
+        server_id = str(payload.get("server_id") or "").casefold()
+        configured_id = os.getenv("BIFROST_SERVER_ID2", "").strip().casefold()
+        return bool(server_id and configured_id and server_id == configured_id)
+
     async def _discord_server_status_payload(self, channel_ids: tuple[int, ...]) -> list[dict[str, Any]]:
-        results: list[dict[str, Any]] = []
-        seen: set[tuple[int, str]] = set()
+        results: dict[tuple[Any, ...], dict[str, Any]] = {}
+
+        def collect(message) -> None:
+            webhook_id = getattr(message, "webhook_id", None)
+            if webhook_id is None:
+                return
+            for embed in getattr(message, "embeds", ()) or ():
+                if not self._is_live_status_embed(embed):
+                    continue
+                server_id = self._live_status_server_id(embed)
+                identity = str(getattr(embed, "title", "") or getattr(getattr(embed, "author", None), "name", "") or "server-status").casefold()
+                key = ("server", server_id) if server_id else ("webhook", int(webhook_id), identity)
+                timestamp = getattr(message, "edited_at", None) or getattr(message, "created_at", None)
+                if not isinstance(timestamp, datetime):
+                    timestamp = datetime.now(timezone.utc)
+                if timestamp.tzinfo is None:
+                    timestamp = timestamp.replace(tzinfo=timezone.utc)
+                payload = self._discord_status_embed(embed, content=str(getattr(message, "content", "") or ""), updated_at=timestamp)
+                payload["server_id"] = server_id
+                previous = results.get(key)
+                if previous is None or payload["updated_at"] > previous["updated_at"]:
+                    results[key] = payload
+
         for channel_id in channel_ids:
             channel = self.bot.get_channel(channel_id)
             if channel is None:
@@ -1617,37 +1670,19 @@ class FrontlineWeb:
             if not callable(history):
                 logger.warning("Server-status Discord channel %s has no message history", channel_id)
                 continue
+            pins = getattr(channel, "pins", None)
+            if callable(pins):
+                try:
+                    for message in await pins():
+                        collect(message)
+                except Exception as exc:
+                    logger.warning("Could not read pinned server status in channel %s: %s", channel_id, exc)
             try:
-                async for message in history(limit=50):
-                    webhook_id = getattr(message, "webhook_id", None)
-                    embeds = list(getattr(message, "embeds", ()) or ())
-                    if webhook_id is None or not embeds:
-                        continue
-                    for embed in embeds:
-                        identity = str(
-                            getattr(embed, "title", "")
-                            or getattr(getattr(embed, "author", None), "name", "")
-                            or "server-status"
-                        ).casefold()
-                        key = (int(webhook_id), identity)
-                        if key in seen:
-                            continue
-                        seen.add(key)
-                        timestamp = getattr(message, "edited_at", None) or getattr(message, "created_at", None)
-                        if not isinstance(timestamp, datetime):
-                            timestamp = datetime.now(timezone.utc)
-                        results.append(
-                            self._discord_status_embed(
-                                embed,
-                                content=str(getattr(message, "content", "") or ""),
-                                updated_at=timestamp,
-                            )
-                        )
-                        if len(results) >= 8:
-                            return results
+                async for message in history(limit=SERVER_STATUS_HISTORY_LIMIT):
+                    collect(message)
             except Exception as exc:
                 logger.warning("Could not read server-status Discord channel %s: %s", channel_id, exc)
-        return results
+        return sorted(results.values(), key=lambda payload: (not self._is_public_status(payload), payload["name"]))
 
     async def _server_status_payload(self) -> list[dict[str, Any]]:
         cached_at, cached = self._server_status_cache
@@ -1660,12 +1695,13 @@ class FrontlineWeb:
                 return cached
 
             channel_ids = self._server_status_channel_ids()
+            webhook_payload = []
             if channel_ids:
-                payload = await self._discord_server_status_payload(channel_ids)
-                if payload:
-                    self._server_status_cache = (time.monotonic(), payload)
-                    return payload
-                logger.warning("No webhook status embeds were found; using configured HLL backend status")
+                webhook_payload = await self._discord_server_status_payload(channel_ids)
+                if any(self._is_public_status(payload) for payload in webhook_payload):
+                    self._server_status_cache = (time.monotonic(), webhook_payload)
+                    return webhook_payload
+                logger.info("Public server webhook status is missing; using its configured HLL backend")
 
             from config.hll_API_config import get_hll_backend_status
             from hll_API_backend import get_hll_backend_client
@@ -1697,7 +1733,7 @@ class FrontlineWeb:
             results = await asyncio.gather(
                 fetch("server_2", "7DR Public Server"),
             )
-            payload = [result for result in results if result is not None]
+            payload = [result for result in results if result is not None] + webhook_payload
             self._server_status_cache = (time.monotonic(), payload)
             return payload
 

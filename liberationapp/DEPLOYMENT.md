@@ -89,11 +89,17 @@ FRONTLINE_SERVER_STATUS_CHANNEL_IDS="123456789012345678,234567890123456789"
 ```
 
 Do not store or paste the webhook URLs. They contain secret tokens and are not
-needed: the bot reads the latest webhook-authored embeds using its existing
-Discord channel access. It requires **View Channel** and **Read Message
+needed: the bot reads live-status webhook embeds using its existing
+Discord channel access, ignoring Top Players and other records/announcement
+embeds. It checks pinned messages and the latest 200 messages in each channel;
+pin the persistent Public status message if it is older than that history window.
+Status cards for the same live-server link are deduplicated by their latest edit.
+It requires **View Channel** and **Read Message
 History** in each configured channel. Only Discord CDN/proxy images are
 accepted as website card backgrounds. If no channel is configured or no embed
 can be read, the website falls back to its read-only HLL backend status.
+If other server cards are present but Public is missing, Public is fetched
+separately using `BIFROST_SERVER_ID2`, preserving the other live-status cards.
 
 When the clan Twitch destination is known, add its HTTPS URL to show an active
 Quick Link; otherwise the dashboard displays it as TBC:
