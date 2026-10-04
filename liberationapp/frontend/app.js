@@ -1,4 +1,4 @@
-const VIEWS = new Set(["overview", "personnel", "server-status", "upcoming", "war-diary", "highlights", "statistics", "directory", "building-inspectors", "knowledge-base"]);
+const VIEWS = new Set(["overview", "personnel", "server-status", "upcoming", "war-diary", "highlights", "statistics", "all-time-leaderboard", "directory", "building-inspectors", "knowledge-base"]);
 const requestedView = location.hash.replace(/^#/, "");
 const state = { data: null, view: VIEWS.has(requestedView) ? requestedView : "overview", eventLayout: "list" };
 let gameRequestOptions = null;
@@ -118,6 +118,7 @@ function render() {
   renderTrainees();
   renderEvents();
   renderWarDiary();
+  renderWarDiaryLeaderboard();
   renderHighlights();
   renderLeaderboards();
   applyMapBackgrounds();
@@ -390,6 +391,18 @@ function resultCards(rows) {
 
 function renderWarDiary() {
   const diary = state.data.war_diary;
+  $("#war-record").textContent = `${diary.summary.wins}W · ${diary.summary.losses}L`;
+  $("#war-summary").innerHTML = `
+    <div class="stat"><strong>${diary.summary.played}</strong><small>Played</small></div>
+    <div class="stat"><strong>${diary.summary.wins}</strong><small>Wins</small></div>
+    <div class="stat"><strong>${diary.summary.losses}</strong><small>Losses</small></div>`;
+  $("#recent-results").innerHTML = resultCards(diary.recent);
+  $("#opponent-records").innerHTML = opponentTable(diary.opponents);
+  $("#map-records").innerHTML = mapTable(diary.map_sides || []);
+}
+
+function renderWarDiaryLeaderboard() {
+  const diary = state.data.war_diary;
   const board = diary.kills_leaderboard || { rows: [], recorded: 0, imported: 0 };
   $("#war-kills-coverage").textContent = `${board.imported}/${board.recorded} matches imported`;
   const gaps = [
@@ -399,14 +412,6 @@ function renderWarDiary() {
   ].filter(([count]) => count).map(([count, label]) => `${count} ${label}`);
   $("#war-kills-status").textContent = `Raw kills for 7DR-tagged players and linked clan T17 IDs. Updated automatically.${gaps.length ? ` Coverage: ${gaps.join(" · ")}.` : ""}`;
   $("#war-kills-leaderboard").innerHTML = board.rows.length ? `<div class="table-wrap"><table><thead><tr><th>Rank</th><th>Player</th><th>Kills</th><th>Deaths</th><th>K/D</th><th>Matches</th><th>Kills / match</th></tr></thead><tbody>${board.rows.map(row => `<tr><td>${row.rank}</td><td>${escapeHtml(row.name)}</td><td>${row.kills.toLocaleString()}</td><td>${row.deaths.toLocaleString()}</td><td>${row.kd ?? "—"}</td><td>${row.matches}</td><td>${row.kills_per_match}</td></tr>`).join("")}</tbody></table></div>` : emptyState("No 7DR player stats imported yet. Match-specific stats links are required in the War Diary.");
-  $("#war-record").textContent = `${diary.summary.wins}W · ${diary.summary.losses}L`;
-  $("#war-summary").innerHTML = `
-    <div class="stat"><strong>${diary.summary.played}</strong><small>Played</small></div>
-    <div class="stat"><strong>${diary.summary.wins}</strong><small>Wins</small></div>
-    <div class="stat"><strong>${diary.summary.losses}</strong><small>Losses</small></div>`;
-  $("#recent-results").innerHTML = resultCards(diary.recent);
-  $("#opponent-records").innerHTML = opponentTable(diary.opponents);
-  $("#map-records").innerHTML = mapTable(diary.map_sides || []);
 }
 
 function renderHighlights() {
