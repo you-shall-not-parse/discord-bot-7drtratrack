@@ -47,7 +47,7 @@ class MidpointApprovalTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result["appliedObjectives"][2], "TOWN CENTER")
 
-    async def test_different_variant_changes_map_waits_30_seconds_checks_then_sets_layout(self):
+    async def test_different_variant_changes_map_waits_90_seconds_checks_then_sets_layout(self):
         self.backend.get_sector_options.side_effect = [live("carentan_warfare_night"), live()]
         order = MagicMock()
         order.attach_mock(self.backend.get_sector_options, "current")
@@ -59,10 +59,10 @@ class MidpointApprovalTests(unittest.IsolatedAsyncioTestCase):
             order.attach_mock(sleep, "wait")
             await self.cog._apply_map_request(self.request)
         self.assertEqual(order.mock_calls, [
-            call.current(), call.change("carentan_warfare"), call.wait(30), call.current(),
+            call.current(), call.change("carentan_warfare"), call.wait(90), call.current(),
             call.layout("carentan_warfare", ["RANDOM", "RANDOM", "TOWN CENTER", "RANDOM", "RANDOM"]),
         ])
-        self.assertEqual(self.request["layout_not_before"], 130)
+        self.assertEqual(self.request["layout_not_before"], 190)
         self.save.assert_called_once()
 
     async def test_map_not_loaded_after_delay_does_not_apply_layout(self):
@@ -84,12 +84,12 @@ class MidpointApprovalTests(unittest.IsolatedAsyncioTestCase):
         self.backend.set_sector_layout.assert_not_awaited()
 
     async def test_retry_waits_remaining_delay_without_another_map_flip(self):
-        self.request["layout_not_before"] = 130
+        self.request["layout_not_before"] = 190
         with patch("cogs.event_map_requests.time.time", return_value=110), patch(
             "cogs.event_map_requests.asyncio.sleep", new_callable=AsyncMock
         ) as sleep:
             await self.cog._apply_map_request(self.request)
-        sleep.assert_awaited_once_with(20)
+        sleep.assert_awaited_once_with(80)
         self.backend.change_map.assert_not_awaited()
 
     async def test_variant_union_option_is_rejected_if_not_available_on_running_variant(self):

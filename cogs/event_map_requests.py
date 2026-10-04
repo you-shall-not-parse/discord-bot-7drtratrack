@@ -35,7 +35,7 @@ T17_ROLE_NAME = "131st Infantry Brigade"
 MAP_CACHE_MAX_AGE = timedelta(hours=4)
 SELECT_PAGE_SIZE = 25
 PANEL_HISTORY_LIMIT = 2
-MAP_FLIP_DELAY_SECONDS = 30
+MAP_FLIP_DELAY_SECONDS = 90
 
 PANEL_STATE_PATH = Path(data_path("event_map_request_panel.json"))
 REQUEST_STATE_PATH = Path(data_path("event_map_requests.json"))
@@ -813,7 +813,7 @@ class EventMapRequests(commands.Cog):
             if request.get("midpoint"):
                 embed.add_field(name="Midpoint (Sector 3)", value=str(request["midpoint"]), inline=True)
                 embed.add_field(
-                    name="Layout", value="Other sectors: RANDOM. A map change, if needed, is followed by a 30-second wait before applying the layout.",
+                    name="Layout", value="Other sectors: RANDOM. A map change, if needed, is followed by a 90-second wait before applying the layout.",
                     inline=False,
                 )
             embed.add_field(name="RCON name", value=f"`{request['rcon_name']}`", inline=False)

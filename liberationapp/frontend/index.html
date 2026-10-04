@@ -91,7 +91,7 @@
         <label for="game-request-kind">Request type</label>
         <select id="game-request-kind" required><option value="map">Map change</option><option value="admin_cam">Temporary admin cam</option></select>
         <label for="game-request-server">Server</label><select id="game-request-server" required></select>
-        <div id="map-request-fields"><label for="game-request-map">Map and variant</label><select id="game-request-map" required></select><div id="midpoint-request-fields" hidden><label for="game-request-midpoint">Midpoint (Sector 3)</label><select id="game-request-midpoint"></select><p class="muted-copy">Choosing a midpoint makes the other four sectors random. If needed, the server changes map and waits 30 seconds before applying the layout.</p></div></div>
+        <div id="map-request-fields"><label for="game-request-map">Map and variant</label><select id="game-request-map" required></select><div id="midpoint-request-fields" hidden><label for="game-request-midpoint">Midpoint (Sector 3)</label><select id="game-request-midpoint"></select><p class="muted-copy">Choosing a midpoint makes the other four sectors random. If needed, the server changes map and waits 90 seconds before applying the layout.</p></div></div>
         <div id="admin-cam-request-fields" hidden><label for="game-request-duration">Duration in hours</label><input id="game-request-duration" type="number" min="1" max="168" value="24"></div>
         <button id="game-request-submit" type="submit">Send for approval</button>
       </form>
