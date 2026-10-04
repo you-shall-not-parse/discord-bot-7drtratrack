@@ -4,6 +4,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 from cogs.frontline_web import (
     ACTIVE_SESSION_WINDOW_SECONDS,
@@ -684,6 +685,23 @@ def test_server_status_normalises_bifrost_data_without_exposing_credentials() ->
     assert payload["players"] == 78
     assert payload["time_remaining_seconds"] == 1800
     assert "token" not in payload
+
+
+def test_server_status_fallback_queries_only_public(monkeypatch) -> None:
+    service = FrontlineWeb(SimpleNamespace())
+    monkeypatch.setattr(service, "_server_status_channel_ids", lambda: ())
+    status = MagicMock(return_value={"server_id": "public-server"})
+    backend = SimpleNamespace(get_mapvote_game_state=AsyncMock(return_value={"team1": {"playerCount": 3}}))
+    client = MagicMock(return_value=backend)
+    monkeypatch.setattr("config.hll_API_config.get_hll_backend_status", status)
+    monkeypatch.setattr("hll_API_backend.get_hll_backend_client", client)
+
+    payload = asyncio.run(service._server_status_payload())
+
+    status.assert_called_once_with("server_2")
+    client.assert_called_once_with("server_2")
+    assert len(payload) == 1
+    assert payload[0]["name"] == "7DR Public Server"
 
 
 def test_discord_server_status_embed_keeps_fields_and_only_discord_images() -> None:

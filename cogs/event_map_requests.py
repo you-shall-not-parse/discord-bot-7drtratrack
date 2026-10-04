@@ -21,13 +21,12 @@ LOGGER = logging.getLogger("EventMapRequests")
 REQUEST_CHANNEL_ID = 1530939155067174933
 APPROVAL_CHANNEL_ID = 1279831955935854712
 MAP_APPROVER_ROLE_ID = 1279832920479109160
-EVENTS_BACKEND_NAME = "events"
+PUBLIC_BACKEND_NAME = "server_2"
 MAP_SERVER_OPTIONS = {
-    EVENTS_BACKEND_NAME: "Events",
+    PUBLIC_BACKEND_NAME: "Public",
     "hllv": "HLLV",
 }
 ADMIN_CAM_SERVER_OPTIONS = {
-    "main": "Events",
     "server_2": "Public",
     "hllv": "HLLV",
 }
@@ -38,7 +37,7 @@ PANEL_HISTORY_LIMIT = 2
 
 PANEL_STATE_PATH = Path(data_path("event_map_request_panel.json"))
 REQUEST_STATE_PATH = Path(data_path("event_map_requests.json"))
-MAP_CACHE_PATH = Path(data_path("event_map_catalogue.json"))
+MAP_CACHE_PATH = Path(data_path("public_map_catalogue.json"))
 HLLV_MAP_CACHE_PATH = Path(data_path("hllv_map_catalogue.json"))
 
 
@@ -138,7 +137,7 @@ class EventMapPanelView(discord.ui.View):
 class AdminCamServerSelect(discord.ui.Select):
     def __init__(self) -> None:
         super().__init__(
-            placeholder="Choose Events, Public, or HLLV…",
+            placeholder="Choose Public or HLLV…",
             min_values=1,
             max_values=1,
             options=[
@@ -167,7 +166,7 @@ class AdminCamServerView(discord.ui.View):
 class MapServerSelect(discord.ui.Select):
     def __init__(self) -> None:
         super().__init__(
-            placeholder="Choose Events or HLLV...",
+            placeholder="Choose Public or HLLV...",
             min_values=1,
             max_values=1,
             options=[
@@ -519,7 +518,16 @@ class EventMapRequests(commands.Cog):
         self._requests = _read_json(REQUEST_STATE_PATH)
         recovered_request = False
         for request in self._requests.values():
-            if isinstance(request, dict) and request.get("status") == "processing":
+            if not isinstance(request, dict):
+                continue
+            # Retire old approvals instead of applying them to a different server.
+            if request.get("status") in {"pending", "processing"} and (
+                str(request.get("server_name") or "main") in {"main", "events"}
+            ):
+                request["status"] = "cancelled"
+                request["resolved_at"] = datetime.now(timezone.utc).isoformat()
+                recovered_request = True
+            if request.get("status") == "processing":
                 request["status"] = "pending"
                 recovered_request = True
         if recovered_request:
@@ -570,7 +578,7 @@ class EventMapRequests(commands.Cog):
             if str(request.get("request_type") or "map") == "admin_cam":
                 duration = int(request.get("duration_hours") or 0)
                 server_label = discord.utils.escape_markdown(
-                    str(request.get("server_label") or "Events")
+                    str(request.get("server_label") or "Public")
                 )
                 if status == "approved":
                     expires_at = int(float(request.get("expires_at") or 0))
@@ -590,7 +598,7 @@ class EventMapRequests(commands.Cog):
                 )
                 variant = discord.utils.escape_markdown(_variant_label(request))
                 server_label = discord.utils.escape_markdown(
-                    str(request.get("server_label") or "Events")
+                    str(request.get("server_label") or "Public")
                 )
                 if status == "approved":
                     decision = (
@@ -610,8 +618,8 @@ class EventMapRequests(commands.Cog):
             title="7DR Map & Admin Cam Requests",
             colour=discord.Colour.blue(),
             description=(
-                "Use this panel to request a scouting map on the 7DR **Events** or **HLLV** "
-                "server, or temporary admin cam access on **Events**, **Public**, or **HLLV**.\n\n"
+                "Use this panel to request a scouting map on the 7DR **Public** or **HLLV** "
+                "server, or temporary admin cam access on **Public** or **HLLV**.\n\n"
                 "For a map request, choose the map, game mode, and time-of-day variant. "
                 "For admin cam, choose the server and how long you need access.\n\n"
                 "HLLV admin cam uses your HLLV EOS ID, resolved the same way as `/t17admincam`; "
@@ -707,7 +715,7 @@ class EventMapRequests(commands.Cog):
                 "denied": "❌ Admin Cam Access Request Denied",
             }
         else:
-            server_label = str(request.get("server_label") or "Events")
+            server_label = str(request.get("server_label") or "Public")
             titles = {
                 "pending": f"🗺️ {server_label} Map Change Request",
                 "processing": f"⏳ {server_label} Map Change Request",
@@ -728,7 +736,7 @@ class EventMapRequests(commands.Cog):
             )
             embed.add_field(
                 name="Server",
-                value=str(request.get("server_label") or "Events"),
+                value=str(request.get("server_label") or "Public"),
                 inline=True,
             )
             embed.add_field(
@@ -746,7 +754,7 @@ class EventMapRequests(commands.Cog):
         else:
             embed.add_field(
                 name="Server",
-                value=str(request.get("server_label") or "Events"),
+                value=str(request.get("server_label") or "Public"),
                 inline=True,
             )
             embed.add_field(name="Map", value=str(request["friendly_name"]), inline=True)
@@ -773,12 +781,12 @@ class EventMapRequests(commands.Cog):
             embed.set_thumbnail(url=image_url)
         return embed
 
-    def _backend(self, server_name: str = EVENTS_BACKEND_NAME):
+    def _backend(self, server_name: str = PUBLIC_BACKEND_NAME):
         return get_hll_backend_client(server_name)
 
     @staticmethod
     def _map_cache_path(server_name: str) -> Path:
-        if server_name == EVENTS_BACKEND_NAME:
+        if server_name == PUBLIC_BACKEND_NAME:
             return MAP_CACHE_PATH
         if server_name == "hllv":
             return HLLV_MAP_CACHE_PATH
@@ -974,7 +982,7 @@ class EventMapRequests(commands.Cog):
                 str(request.get("status")) in {"pending", "processing"}
                 and int(request.get("requester_id") or 0) == interaction.user.id
                 and str(request.get("request_type") or "map") == "map"
-                and str(request.get("server_name") or EVENTS_BACKEND_NAME) == server_name
+                and str(request.get("server_name") or PUBLIC_BACKEND_NAME) == server_name
                 for request in self._requests.values()
                 if isinstance(request, dict)
             ):
@@ -1105,7 +1113,7 @@ class EventMapRequests(commands.Cog):
                 str(request.get("status")) in {"pending", "processing"}
                 and int(request.get("requester_id") or 0) == member.id
                 and str(request.get("request_type") or "map") == "admin_cam"
-                and str(request.get("server_name") or "main") == server_name
+                and str(request.get("server_name") or PUBLIC_BACKEND_NAME) == server_name
                 for request in self._requests.values()
                 if isinstance(request, dict)
             ):
@@ -1173,8 +1181,8 @@ class EventMapRequests(commands.Cog):
             member_display_name=str(request.get("requester_display_name") or request["requester_id"]),
             player_id=str(request["player_id"]),
             description=str(request.get("description") or request["player_id"]),
-            server_name=str(request.get("server_name") or "main"),
-            server_label=str(request.get("server_label") or "Events"),
+            server_name=str(request.get("server_name") or PUBLIC_BACKEND_NAME),
+            server_label=str(request.get("server_label") or "Public"),
             source=str(request.get("source") or "stored_mapping"),
             queries=[
                 str(query)
@@ -1235,7 +1243,7 @@ class EventMapRequests(commands.Cog):
                 if request_type == "admin_cam":
                     result = await self._grant_admin_cam_request(request, interaction.user)
                 else:
-                    server_name = str(request.get("server_name") or EVENTS_BACKEND_NAME)
+                    server_name = str(request.get("server_name") or PUBLIC_BACKEND_NAME)
                     if server_name not in MAP_SERVER_OPTIONS:
                         raise HLLBackendError(f"Unknown map request server: {server_name}")
                     result = await self._backend(server_name).change_map(
@@ -1256,7 +1264,7 @@ class EventMapRequests(commands.Cog):
                             ensure_ascii=False,
                         )
                 LOGGER.exception(
-                    "Events request approval failed request_id=%s request_type=%s target=%s: %s",
+                    "Server request approval failed request_id=%s request_type=%s target=%s: %s",
                     message_key,
                     request_type,
                     request.get("rcon_name") or request.get("player_id"),

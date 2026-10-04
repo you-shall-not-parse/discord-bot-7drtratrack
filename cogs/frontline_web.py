@@ -1683,8 +1683,7 @@ class FrontlineWeb:
                     }
 
             results = await asyncio.gather(
-                fetch("main", "7DR Public Server 1"),
-                fetch("server_2", "7DR Public Server 2"),
+                fetch("server_2", "7DR Public Server"),
             )
             payload = [result for result in results if result is not None]
             self._server_status_cache = (time.monotonic(), payload)

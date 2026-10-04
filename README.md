@@ -112,9 +112,12 @@ is included in the requirements. The disabled legacy LoreCogV2 uses `pdf2image`
 and additionally needs the Ubuntu `poppler-utils` package if enabled.
 
 Features that manage HLL servers through Bifrost also require
-`BIFROST_CLIENT_ID` and `BIFROST_CLIENT_SECRET`. The events-server map request
-workflow always targets Bifrost server
-`d688d156-773e-47ed-94cf-94c407b41ea3`.
+`BIFROST_CLIENT_ID` and `BIFROST_CLIENT_SECRET`. Public is the default HLL
+server and uses `BIFROST_SERVER_ID2` for map requests, admin cam, and shared
+player lookups. HLLV keeps its separate `BIFROST_HLLV_SERVER_ID` (or
+`BIFROST_SERVER_ID3`) configuration. Events is retired and is no longer a
+selectable backend. Pending Events requests are cancelled at startup; old
+Events admin-cam timers are discarded without changing Public or HLLV grants.
 
 The extension list in `main.py` is the source of truth. Extensions are loaded
 independently, so a failed optional feature is logged without preventing healthy

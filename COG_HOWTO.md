@@ -139,13 +139,13 @@ Rules and notes: Treat it as the public source for upcoming events. If event tit
 
 ## `event_map_requests.py`
 
-Overview: Lets members request an immediate map change on the HLL events server through a staff approval workflow.
+Overview: Lets members request an immediate map change on the HLL public server through a staff approval workflow.
 
 Slash commands: none.
 
-How to use: Members use the persistent panel in the configured request channel to request a map or temporary admin cam access. Map requests select Events or HLLV, then page through that game's base maps and exact mode and time-of-day variants. Admin cam requests select Events, Public, or HLLV and ask for a duration from 1 to 168 hours. Staff review either request in the approval channel and press **Approve Request** or **Deny**.
+How to use: Members use the persistent panel in the configured request channel to request a map or temporary admin cam access. Map requests select Public or HLLV, then page through that game's base maps and exact mode and time-of-day variants. Admin cam requests select Public or HLLV and ask for a duration from 1 to 168 hours. Staff review either request in the approval channel and press **Approve Request** or **Deny**.
 
-Rules and notes: Map approval immediately calls Bifrost's `guildChangeMap` mutation, so staff should confirm the requested variant before approving. Events map changes target Bifrost server `d688d156-773e-47ed-94cf-94c407b41ea3`; HLLV map changes target the configured `BIFROST_HLLV_SERVER_ID`. Admin cam approval grants temporary `Spectator` access on Events (`main`), Public (`server_2`), or HLLV (`hllv`) and schedules its automatic removal using `/t17admincam`'s existing lifecycle. HLLV admin cam uses the same separate EOS-ID cache/live-player resolution as the slash command; the first lookup requires the member to be connected to HLLV with an in-game name matching a Discord name. Approvers must be administrators, have Manage Server, or hold the configured map-admin role. The request-channel panel shows the two most recent approvals or rejections and includes a button for members to view their stored HLL T17 ID, hellor.pro profile, and HLL Records profile. Each game's Bifrost map catalogue is cached separately for at least four hours to respect its rate limit.
+Rules and notes: Map approval immediately calls Bifrost's `guildChangeMap` mutation, so staff should confirm the requested variant before approving. Public map changes target the configured `BIFROST_SERVER_ID2`; HLLV map changes target the configured `BIFROST_HLLV_SERVER_ID`. Admin cam approval grants temporary `Spectator` access on Public (`server_2`) or HLLV (`hllv`) and schedules its automatic removal using `/t17admincam`'s existing lifecycle. HLLV admin cam uses the same separate EOS-ID cache/live-player resolution as the slash command; the first lookup requires the member to be connected to HLLV with an in-game name matching a Discord name. Approvers must be administrators, have Manage Server, or hold the configured map-admin role. The request-channel panel shows the two most recent approvals or rejections and includes a button for members to view their stored HLL T17 ID, hellor.pro profile, and HLL Records profile. Each game's Bifrost map catalogue is cached separately for at least four hours to respect its rate limit.
 
 ## `contentfeed.py`
 
@@ -280,7 +280,7 @@ nickname, username, or user ID. That selection lasts for the current website
 login and supplies the member identity for map and admin-cam requests. It is
 self-selected, not a verified Discord login; staff approval is still required.
 Administrators can change its status from `/admin`. The **Server status** page
-also exposes Events/HLLV map and Events/Public/HLLV admin-cam requests through
+also exposes Public/HLLV map and admin-cam requests through
 the existing Discord staff approval workflow. The **Knowledge base** searches
 the articles in `liberationapp/knowledge_base.json`; edit that JSON file to add
 or maintain clan-authored procedures without changing Python or JavaScript.
@@ -338,7 +338,7 @@ Overview: Grants temporary Bifrost Spectator/admin-cam access using a member's s
 
 Slash commands: `/t17admincam`, `/hll_backend_status`.
 
-How to use: Run `/t17admincam`, select the Discord member, choose Events, Public, or HLLV server, and enter a duration from 1 to 168 hours.
+How to use: Run `/t17admincam`, select the Discord member, choose Public or HLLV server, and enter a duration from 1 to 168 hours.
 
 Rules and notes: Set `BIFROST_HLLV_SERVER_ID` to the Vietnam server's Bifrost server ID before selecting HLLV server. `BIFROST_SERVER_ID3` is accepted as a legacy fallback. The HLLV target uses Bifrost game type `HLLV` and resolves its separate EOS platform ID from the live HLLV player roster. On the first lookup, the player must be connected and their in-game name must match their Discord display name, username, or global name. Successful EOS mappings are saved in `data/hllv_platform_ids.json`, so later grants work while the player is offline. HLL T17 IDs and HLLV EOS IDs are never stored in the same mapping. Grants and scheduled removals are tracked separately for each server.
 

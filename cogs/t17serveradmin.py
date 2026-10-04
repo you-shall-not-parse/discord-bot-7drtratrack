@@ -29,7 +29,6 @@ HLLV_PLATFORM_MAP_FILE = data_path("hllv_platform_ids.json")
 REMOVAL_RETRY_SECONDS = 300
 HLLV_SERVER_NAME = "hllv"
 ADMIN_CAM_SERVER_CHOICES = [
-    app_commands.Choice(name="Events", value="main"),
     app_commands.Choice(name="Public", value="server_2"),
     app_commands.Choice(name="HLLV server", value="hllv"),
 ]
@@ -55,7 +54,7 @@ class T17ServerAdmin(commands.Cog, name="[API] T17ServerAdmin"):
             task.cancel()
         self._removal_tasks.clear()
 
-    def _grant_key(self, guild_id: int, user_id: int, server_name: str = "main") -> str:
+    def _grant_key(self, guild_id: int, user_id: int, server_name: str = "server_2") -> str:
         return f"{guild_id}:{user_id}:{server_name}"
 
     def _load_state(self) -> dict[str, Any]:
@@ -153,7 +152,7 @@ class T17ServerAdmin(commands.Cog, name="[API] T17ServerAdmin"):
             self._grant_key(
                 int(grant["guild_id"]),
                 int(grant["user_id"]),
-                str(grant.get("server_name") or "main"),
+                str(grant.get("server_name") or "server_2"),
             )
         ] = grant
         self._save_state(state)
@@ -183,6 +182,11 @@ class T17ServerAdmin(commands.Cog, name="[API] T17ServerAdmin"):
         state = self._load_state()
         for grant_key, grant in state.get("grants", {}).items():
             if not isinstance(grant, dict):
+                continue
+            # Events grants belong to a retired server. Avoid retrying them
+            # or revoking an unrelated Public grant.
+            if str(grant.get("server_name") or "main") in {"main", "events"}:
+                self._remove_grant_record(grant_key)
                 continue
             self._schedule_removal(grant_key)
 

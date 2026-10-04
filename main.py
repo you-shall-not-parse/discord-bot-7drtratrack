@@ -80,7 +80,7 @@ def validate_runtime_configuration() -> None:
         if not status.get("client_secret_present"):
             missing.append(str(status.get("client_secret_env") or "BIFROST_CLIENT_SECRET"))
         if not status.get("server_id"):
-            missing.append("BIFROST_SERVER_ID")
+            missing.append(str(status.get("server_id_env") or "BIFROST_SERVER_ID"))
     elif provider == "crcon":
         if not status.get("panel_url"):
             missing.append("CRCON_PANEL_URL")

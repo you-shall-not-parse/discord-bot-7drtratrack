@@ -6,7 +6,7 @@ from typing import Any
 
 # Set these in code to choose which backend/server this bot should use.
 HLL_BACKEND_PROVIDER = "bifrost"
-HLL_BACKEND_DEFAULT_SERVER = "main"
+HLL_BACKEND_DEFAULT_SERVER = "server_2"
 
 BIFROST_OAUTH_URL = os.getenv("BIFROST_OAUTH_URL", "https://api.dev.bifrostgaming.com/v1/oauth/token").strip()
 BIFROST_GRAPHQL_URL = os.getenv("BIFROST_GRAPHQL_URL", "https://api.dev.bifrostgaming.com/v1/graphql").strip()
@@ -14,24 +14,17 @@ BIFROST_CLIENT_ID_ENV = "BIFROST_CLIENT_ID"
 BIFROST_CLIENT_SECRET_ENV = "BIFROST_CLIENT_SECRET"
 
 HLL_BACKEND_SERVERS: dict[str, dict[str, Any]] = {
-    "main": {
+    "server_2": {
         "crcon": {
             "panel_url": os.getenv("CRCON_PANEL_URL", "https://7dr.hlladmin.com/api/").strip(),
             "api_key_env": "CRCON_API_KEY",
         },
         "bifrost": {
-            "server_id": os.getenv("BIFROST_SERVER_ID1", os.getenv("BIFROST_SERVER_ID", "")).strip(),
+            "server_id": os.getenv("BIFROST_SERVER_ID2", "").strip(),
+            "server_id_env": "BIFROST_SERVER_ID2",
             "game_type": os.getenv("BIFROST_GAME_TYPE", "HLL").strip() or "HLL",
-            # Events admin cam uses this alias. Use the same Guild OAuth
-            # endpoints as Events map requests, regardless of legacy globals.
             "oauth_url": "https://api.dev.bifrostgaming.com/v1/oauth/token",
             "graphql_url": "https://api.dev.bifrostgaming.com/v1/graphql",
-        },
-    },
-    "server_2": {
-        "bifrost": {
-            "server_id": os.getenv("BIFROST_SERVER_ID2", "").strip(),
-            "game_type": os.getenv("BIFROST_GAME_TYPE", "HLL").strip() or "HLL",
         },
     },
     "hllv": {
@@ -44,14 +37,6 @@ HLL_BACKEND_SERVERS: dict[str, dict[str, Any]] = {
             "game_type": "HLLV",
             # Keep HLLV on the Guild OAuth v1 endpoints even when an older
             # deployment still has legacy global Bifrost URLs in .env.
-            "oauth_url": "https://api.dev.bifrostgaming.com/v1/oauth/token",
-            "graphql_url": "https://api.dev.bifrostgaming.com/v1/graphql",
-        },
-    },
-    "events": {
-        "bifrost": {
-            "server_id": "d688d156-773e-47ed-94cf-94c407b41ea3",
-            "game_type": os.getenv("BIFROST_GAME_TYPE", "HLL").strip() or "HLL",
             "oauth_url": "https://api.dev.bifrostgaming.com/v1/oauth/token",
             "graphql_url": "https://api.dev.bifrostgaming.com/v1/graphql",
         },
@@ -111,6 +96,7 @@ def get_hll_backend_status(server_name: str | None = None) -> dict[str, Any]:
                 "client_id_present": bool(client_id),
                 "client_secret_present": bool(client_secret),
                 "server_id": str(bifrost_config.get("server_id") or "").strip(),
+                "server_id_env": str(bifrost_config.get("server_id_env") or "BIFROST_SERVER_ID"),
                 "game_type": str(bifrost_config.get("game_type") or "HLL").strip() or "HLL",
             }
         )
