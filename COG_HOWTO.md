@@ -316,6 +316,10 @@ Rules and notes: This cog has important nuance. Short LOAs are one-off, daily, o
 
 ## `wardiary.py`
 
+The War Diary tab on the website and `/wardiary_leaderboard [page]` show the 7DR kills leaderboard. It adds raw kills (not kills plus assists), deaths, match counts, K/D, and kills per match from completed CRCON or Bifrost match exports. Players are grouped by their stable game player ID and included when a linked match identifies them with a 7DR tag or their T17 ID is in the bot's stored `131st Infantry Brigade` mapping. An untagged, unmapped player is omitted until their ID can be identified. The importer checks every five minutes, caches successful exports for a day, and retries failed exports after 15 minutes. It uses match-specific stats links saved in the diary; generic server pages cannot supply a match export. Missing, unsupported, duplicated, failed, and stale links are counted visibly. A link assigned to multiple entries is excluded until corrected. Replacing a link or deleting an entry removes its old contribution immediately; replacement stats appear after import. The cache lives in `data/wardiary_stats_state.json` (or under `BOT_DATA_DIR`).
+
+Use `/wardiary_edit` inside a result thread, or provide its forum-post link or thread ID as `entry`. Supply only the fields to correct: `opponent`, `match_date` (DD/MM/YY), `map_name`, `midpoint`, `result` (7DR score first), `match_type`, `played_as`, or `stats_link`. Set `clear_stats_link: true` to remove a link. Example: `/wardiary_edit entry:<post link> result:2-3 played_as:Axis`. Administrators, members with Manage Server, or members with a configured War Diary role can edit. Corrections update the saved entry, result-post text, image, title, map tag, faction sides, and exports while preserving the original submitter. A linked review thread is renamed to match the correction. The bot needs Manage Threads and access to edit its original result message. Archived or locked result threads are temporarily opened and restored after editing.
+
 Overview: Keeps a cleaner record of wars, events, or match history.
 
 Slash commands: `/wardiary_export`, `/transcript`.

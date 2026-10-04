@@ -135,6 +135,7 @@ features from starting. Slash commands are synchronized once during startup.
 - Roster, signups, trainee tracking, and roll calls
 - Event displays, content posting, greeting flows, and embeds
 - HLL scoreboards and the `hellor.pro` leaderboard
+- War Diary kills leaderboard on the website and `/wardiary_leaderboard`, with staff corrections through `/wardiary_edit`
 - LOA, birthdays, certificates, and other clan support workflows
 
 ## Loaded Cogs

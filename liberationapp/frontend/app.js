@@ -390,6 +390,15 @@ function resultCards(rows) {
 
 function renderWarDiary() {
   const diary = state.data.war_diary;
+  const board = diary.kills_leaderboard || { rows: [], recorded: 0, imported: 0 };
+  $("#war-kills-coverage").textContent = `${board.imported}/${board.recorded} matches imported`;
+  const gaps = [
+    [board.missing_links, "missing links"], [board.unsupported_links, "unsupported links"],
+    [board.duplicate_links, "duplicate links"], [board.failed, "failed imports"],
+    [board.pending, "awaiting import"], [board.stale, "using older stats"]
+  ].filter(([count]) => count).map(([count, label]) => `${count} ${label}`);
+  $("#war-kills-status").textContent = `Raw kills for 7DR-tagged players and linked clan T17 IDs. Updated automatically.${gaps.length ? ` Coverage: ${gaps.join(" · ")}.` : ""}`;
+  $("#war-kills-leaderboard").innerHTML = board.rows.length ? `<div class="table-wrap"><table><thead><tr><th>Rank</th><th>Player</th><th>Kills</th><th>Deaths</th><th>K/D</th><th>Matches</th><th>Kills / match</th></tr></thead><tbody>${board.rows.map(row => `<tr><td>${row.rank}</td><td>${escapeHtml(row.name)}</td><td>${row.kills.toLocaleString()}</td><td>${row.deaths.toLocaleString()}</td><td>${row.kd ?? "—"}</td><td>${row.matches}</td><td>${row.kills_per_match}</td></tr>`).join("")}</tbody></table></div>` : emptyState("No 7DR player stats imported yet. Match-specific stats links are required in the War Diary.");
   $("#war-record").textContent = `${diary.summary.wins}W · ${diary.summary.losses}L`;
   $("#war-summary").innerHTML = `
     <div class="stat"><strong>${diary.summary.played}</strong><small>Played</small></div>

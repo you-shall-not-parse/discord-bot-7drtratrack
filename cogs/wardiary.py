@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 from state_io import atomic_json_dump
 
 from config.common import CLAN_NAMES_PATH, SCOREBOARD_FONT_PATH
@@ -54,6 +54,7 @@ CLAN_CONFIG_PATH: str = CLAN_NAMES_PATH
 
 # Persistent state for the submission post.
 STATE_PATH: str = data_path("wardiary_state.json")
+STATS_STATE_PATH: str = data_path("wardiary_stats_state.json")
 MAP_IMAGES_DIR: str = data_path("map_images")
 
 # Optional font/background assets for the generated result image.
@@ -350,6 +351,40 @@ def _can_submit_member(member: discord.Member) -> bool:
 		return True
 	member_role_ids = {role.id for role in member.roles}
 	return any(role_id in member_role_ids for role_id in ALLOWED_ROLE_IDS)
+
+
+def _can_edit_member(member: discord.Member) -> bool:
+	return member.guild_permissions.administrator or member.guild_permissions.manage_guild or _can_submit_member(member)
+
+
+def _corrected_record(record: dict[str, Any], changes: dict[str, Any]) -> dict[str, Any]:
+	updated = {**record, **changes}
+	updated["match_date"] = _normalize_match_date(str(updated.get("match_date") or ""))
+	opponent = " ".join(str(updated.get("opponent_clan_name") or "").split())
+	if not opponent or len(opponent) > 80 or opponent.casefold() == HOME_CLAN_NAME.casefold():
+		raise ValueError("Choose an opposing clan name of 1–80 characters.")
+	updated["opponent_clan_name"] = opponent
+	result = _normalize_recorded_result(updated.get("result"))
+	if result is None or tuple(map(int, result.split("-"))) not in _score_options():
+		raise ValueError("Result must be a valid 7DR score, e.g. 3-2 or 0-5.")
+	updated["result"] = result
+	left, right = map(int, result.split("-"))
+	updated["is_7dr_win"] = left > right
+	if updated.get("map_name") not in WAR_DIARY_MAP_OPTIONS:
+		raise ValueError("Choose a listed War Diary map, or Other.")
+	if updated.get("match_type") not in MATCH_TYPE_OPTIONS:
+		raise ValueError("Match type must be Competitive or Friendly.")
+	if updated.get("played_as") not in PLAYED_AS_OPTIONS:
+		raise ValueError("Played as must be Axis, Allies, British, or Canadians.")
+	midpoint = " ".join(str(updated.get("midpoint_name") or "").split())
+	if not midpoint or len(midpoint) > 100:
+		raise ValueError("Provide a midpoint of 1–100 characters.")
+	updated["midpoint_name"] = midpoint
+	updated["stats_link"] = _normalize_stats_link(str(updated.get("stats_link") or ""))
+	home = str(updated.get("clan_name") or HOME_CLAN_NAME)
+	updated["allies_clan"] = opponent if updated["played_as"] == "Axis" else home
+	updated["axis_clan"] = home if updated["played_as"] == "Axis" else opponent
+	return updated
 
 
 class OpponentSelect(discord.ui.Select):
@@ -783,6 +818,13 @@ class WarDiaryCog(commands.Cog):
 		self._match_lock = asyncio.Lock()
 		self._background_cache: dict[str, bytes] = {}
 		self._missing_background_sources: set[str] = set()
+		try:
+			with open(STATS_STATE_PATH, encoding="utf-8") as handle:
+				self._stats_imports = json.load(handle)
+			if not isinstance(self._stats_imports, dict):
+				self._stats_imports = {}
+		except (OSError, ValueError):
+			self._stats_imports = {}
 
 	def _load_state(self) -> dict[str, Any]:
 		try:
@@ -795,12 +837,14 @@ class WarDiaryCog(commands.Cog):
 			log.warning("Failed to load war diary state; starting fresh.", exc_info=True)
 			return {}
 
-	def _save_state(self) -> None:
+	def _save_state(self) -> bool:
 		try:
 			self._state["updated_at"] = _utcnow().isoformat()
 			atomic_json_dump(STATE_PATH, self._state)
+			return True
 		except Exception:
 			log.warning("Failed to save war diary state.", exc_info=True)
+			return False
 
 	def _get_match_records(self) -> list[dict[str, Any]]:
 		records = self._state.get("match_threads")
@@ -859,6 +903,7 @@ class WarDiaryCog(commands.Cog):
 		is_7dr_win: bool,
 		submitter_score: int,
 		opponent_score: int,
+		match_type: str = "Friendly",
 	) -> None:
 		records = self._get_match_records()
 		records[:] = [
@@ -885,6 +930,7 @@ class WarDiaryCog(commands.Cog):
 				"axis_clan": axis_clan,
 				"is_7dr_win": is_7dr_win,
 				"result": f"{submitter_score}-{opponent_score}",
+				"match_type": match_type,
 			}
 		)
 
@@ -894,6 +940,7 @@ class WarDiaryCog(commands.Cog):
 			"map_name" in record
 			and "stats_link" in record
 			and _normalize_recorded_result(record.get("result")) is not None
+			and record.get("match_type") and record.get("played_as")
 		):
 			return False
 
@@ -929,6 +976,10 @@ class WarDiaryCog(commands.Cog):
 			midpoint_match = re.search(r"(?im)^\*\*Midpoint:\*\*\s*(.+?)\s*$", description)
 			if midpoint_match:
 				midpoint_name = midpoint_match.group(1).strip()
+			for key, label in (("match_type", "Match type"), ("played_as", "Played as")):
+				match = re.search(rf"(?im)^\*\*{label}:\*\*\s*(.+?)\s*$", description)
+				if match:
+					record.setdefault(key, match.group(1).strip())
 			for field in embed.fields:
 				if field.name.casefold() != "stats link":
 					continue
@@ -1298,6 +1349,71 @@ class WarDiaryCog(commands.Cog):
 
 	async def cog_load(self) -> None:
 		self.bot.add_view(WarDiaryMainView(self))
+		self.import_match_stats.start()
+
+	async def cog_unload(self) -> None:
+		self.import_match_stats.cancel()
+
+	@tasks.loop(minutes=5)
+	async def import_match_stats(self) -> None:
+		import aiohttp
+		import ssl
+		from war_diary_stats import PublicResolver, fetch_export, sources
+		try:
+			async with self._match_lock:
+				changed = False
+				for record in self._get_match_records():
+					changed = await self._hydrate_export_record(record) or changed
+				if changed:
+					self._save_state()
+				linked = sources(self._get_match_records())
+			tls = ssl.create_default_context()
+			tls.set_alpn_protocols(["http/1.1"])
+			tls.post_handshake_auth = True
+			async with aiohttp.ClientSession(
+				connector=aiohttp.TCPConnector(resolver=PublicResolver(), ssl=tls),
+				timeout=aiohttp.ClientTimeout(total=30), trust_env=False,
+				headers={"User-Agent": CRCON_USER_AGENT},
+			) as session:
+				for source, records in linked.items():
+					if len(records) != 1:
+						continue
+					previous = self._stats_imports.get(source, {})
+					try:
+						age = (_utcnow() - datetime.fromisoformat(previous["attempted_at"])).total_seconds()
+						if age < (900 if previous.get("error") else 86400):
+							continue
+					except (KeyError, ValueError, TypeError):
+						pass
+					now = _utcnow().isoformat()
+					try:
+						rows = await fetch_export(session, source)
+						self._stats_imports[source] = {"rows": rows, "updated_at": now, "attempted_at": now, "error": None}
+					except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, KeyError, TypeError) as exc:
+						self._stats_imports[source] = {**previous, "attempted_at": now, "error": str(exc)[:200]}
+						log.warning("War Diary stats import failed for %s: %s", source, exc)
+					atomic_json_dump(STATS_STATE_PATH, self._stats_imports)
+		except Exception:
+			log.exception("War Diary stats refresh failed; will retry")
+
+	@import_match_stats.before_loop
+	async def before_import_match_stats(self) -> None:
+		await self.bot.wait_until_ready()
+
+	def get_kills_leaderboard(self) -> dict[str, Any]:
+		from clan_t17_lookup import CLAN_T17_MAP_FILE
+		from config import MAIN_GUILD_ID
+		from war_diary_stats import leaderboard
+		known_ids = set()
+		try:
+			with open(CLAN_T17_MAP_FILE, encoding="utf-8") as handle:
+				mapping = json.load(handle)
+			for member in mapping.get("resolved_members", {}).values():
+				if member.get("guild_id") == MAIN_GUILD_ID and member.get("role_name") == "131st Infantry Brigade" and member.get("t17_id"):
+					known_ids.add(str(member["t17_id"]))
+		except (OSError, ValueError, AttributeError):
+			pass
+		return leaderboard(self._get_match_records(), getattr(self, "_stats_imports", {}), known_ids)
 
 	@commands.Cog.listener()
 	async def on_ready(self) -> None:
@@ -1764,6 +1880,151 @@ class WarDiaryCog(commands.Cog):
 		out.seek(0)
 		return out.getvalue(), output_extension
 
+	async def _edit_entry(self, interaction: discord.Interaction, thread_id: int, changes: dict[str, Any]) -> str:
+		async with self._match_lock:
+			record = next((row for row in self._get_match_records() if _safe_int(row.get("thread_id")) == thread_id), None)
+			if record is None:
+				raise ValueError("That post is not a saved War Diary entry.")
+			thread = await self._get_thread(thread_id)
+			if thread is None or thread.parent_id != WAR_DIARY_FORUM_CHANNEL_ID or thread.guild.id != interaction.guild.id:
+				raise ValueError("Choose a result post in this server's War Diary forum.")
+			await self._hydrate_export_record(record)
+			updated = _corrected_record(record, changes)
+			existing = self._find_match_record(str(updated.get("clan_name") or HOME_CLAN_NAME), updated["opponent_clan_name"], updated["match_date"])
+			if existing is not None and existing is not record:
+				raise ValueError("Another entry already has that opponent and date.")
+			starter = await thread.fetch_message(thread.id)
+			left, right = map(int, updated["result"].split("-"))
+			image, extension = await asyncio.to_thread(
+				self._render_result_image,
+				submitter_clan_name=HOME_CLAN_NAME, opponent_clan_name=updated["opponent_clan_name"],
+				submitter_score=left, opponent_score=right, match_type=updated["match_type"],
+				match_date=updated["match_date"], map_name=updated["map_name"], prefer_gif=False,
+			)
+			filename = f"wardiary_{left}_{right}{extension}"
+			embed = self._build_result_embed(
+				submitter_clan_name=HOME_CLAN_NAME, opponent_clan_name=updated["opponent_clan_name"],
+				submitter_score=left, opponent_score=right, match_type=updated["match_type"],
+				match_date=updated["match_date"], map_name=updated["map_name"], midpoint_name=updated["midpoint_name"],
+				filename=filename, submitter=interaction.user, stats_link=updated["stats_link"], played_as=updated["played_as"],
+			)
+			if starter.embeds:
+				for field in starter.embeds[0].fields:
+					if field.name == "Submitted by":
+						embed.set_field_at(0, name="Submitted by", value=field.value, inline=False)
+			embed.set_footer(text=f"Corrected by {interaction.user.display_name}")
+			content = f"Match type: {updated['match_type']}\nMatch date: {updated['match_date']}\nMidpoint: {updated['midpoint_name']}\nPlayed as: {updated['played_as']}"
+			name = _truncate_thread_name(f"{HOME_CLAN_NAME} {left} - {right} {updated['opponent_clan_name']}")
+			original_name, original_tags = thread.name, list(thread.applied_tags)
+			tags = [tag for tag in original_tags if tag.name not in WAR_DIARY_MAP_OPTIONS]
+			if updated["map_name"] != OTHER_MAP_OPTION:
+				tag = await self._get_or_create_forum_tag(thread.parent, tag_name=updated["map_name"])
+				if tag:
+					tags.append(tag)
+			archived, locked = thread.archived, thread.locked
+			try:
+				if archived or locked:
+					await thread.edit(archived=False, locked=False)
+				await thread.edit(name=name, applied_tags=tags)
+				try:
+					await starter.edit(content=content, embed=embed, attachments=[discord.File(io.BytesIO(image), filename=filename)], allowed_mentions=discord.AllowedMentions.none())
+				except Exception:
+					await thread.edit(name=original_name, applied_tags=original_tags)
+					raise
+				updated["edited_by"] = interaction.user.id
+				updated["edited_at"] = _utcnow().isoformat()
+				record.clear()
+				record.update(updated)
+				if not self._save_state():
+					return f"Corrected {thread.mention}, but the saved-state write failed. Contact an administrator before restarting the bot."
+			finally:
+				if archived or locked:
+					try:
+						await thread.edit(archived=archived, locked=locked)
+					except discord.HTTPException:
+						log.warning("Could not restore archive state for edited War Diary post %s", thread_id)
+			web = getattr(self.bot, "frontline_web", None)
+			if web is not None:
+				web._dashboard_cache = (0.0, None)
+			review_id = _safe_int(record.get("review_thread_id"))
+			if review_id:
+				review = await self._get_thread(review_id)
+				if review is not None:
+					try:
+						await review.edit(name=_event_review_thread_name(updated["opponent_clan_name"], updated["map_name"], updated["match_date"]))
+					except discord.HTTPException:
+						return f"Corrected {thread.mention}. Its review thread title could not be updated."
+			return f"Corrected {thread.mention}. Exports and the leaderboard now use the corrected entry."
+
+	@app_commands.command(name="wardiary_edit", description="Correct a saved War Diary result post.")
+	@app_commands.guild_only()
+	@app_commands.describe(
+		entry="War Diary post link or thread ID; omit when inside its result thread",
+		opponent="Correct opposing clan", match_date="Correct date (DD/MM/YY)", map_name="Correct map",
+		midpoint="Correct midpoint", result="7DR score first, e.g. 3-2", match_type="Competitive or Friendly",
+		played_as="Axis, Allies, British, or Canadians", stats_link="Correct match-specific stats link",
+		clear_stats_link="Remove the current stats link",
+	)
+	@app_commands.choices(
+		match_type=[app_commands.Choice(name=value, value=value) for value in MATCH_TYPE_OPTIONS],
+		played_as=[app_commands.Choice(name=value, value=value) for value in PLAYED_AS_OPTIONS],
+		map_name=[app_commands.Choice(name=value, value=value) for value in WAR_DIARY_MAP_OPTIONS],
+	)
+	async def wardiary_edit(
+		self, interaction: discord.Interaction, entry: Optional[str] = None, opponent: Optional[str] = None,
+		match_date: Optional[str] = None, map_name: Optional[str] = None, midpoint: Optional[str] = None,
+		result: Optional[str] = None, match_type: Optional[str] = None, played_as: Optional[str] = None,
+		stats_link: Optional[str] = None, clear_stats_link: bool = False,
+	) -> None:
+		if not isinstance(interaction.user, discord.Member) or not _can_edit_member(interaction.user):
+			await interaction.response.send_message("You do not have permission to edit War Diary entries.", ephemeral=True)
+			return
+		changes = {key: value for key, value in {
+			"opponent_clan_name": opponent, "match_date": match_date, "map_name": map_name, "midpoint_name": midpoint,
+			"result": result, "match_type": match_type, "played_as": played_as, "stats_link": stats_link,
+		}.items() if value is not None}
+		if clear_stats_link:
+			if stats_link is not None:
+				await interaction.response.send_message("Choose a replacement stats link or clear it, not both.", ephemeral=True)
+				return
+			changes["stats_link"] = None
+		if not changes:
+			await interaction.response.send_message("Provide at least one field to correct.", ephemeral=True)
+			return
+		value = str(entry or interaction.channel_id)
+		link = re.fullmatch(r"https://(?:www\.)?discord\.com/channels/(\d+)/(\d+)(?:/\d+)?/?", value)
+		if link:
+			if int(link.group(1)) != interaction.guild_id:
+				await interaction.response.send_message("Choose a post in this Discord server.", ephemeral=True)
+				return
+			value = link.group(2)
+		if not value.isdigit():
+			await interaction.response.send_message("Provide a War Diary post link or thread ID.", ephemeral=True)
+			return
+		await interaction.response.defer(ephemeral=True, thinking=True)
+		try:
+			message = await self._edit_entry(interaction, int(value), changes)
+		except ValueError as exc:
+			message = str(exc)
+		except (discord.HTTPException, OSError):
+			log.exception("War Diary correction failed for %s", value)
+			message = "Discord could not complete this correction. Check the bot's thread and message permissions."
+		await interaction.followup.send(message, ephemeral=True)
+
+	@app_commands.command(name="wardiary_leaderboard", description="Show 7DR kills from linked War Diary match stats.")
+	@app_commands.guild_only()
+	async def wardiary_leaderboard(self, interaction: discord.Interaction, page: app_commands.Range[int, 1, 1000] = 1) -> None:
+		board = self.get_kills_leaderboard()
+		rows = board["rows"]
+		pages = max(1, (len(rows) + 19) // 20)
+		if page > pages:
+			await interaction.response.send_message(f"Choose a page from 1 to {pages}.", ephemeral=True)
+			return
+		lines = [f"**{row['rank']}. {discord.utils.escape_markdown(row['name'])[:80]}** — {row['kills']:,} kills · {row['matches']} matches · K/D {row['kd'] if row['kd'] is not None else '—'}" for row in rows[(page - 1) * 20:page * 20]]
+		embed = discord.Embed(title="War Diary — 7DR Kills", description="\n".join(lines) or "No 7DR player stats have been imported yet.", colour=discord.Colour.blurple())
+		embed.set_footer(text=f"Page {page}/{pages} · {board['imported']}/{board['recorded']} matches imported · {board['missing_links']} missing links · {board['unsupported_links']} unsupported · {board['duplicate_links']} duplicates · {board['failed']} failed · {board['stale']} stale")
+		await interaction.response.send_message(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+
 	@app_commands.command(
 		name="wardiary_export",
 		description="Download War Diary matches, midpoints, clan sides, and stats links as CSV.",
@@ -1966,6 +2227,7 @@ class WarDiaryCog(commands.Cog):
 				is_7dr_win=is_7dr_win,
 				submitter_score=submitter_score,
 				opponent_score=opponent_score,
+				match_type=match_type,
 			)
 			self._save_state()
 			return thread, None

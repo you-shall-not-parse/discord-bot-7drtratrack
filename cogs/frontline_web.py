@@ -1166,6 +1166,7 @@ class FrontlineWeb:
                 "maps": [],
                 "map_sides": [],
                 "recent": [],
+                "kills_leaderboard": {"rows": [], "recorded": 0, "imported": 0},
             }
 
         from cogs.wardiary import HOME_CLAN_NAME, WAR_DIARY_MAP_IMAGE_FILES, _normalize_stats_link
@@ -1296,6 +1297,7 @@ class FrontlineWeb:
             "maps": map_rows,
             "map_sides": map_side_rows,
             "recent": matches,
+            "kills_leaderboard": cog.get_kills_leaderboard() if callable(getattr(cog, "get_kills_leaderboard", None)) else {"rows": [], "recorded": len(matches), "imported": 0},
         }
 
     @staticmethod
