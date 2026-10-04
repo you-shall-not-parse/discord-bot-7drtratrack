@@ -1027,7 +1027,7 @@ class FrontlineWeb:
         request_cog = self.bot.get_cog("EventMapRequests")
         if request_cog is None:
             return web.json_response({"error": "The request service is unavailable."}, status=503)
-        map_options: dict[str, list[dict[str, str]]] = {}
+        map_options: dict[str, list[dict[str, Any]]] = {}
         for server_name, server_label in MAP_SERVER_OPTIONS.items():
             try:
                 maps = await asyncio.wait_for(request_cog._map_catalogue(server_name), timeout=10)
@@ -1038,9 +1038,18 @@ class FrontlineWeb:
                 {
                     **map_data,
                     "label": f"{map_data['friendly_name']} — {_variant_label(map_data)}",
+                    "midpoints": [],
                 }
                 for map_data in maps
             ]
+            for map_data in map_options[server_name]:
+                try:
+                    map_data["midpoints"] = await request_cog._midpoint_options(
+                        {**map_data, "server_name": server_name}
+                    )
+                except Exception:
+                    logger.warning("Website midpoint catalogue unavailable for %s", server_name, exc_info=True)
+                    break
         return web.json_response(
             {
                 "member_resolved": member is not None,
@@ -1085,7 +1094,8 @@ class FrontlineWeb:
                 return web.json_response({"error": "Choose a valid map."}, status=400)
             await request_cog.create_request(
                 interaction,
-                {**map_data, "server_name": server_name, "server_label": server_label},
+                {**map_data, "server_name": server_name, "server_label": server_label,
+                 "midpoint": str(payload.get("midpoint") or "")},
             )
         elif kind == "admin_cam":
             server_label = ADMIN_CAM_SERVER_OPTIONS.get(server_name)

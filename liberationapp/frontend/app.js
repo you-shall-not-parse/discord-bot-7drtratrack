@@ -180,6 +180,15 @@ function renderMapOptions() {
     $("#game-request-map").innerHTML = '<option value="">Map catalogue unavailable</option>';
     $("#game-request-status").textContent = "The map catalogue is unavailable. Try again shortly.";
   }
+  renderMidpointOptions();
+}
+
+function renderMidpointOptions() {
+  const maps = gameRequestOptions?.maps[$("#game-request-server").value] || [];
+  const map = maps.find(item => item.rcon_name === $("#game-request-map").value);
+  const midpoints = map?.midpoints || [];
+  $("#midpoint-request-fields").hidden = !midpoints.length;
+  $("#game-request-midpoint").innerHTML = '<option value="">Any midpoint (normal map change)</option>' + midpoints.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join("");
 }
 
 async function loadBuildingReportHistory() {
@@ -479,6 +488,7 @@ $("#hllv-search-form").addEventListener("submit", async event => {
 
 $("#game-request-kind").addEventListener("change", renderGameRequestFields);
 $("#game-request-server").addEventListener("change", renderMapOptions);
+$("#game-request-map").addEventListener("change", renderMidpointOptions);
 $("#game-request-form").addEventListener("submit", async event => {
   event.preventDefault();
   const kind = $("#game-request-kind").value;
@@ -494,6 +504,7 @@ $("#game-request-form").addEventListener("submit", async event => {
         kind,
         server_name: $("#game-request-server").value,
         rcon_name: $("#game-request-map").value,
+        midpoint: $("#game-request-midpoint").value,
         duration_hours: Number($("#game-request-duration").value)
       }),
       signal: AbortSignal.timeout(30_000)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -34,11 +35,13 @@ T17_ROLE_NAME = "131st Infantry Brigade"
 MAP_CACHE_MAX_AGE = timedelta(hours=4)
 SELECT_PAGE_SIZE = 25
 PANEL_HISTORY_LIMIT = 2
+MAP_FLIP_DELAY_SECONDS = 30
 
 PANEL_STATE_PATH = Path(data_path("event_map_request_panel.json"))
 REQUEST_STATE_PATH = Path(data_path("event_map_requests.json"))
 MAP_CACHE_PATH = Path(data_path("public_map_catalogue.json"))
 HLLV_MAP_CACHE_PATH = Path(data_path("hllv_map_catalogue.json"))
+SECTOR_CACHE_PATH = Path(data_path("public_sector_catalogue.json"))
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -390,7 +393,48 @@ class MapVariantSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True, thinking=True)
-        await self.cog.create_request(interaction, self.variants[int(self.values[0])])
+        map_data = self.variants[int(self.values[0])]
+        if map_data.get("server_name") != PUBLIC_BACKEND_NAME:
+            await self.cog.create_request(interaction, map_data)
+            return
+        try:
+            midpoints = await self.cog._midpoint_options(map_data)
+        except HLLBackendError:
+            await interaction.followup.send(
+                "The midpoint catalogue is unavailable. You can still request a normal map change.",
+                view=MidpointView(self.cog, map_data, []), ephemeral=True,
+            )
+            return
+        if not midpoints:
+            await self.cog.create_request(interaction, map_data)
+            return
+        await interaction.followup.send(
+            "Choose Sector 3 (the midpoint). The other four sectors will be random. "
+            "Choose Any midpoint for a normal map change.",
+            view=MidpointView(self.cog, map_data, midpoints), ephemeral=True,
+        )
+
+
+class MidpointSelect(discord.ui.Select):
+    def __init__(self, cog: "EventMapRequests", map_data: dict[str, str], midpoints: list[str]):
+        self.cog = cog
+        self.map_data = map_data
+        self.midpoints = midpoints
+        super().__init__(placeholder="Choose the midpoint (Sector 3)…", options=[
+            discord.SelectOption(label="Any midpoint (normal map change)", value="any"),
+            *[discord.SelectOption(label=name[:100], value=str(index)) for index, name in enumerate(midpoints)],
+        ])
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        midpoint = "" if self.values[0] == "any" else self.midpoints[int(self.values[0])]
+        await self.cog.create_request(interaction, {**self.map_data, "midpoint": midpoint})
+
+
+class MidpointView(discord.ui.View):
+    def __init__(self, cog: "EventMapRequests", map_data: dict[str, str], midpoints: list[str]):
+        super().__init__(timeout=180)
+        self.add_item(MidpointSelect(cog, map_data, midpoints))
 
 
 class MapVariantView(discord.ui.View):
@@ -539,6 +583,8 @@ class EventMapRequests(commands.Cog):
             )
         self._request_lock = asyncio.Lock()
         self._map_lock = asyncio.Lock()
+        self._sector_lock = asyncio.Lock()
+        self._server_map_locks: dict[str, asyncio.Lock] = {}
         self._t17_lookup = ClanT17Lookup(logger=LOGGER)
         self._panel_view = EventMapPanelView()
         self._approval_view = RequestApprovalView()
@@ -596,6 +642,8 @@ class EventMapRequests(commands.Cog):
                 friendly_name = discord.utils.escape_markdown(
                     str(request.get("friendly_name") or "Unknown map")
                 )
+                if request.get("midpoint"):
+                    friendly_name += " / " + discord.utils.escape_markdown(str(request["midpoint"]))
                 variant = discord.utils.escape_markdown(_variant_label(request))
                 server_label = discord.utils.escape_markdown(
                     str(request.get("server_label") or "Public")
@@ -621,6 +669,7 @@ class EventMapRequests(commands.Cog):
                 "Use this panel to request a scouting map on the 7DR **Public** or **HLLV** "
                 "server, or temporary admin cam access on **Public** or **HLLV**.\n\n"
                 "For a map request, choose the map, game mode, and time-of-day variant. "
+                "Public requests can also choose the midpoint (Sector 3); the other sectors are random. "
                 "For admin cam, choose the server and how long you need access.\n\n"
                 "HLLV admin cam uses your HLLV EOS ID, resolved the same way as `/t17admincam`; "
                 "the first lookup requires you to be connected with a matching Discord name.\n\n"
@@ -722,6 +771,8 @@ class EventMapRequests(commands.Cog):
                 "approved": f"✅ {server_label} Map Changed",
                 "denied": f"❌ {server_label} Map Request Denied",
             }
+            if request.get("midpoint"):
+                titles["approved"] = f"✅ {server_label} Midpoint Applied"
         embed = discord.Embed(
             title=titles.get(status, titles["pending"]),
             colour=colours.get(status, colours["pending"]),
@@ -759,6 +810,12 @@ class EventMapRequests(commands.Cog):
             )
             embed.add_field(name="Map", value=str(request["friendly_name"]), inline=True)
             embed.add_field(name="Variant", value=_variant_label(request), inline=True)
+            if request.get("midpoint"):
+                embed.add_field(name="Midpoint (Sector 3)", value=str(request["midpoint"]), inline=True)
+                embed.add_field(
+                    name="Layout", value="Other sectors: RANDOM. A map change, if needed, is followed by a 30-second wait before applying the layout.",
+                    inline=False,
+                )
             embed.add_field(name="RCON name", value=f"`{request['rcon_name']}`", inline=False)
         if status in {"approved", "denied"}:
             embed.add_field(
@@ -860,6 +917,78 @@ class EventMapRequests(commands.Cog):
             )
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             LOGGER.exception("Could not refresh event map request panel %s", message_id)
+
+    async def _midpoint_options(self, map_data: dict[str, str]) -> list[str]:
+        # HLLV retains its existing map-only request flow.
+        if map_data.get("server_name", PUBLIC_BACKEND_NAME) != PUBLIC_BACKEND_NAME:
+            return []
+        async with self._sector_lock:
+            cached = _read_json(SECTOR_CACHE_PATH)
+            try:
+                age = time.time() - float(cached.get("fetched_at", 0))
+            except (TypeError, ValueError):
+                age = MAP_CACHE_MAX_AGE.total_seconds()
+            maps = cached.get("maps")
+            if not isinstance(maps, list) or age >= MAP_CACHE_MAX_AGE.total_seconds():
+                maps = await self._backend(PUBLIC_BACKEND_NAME).get_all_sector_options()
+                atomic_json_dump(SECTOR_CACHE_PATH, {"fetched_at": time.time(), "maps": maps})
+        for entry in maps:
+            if isinstance(entry, dict) and map_data["rcon_name"] in entry.get("variants", []):
+                return self._sector_three_names(entry)
+        return []
+
+    @staticmethod
+    def _sector_three_names(options: dict[str, Any]) -> list[str]:
+        for sector in options.get("sectors", []):
+            if sector.get("sector") == "Sector_3":
+                return list(dict.fromkeys(
+                    str(objective["name"]) for objective in sector.get("objectives", [])
+                    if objective.get("name")
+                ))
+        return []
+
+    async def _apply_map_request(self, request: dict[str, Any]) -> dict[str, Any]:
+        server_name = str(request.get("server_name") or PUBLIC_BACKEND_NAME)
+        if server_name not in MAP_SERVER_OPTIONS:
+            raise HLLBackendError(f"Unknown map request server: {server_name}")
+        lock = self._server_map_locks.setdefault(server_name, asyncio.Lock())
+        async with lock:
+            backend = self._backend(server_name)
+            target = str(request["rcon_name"])
+            midpoint = str(request.get("midpoint") or "")
+            if not midpoint:
+                return await backend.change_map(target)
+            if server_name != PUBLIC_BACKEND_NAME:
+                raise HLLBackendError("Midpoint requests are only available for Public HLL")
+            if midpoint not in await self._midpoint_options(request):
+                raise HLLBackendError("The selected midpoint is not available for this map variant")
+            # This live read returns the exact variant, unlike friendly game-state names.
+            current = await backend.get_sector_options()
+            if current["mapRconName"] != target:
+                await backend.change_map(target)
+                request["layout_not_before"] = time.time() + MAP_FLIP_DELAY_SECONDS
+                atomic_json_dump(REQUEST_STATE_PATH, self._requests, indent=2, ensure_ascii=False)
+                # Always re-read after the map-change wait, even if persistence
+                # took long enough that the deadline has already passed.
+                remaining = max(0, float(request["layout_not_before"]) - time.time())
+                await asyncio.sleep(remaining)
+                current = await backend.get_sector_options()
+            else:
+                remaining = float(request.get("layout_not_before") or 0) - time.time()
+                if remaining > 0:
+                    await asyncio.sleep(remaining)
+                    current = await backend.get_sector_options()
+            if current["mapRconName"] != target:
+                raise HLLBackendError(
+                    "The requested map is not running yet. The layout was not applied; retry approval when it has loaded."
+                )
+            # The all-map catalogue is a union across variants. Validate against
+            # the live variant before issuing the layout mutation.
+            if midpoint not in self._sector_three_names(current) or len(current.get("sectors", [])) != 5:
+                raise HLLBackendError("The selected midpoint is not supported by the running map variant")
+            result = await backend.set_sector_layout(target, ["RANDOM", "RANDOM", midpoint, "RANDOM", "RANDOM"])
+            request["applied_objectives"] = result.get("appliedObjectives", [])
+            return result
 
     async def _map_catalogue(self, server_name: str) -> list[dict[str, str]]:
         async with self._map_lock:
@@ -969,6 +1098,15 @@ class EventMapRequests(commands.Cog):
                 ephemeral=True,
             )
             return
+        midpoint = str(map_data.get("midpoint") or "")
+        if midpoint:
+            try:
+                valid = midpoint in await self._midpoint_options(map_data)
+            except HLLBackendError:
+                valid = False
+            if not valid:
+                await interaction.followup.send("Choose a valid midpoint for the selected map.", ephemeral=True)
+                return
         approval_channel = await self._get_channel(APPROVAL_CHANNEL_ID)
         if approval_channel is None:
             await interaction.followup.send(
@@ -1243,12 +1381,7 @@ class EventMapRequests(commands.Cog):
                 if request_type == "admin_cam":
                     result = await self._grant_admin_cam_request(request, interaction.user)
                 else:
-                    server_name = str(request.get("server_name") or PUBLIC_BACKEND_NAME)
-                    if server_name not in MAP_SERVER_OPTIONS:
-                        raise HLLBackendError(f"Unknown map request server: {server_name}")
-                    result = await self._backend(server_name).change_map(
-                        str(request["rcon_name"])
-                    )
+                    result = await self._apply_map_request(request)
             except Exception as exc:
                 error_message = str(exc) or type(exc).__name__
                 async with self._request_lock:
@@ -1284,7 +1417,7 @@ class EventMapRequests(commands.Cog):
                 failure_label = (
                     "Bifrost did not grant admin cam access"
                     if request_type == "admin_cam"
-                    else "Bifrost did not change the map"
+                    else "Bifrost could not complete the map/layout request (the map may already have changed)"
                 )
                 await interaction.followup.send(
                     f"{failure_label}: `{error_message[:1500]}`",
@@ -1322,6 +1455,8 @@ class EventMapRequests(commands.Cog):
             action = "denied"
         elif str(request.get("request_type") or "map") == "admin_cam":
             action = "approved and temporary admin cam access was granted"
+        elif request.get("midpoint"):
+            action = "approved and the selected midpoint was applied"
         else:
             action = "approved and the map change was initiated"
         await interaction.followup.send(f"Request {action}.", ephemeral=True)

@@ -63,6 +63,15 @@ class HLLBackendClient(Protocol):
     async def change_map(self, map_rcon_name: str) -> dict[str, Any]:
         ...
 
+    async def get_all_sector_options(self) -> list[dict[str, Any]]:
+        ...
+
+    async def get_sector_options(self) -> dict[str, Any]:
+        ...
+
+    async def set_sector_layout(self, map_rcon_name: str, sectors: list[str]) -> dict[str, Any]:
+        ...
+
     async def add_guild_member(
         self,
         player_id: str,
@@ -303,6 +312,15 @@ class CRCONBackendClient:
 
     async def change_map(self, map_rcon_name: str) -> dict[str, Any]:
         raise HLLBackendConfigError("Immediate map changes are only supported by the Bifrost backend")
+
+    async def get_all_sector_options(self) -> list[dict[str, Any]]:
+        raise HLLBackendConfigError("Sector options require the Bifrost backend")
+
+    async def get_sector_options(self) -> dict[str, Any]:
+        raise HLLBackendConfigError("Sector options require the Bifrost backend")
+
+    async def set_sector_layout(self, map_rcon_name: str, sectors: list[str]) -> dict[str, Any]:
+        raise HLLBackendConfigError("Sector layouts require the Bifrost backend")
 
     async def add_guild_member(
         self,
@@ -734,6 +752,50 @@ class BifrostBackendClient:
         if not isinstance(maps, list):
             raise HLLBackendError("Bifrost returned an invalid map catalogue")
         return [item for item in maps if isinstance(item, dict)]
+
+    async def get_all_sector_options(self) -> list[dict[str, Any]]:
+        query = (
+            "query GuildGetAllSectorOptions($gameType: String!) {"
+            " guildGetAllSectorOptions(gameType: $gameType) {"
+            " success error maps { mapName gameMode variants"
+            " sectors { sector objectives { name gameObjectiveName rowIndex } } } } }"
+        )
+        data = await self._graphql(query, {"gameType": self.game_type})
+        payload = data.get("guildGetAllSectorOptions") or {}
+        if not payload.get("success") or not isinstance(payload.get("maps"), list):
+            raise HLLBackendError(_extract_error_message(payload))
+        return payload["maps"]
+
+    async def get_sector_options(self) -> dict[str, Any]:
+        query = (
+            "query GuildGetSectorOptions($serverId: ID!) {"
+            " guildGetSectorOptions(serverId: $serverId) {"
+            " success error mapRconName gameMode"
+            " sectors { sector objectives { name gameObjectiveName rowIndex } } } }"
+        )
+        data = await self._graphql(query, {"serverId": self.server_id})
+        payload = data.get("guildGetSectorOptions") or {}
+        if not payload.get("success") or not payload.get("mapRconName"):
+            raise HLLBackendError(_extract_error_message(payload))
+        return payload
+
+    async def set_sector_layout(self, map_rcon_name: str, sectors: list[str]) -> dict[str, Any]:
+        if len(sectors) != 5 or any(not isinstance(value, str) or not value.strip() for value in sectors):
+            raise HLLBackendError("Exactly five sector objectives are required")
+        query = (
+            "mutation GuildSetSectorLayout($input: GuildSetSectorLayoutInput!) {"
+            " guildSetSectorLayout(input: $input) {"
+            " success message mapRconName appliedObjectives randomised mapReloaded error timestamp } }"
+        )
+        data = await self._graphql(query, {"input": {
+            "serverId": self.server_id,
+            "mapRconName": map_rcon_name,
+            "sectors": sectors,
+        }})
+        payload = data.get("guildSetSectorLayout") or {}
+        if not payload.get("success"):
+            raise HLLBackendError(_extract_error_message(payload))
+        return payload
 
     async def change_map(self, map_rcon_name: str) -> dict[str, Any]:
         normalized_name = str(map_rcon_name or "").strip()
