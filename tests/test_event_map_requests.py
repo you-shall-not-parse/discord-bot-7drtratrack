@@ -117,6 +117,7 @@ class T17ServerAdminIdentityTests(unittest.IsolatedAsyncioTestCase):
             "legacy": {"status": "pending"},
             "public": {"server_name": "server_2", "status": "pending"},
             "hllv": {"server_name": "hllv", "status": "pending"},
+            "queued": {"server_name": "server_2", "status": "waiting_for_players", "map_queued_empty": True},
             "history": {"server_name": "events", "status": "approved"},
         }
         bot = MagicMock()
@@ -130,6 +131,8 @@ class T17ServerAdminIdentityTests(unittest.IsolatedAsyncioTestCase):
         for key in ("public", "hllv"):
             self.assertEqual(requests[key]["status"], "pending")
         self.assertEqual(requests["history"]["status"], "approved")
+        self.assertEqual(requests["queued"]["status"], "waiting_for_players")
+        self.assertTrue(requests["queued"]["map_queued_empty"])
         save.assert_called_once()
 
     async def test_startup_preserves_public_and_hllv_removal_timers(self):

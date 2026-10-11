@@ -30,6 +30,10 @@ class MidpointApprovalTests(unittest.IsolatedAsyncioTestCase):
         self.cog._requests = {"1": self.request}
         self.cog._midpoint_options = AsyncMock(return_value=["TOWN CENTER", "TRAIN STATION"])
         self.backend = MagicMock()
+        self.backend.get_mapvote_game_state = AsyncMock(return_value={
+            "team1": {"playerCount": 1}, "team2": {"playerCount": 0},
+            "matchTimeRemainingSeconds": 3600,
+        })
         self.backend.get_sector_options = AsyncMock(return_value=live())
         self.backend.change_map = AsyncMock(return_value={"success": True})
         self.backend.set_sector_layout = AsyncMock(return_value={"success": True, "appliedObjectives": ["A", "B", "TOWN CENTER", "D", "E"]})
@@ -46,6 +50,119 @@ class MidpointApprovalTests(unittest.IsolatedAsyncioTestCase):
             "carentan_warfare", ["RANDOM", "RANDOM", "TOWN CENTER", "RANDOM", "RANDOM"]
         )
         self.assertEqual(result["appliedObjectives"][2], "TOWN CENTER")
+
+    async def test_empty_server_queues_map_once_without_layout_or_delay(self):
+        self.backend.get_mapvote_game_state.return_value = {
+            "team1": {"playerCount": 0}, "team2": {"playerCount": 0},
+            "matchTimeRemainingSeconds": 3600,
+        }
+        with patch("cogs.event_map_requests.asyncio.sleep", new_callable=AsyncMock) as sleep:
+            first = await self.cog._apply_map_request(self.request)
+            second = await self.cog._apply_map_request(self.request)
+        self.assertTrue(first["deferred"])
+        self.assertTrue(second["deferred"])
+        self.assertIn("at least one player joins", first["message"])
+        self.backend.change_map.assert_awaited_once_with("carentan_warfare")
+        self.backend.get_sector_options.assert_not_awaited()
+        self.backend.set_sector_layout.assert_not_awaited()
+        sleep.assert_not_awaited()
+        self.assertTrue(self.request["map_queued_empty"])
+
+    async def test_player_join_flips_even_if_queued_map_looks_current(self):
+        self.request["map_queued_empty"] = True
+        with patch("cogs.event_map_requests.time.time", return_value=100), patch(
+            "cogs.event_map_requests.asyncio.sleep", new_callable=AsyncMock
+        ) as sleep:
+            result = await self.cog._apply_map_request(self.request)
+        self.backend.change_map.assert_awaited_once_with("carentan_warfare")
+        sleep.assert_awaited_once_with(90)
+        self.assertNotIn("map_queued_empty", self.request)
+        self.assertEqual(result["appliedObjectives"][2], "TOWN CENTER")
+
+    async def test_last_player_leaves_during_flip_requeues_without_layout(self):
+        self.backend.get_sector_options.side_effect = [live("foy_warfare"), live()]
+        self.backend.get_mapvote_game_state.side_effect = [
+            {"team1": {"playerCount": 1}, "team2": {"playerCount": 0}},
+            {"team1": {"playerCount": 0}, "team2": {"playerCount": 0}},
+        ]
+        with patch("cogs.event_map_requests.asyncio.sleep", new_callable=AsyncMock):
+            result = await self.cog._apply_map_request(self.request)
+        self.assertTrue(result["deferred"])
+        self.backend.set_sector_layout.assert_not_awaited()
+
+    async def test_unknown_population_never_sends_map_or_layout(self):
+        self.backend.get_mapvote_game_state.return_value = {}
+        with self.assertRaisesRegex(HLLBackendError, "determine"):
+            await self.cog._apply_map_request(self.request)
+        self.backend.change_map.assert_not_awaited()
+        self.backend.set_sector_layout.assert_not_awaited()
+
+    async def test_deferred_completion_updates_staff_and_notifies_requester(self):
+        self.request.update({
+            "status": "waiting_for_players", "map_queued_empty": True,
+            "approval_channel_id": 10, "approval_message_id": 20,
+            "requester_id": 123, "resolved_by": 456, "friendly_name": "Carentan",
+            "created_at": "2026-10-11T12:00:00+00:00",
+        })
+        message = SimpleNamespace(edit=AsyncMock())
+        channel = SimpleNamespace(fetch_message=AsyncMock(return_value=message))
+        self.cog._get_channel = AsyncMock(return_value=channel)
+        self.cog._notify_map_requester = AsyncMock()
+        self.cog._refresh_panel_embed = AsyncMock()
+        with patch("cogs.event_map_requests.asyncio.sleep", new_callable=AsyncMock):
+            await self.cog._resume_deferred_map(self.request)
+        self.assertEqual(self.request["status"], "approved")
+        self.assertIsNone(message.edit.call_args.kwargs["view"])
+        self.assertIn("have now been applied", self.cog._notify_map_requester.call_args.args[1])
+
+    async def test_waiting_request_blocks_another_map_change_on_same_server(self):
+        self.request["status"] = "waiting_for_players"
+        with self.assertRaisesRegex(HLLBackendError, "waiting for players"):
+            await self.cog._apply_map_request({"server_name": "server_2", "rcon_name": "foy_warfare"})
+        self.backend.change_map.assert_not_awaited()
+
+    async def test_empty_server_approval_is_saved_as_waiting_and_notifies_requester(self):
+        self.request.update({
+            "status": "pending", "requester_id": 123, "friendly_name": "Carentan",
+            "created_at": "2026-10-11T12:00:00+00:00",
+        })
+        self.backend.get_mapvote_game_state.return_value = {
+            "team1": {"playerCount": 0}, "team2": {"playerCount": 0},
+        }
+        self.cog._request_lock = asyncio.Lock()
+        self.cog._can_approve = MagicMock(return_value=True)
+        self.cog._notify_map_requester = AsyncMock()
+        self.cog._refresh_panel_embed = AsyncMock()
+        interaction = SimpleNamespace(
+            user=SimpleNamespace(id=456), message=SimpleNamespace(id=1, edit=AsyncMock()),
+            response=SimpleNamespace(defer=AsyncMock()), followup=SimpleNamespace(send=AsyncMock()),
+        )
+        await self.cog.resolve_request(interaction, approved=True)
+        self.assertEqual(self.request["status"], "waiting_for_players")
+        self.assertEqual(self.request["resolved_by"], 456)
+        self.assertIn("Midpoint Waiting for Players", interaction.message.edit.call_args.kwargs["embed"].title)
+        self.assertIn("map is queued", interaction.followup.send.call_args.args[0])
+        self.cog._notify_map_requester.assert_awaited_once_with(self.request, self.request["backend_message"])
+        self.backend.set_sector_layout.assert_not_awaited()
+
+    async def test_deferred_failure_returns_to_staff_for_retry(self):
+        self.request.update({
+            "status": "waiting_for_players", "map_queued_empty": True,
+            "approval_channel_id": 10, "approval_message_id": 20,
+            "requester_id": 123, "resolved_by": 456, "friendly_name": "Carentan",
+            "created_at": "2026-10-11T12:00:00+00:00",
+        })
+        self.backend.change_map.side_effect = HLLBackendError("unavailable")
+        message = SimpleNamespace(edit=AsyncMock())
+        self.cog._get_channel = AsyncMock(return_value=SimpleNamespace(fetch_message=AsyncMock(return_value=message)))
+        self.cog._approval_view = MagicMock()
+        self.cog._notify_map_requester = AsyncMock()
+        self.cog._refresh_panel_embed = AsyncMock()
+        await self.cog._resume_deferred_map(self.request)
+        self.assertEqual(self.request["status"], "pending")
+        self.assertEqual(self.request["backend_error"], "unavailable")
+        self.assertIs(message.edit.call_args.kwargs["view"], self.cog._approval_view)
+        self.assertIn("Staff can retry", self.cog._notify_map_requester.call_args.args[1])
 
     async def test_different_variant_changes_map_waits_90_seconds_checks_then_sets_layout(self):
         self.backend.get_sector_options.side_effect = [live("carentan_warfare_night"), live()]

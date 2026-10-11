@@ -36,6 +36,7 @@ MAP_CACHE_MAX_AGE = timedelta(hours=4)
 SELECT_PAGE_SIZE = 25
 PANEL_HISTORY_LIMIT = 2
 MAP_FLIP_DELAY_SECONDS = 90
+PLAYER_CHECK_INTERVAL_SECONDS = 30
 
 PANEL_STATE_PATH = Path(data_path("event_map_request_panel.json"))
 REQUEST_STATE_PATH = Path(data_path("event_map_requests.json"))
@@ -565,7 +566,7 @@ class EventMapRequests(commands.Cog):
             if not isinstance(request, dict):
                 continue
             # Retire old approvals instead of applying them to a different server.
-            if request.get("status") in {"pending", "processing"} and (
+            if request.get("status") in {"pending", "processing", "waiting_for_players"} and (
                 str(request.get("server_name") or "main") in {"main", "events"}
             ):
                 request["status"] = "cancelled"
@@ -591,9 +592,11 @@ class EventMapRequests(commands.Cog):
         self.bot.add_view(self._panel_view)
         self.bot.add_view(self._approval_view)
         self._panel_task = self.bot.loop.create_task(self._ensure_panel())
+        self._deferred_map_task = self.bot.loop.create_task(self._watch_deferred_maps())
 
     def cog_unload(self) -> None:
         self._panel_task.cancel()
+        self._deferred_map_task.cancel()
 
     @staticmethod
     def _resolved_timestamp(request: dict[str, Any]) -> datetime:
@@ -753,6 +756,7 @@ class EventMapRequests(commands.Cog):
         colours = {
             "pending": discord.Colour.orange(),
             "processing": discord.Colour.gold(),
+            "waiting_for_players": discord.Colour.gold(),
             "approved": discord.Colour.green(),
             "denied": discord.Colour.red(),
         }
@@ -773,6 +777,7 @@ class EventMapRequests(commands.Cog):
             }
             if request.get("midpoint"):
                 titles["approved"] = f"✅ {server_label} Midpoint Applied"
+            titles["waiting_for_players"] = f"⏳ {server_label} Midpoint Waiting for Players"
         embed = discord.Embed(
             title=titles.get(status, titles["pending"]),
             colour=colours.get(status, colours["pending"]),
@@ -813,11 +818,11 @@ class EventMapRequests(commands.Cog):
             if request.get("midpoint"):
                 embed.add_field(name="Midpoint (Sector 3)", value=str(request["midpoint"]), inline=True)
                 embed.add_field(
-                    name="Layout", value="Other sectors: RANDOM. A map change, if needed, is followed by a 90-second wait before applying the layout.",
+                    name="Layout", value="Other sectors: RANDOM. On an empty server, the map is queued and the midpoint waits for a player to join. Any required map flip is followed by a 90-second wait before applying the layout.",
                     inline=False,
                 )
             embed.add_field(name="RCON name", value=f"`{request['rcon_name']}`", inline=False)
-        if status in {"approved", "denied"}:
+        if status in {"approved", "denied", "waiting_for_players"}:
             embed.add_field(
                 name="Resolved by",
                 value=f"<@{int(request['resolved_by'])}>",
@@ -953,6 +958,14 @@ class EventMapRequests(commands.Cog):
             raise HLLBackendError(f"Unknown map request server: {server_name}")
         lock = self._server_map_locks.setdefault(server_name, asyncio.Lock())
         async with lock:
+            if any(
+                other is not request
+                and isinstance(other, dict)
+                and other.get("status") == "waiting_for_players"
+                and other.get("server_name") == server_name
+                for other in self._requests.values()
+            ):
+                raise HLLBackendError("Another midpoint request is waiting for players on this server")
             backend = self._backend(server_name)
             target = str(request["rcon_name"])
             midpoint = str(request.get("midpoint") or "")
@@ -962,10 +975,13 @@ class EventMapRequests(commands.Cog):
                 raise HLLBackendError("Midpoint requests are only available for Public HLL")
             if midpoint not in await self._midpoint_options(request):
                 raise HLLBackendError("The selected midpoint is not available for this map variant")
+            if not await self._server_has_players(backend):
+                return await self._defer_midpoint(request, backend, target)
             # This live read returns the exact variant, unlike friendly game-state names.
             current = await backend.get_sector_options()
-            if current["mapRconName"] != target:
+            if current["mapRconName"] != target or request.get("map_queued_empty"):
                 await backend.change_map(target)
+                request.pop("map_queued_empty", None)
                 request["layout_not_before"] = time.time() + MAP_FLIP_DELAY_SECONDS
                 atomic_json_dump(REQUEST_STATE_PATH, self._requests, indent=2, ensure_ascii=False)
                 # Always re-read after the map-change wait, even if persistence
@@ -978,6 +994,10 @@ class EventMapRequests(commands.Cog):
                 if remaining > 0:
                     await asyncio.sleep(remaining)
                     current = await backend.get_sector_options()
+            # Players can leave while the map is loading. Never send a layout
+            # mutation to an empty server, even after a successful map flip.
+            if not await self._server_has_players(backend):
+                return await self._defer_midpoint(request, backend, target)
             if current["mapRconName"] != target:
                 raise HLLBackendError(
                     "The requested map is not running yet. The layout was not applied; retry approval when it has loaded."
@@ -989,6 +1009,86 @@ class EventMapRequests(commands.Cog):
             result = await backend.set_sector_layout(target, ["RANDOM", "RANDOM", midpoint, "RANDOM", "RANDOM"])
             request["applied_objectives"] = result.get("appliedObjectives", [])
             return result
+
+    @staticmethod
+    async def _server_has_players(backend) -> bool:
+        state = await backend.get_mapvote_game_state()
+        try:
+            counts = [int(state[team]["playerCount"]) for team in ("team1", "team2")]
+        except (KeyError, TypeError, ValueError):
+            raise HLLBackendError("Could not determine whether the server has players")
+        if any(count < 0 for count in counts):
+            raise HLLBackendError("Invalid server player count")
+        return sum(counts) > 0
+
+    async def _defer_midpoint(self, request, backend, target) -> dict[str, Any]:
+        if not request.get("map_queued_empty"):
+            await backend.change_map(target)
+            request["map_queued_empty"] = True
+            request.pop("layout_not_before", None)
+            atomic_json_dump(REQUEST_STATE_PATH, self._requests, indent=2, ensure_ascii=False)
+        return {
+            "deferred": True,
+            "message": "The server is empty and the match timer is paused. Your map is queued as the next map. "
+            "The midpoint change will wait until at least one player joins, then the bot will flip to the requested map, "
+            "wait 90 seconds, and apply your midpoint automatically.",
+        }
+
+    async def _notify_map_requester(self, request, message: str) -> None:
+        channel = await self._get_channel(int(request.get("request_channel_id") or REQUEST_CHANNEL_ID))
+        if channel is not None:
+            try:
+                await channel.send(
+                    f"<@{int(request['requester_id'])}> {message}",
+                    allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
+                )
+            except discord.HTTPException:
+                LOGGER.exception("Could not notify map requester")
+
+    async def _resume_deferred_map(self, request: dict[str, Any]) -> None:
+        try:
+            result = await self._apply_map_request(request)
+        except Exception as exc:
+            LOGGER.exception("Deferred midpoint request failed")
+            request["status"] = "pending"
+            request["backend_error"] = str(exc) or type(exc).__name__
+            request["backend_error_at"] = datetime.now(timezone.utc).isoformat()
+            notice = "Your queued map/midpoint request could not be completed. Staff can retry its approval."
+        else:
+            if result.get("deferred"):
+                return
+            request["status"] = "approved"
+            request["resolved_at"] = datetime.now(timezone.utc).isoformat()
+            request["backend_message"] = str(result.get("message") or "Selected midpoint applied.")
+            notice = f"Your requested map **{request['friendly_name']}** and midpoint **{request['midpoint']}** have now been applied."
+        atomic_json_dump(REQUEST_STATE_PATH, self._requests, indent=2, ensure_ascii=False)
+        channel = await self._get_channel(int(request["approval_channel_id"]))
+        if channel is not None:
+            try:
+                message = await channel.fetch_message(int(request["approval_message_id"]))
+                await message.edit(
+                    embed=self._request_embed(request),
+                    view=self._approval_view if request["status"] == "pending" else None,
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
+            except discord.HTTPException:
+                LOGGER.exception("Could not update deferred map approval")
+        await self._notify_map_requester(request, notice)
+        await self._refresh_panel_embed()
+
+    async def _watch_deferred_maps(self) -> None:
+        await self.bot.wait_until_ready()
+        while True:
+            for request in list(self._requests.values()):
+                if not isinstance(request, dict) or request.get("status") != "waiting_for_players":
+                    continue
+                try:
+                    # Read failures leave the approved request queued for the next poll.
+                    if await self._server_has_players(self._backend(str(request["server_name"]))):
+                        await self._resume_deferred_map(request)
+                except Exception:
+                    LOGGER.exception("Could not check deferred midpoint request")
+            await asyncio.sleep(PLAYER_CHECK_INTERVAL_SECONDS)
 
     async def _map_catalogue(self, server_name: str) -> list[dict[str, str]]:
         async with self._map_lock:
@@ -1117,7 +1217,7 @@ class EventMapRequests(commands.Cog):
 
         async with self._request_lock:
             if any(
-                str(request.get("status")) in {"pending", "processing"}
+                str(request.get("status")) in {"pending", "processing", "waiting_for_players"}
                 and int(request.get("requester_id") or 0) == interaction.user.id
                 and str(request.get("request_type") or "map") == "map"
                 and str(request.get("server_name") or PUBLIC_BACKEND_NAME) == server_name
@@ -1367,6 +1467,18 @@ class EventMapRequests(commands.Cog):
                     ephemeral=True,
                 )
                 return
+            if approved and str(request.get("request_type") or "map") == "map" and any(
+                other is not request
+                and isinstance(other, dict)
+                and other.get("status") == "waiting_for_players"
+                and other.get("server_name") == request.get("server_name")
+                for other in self._requests.values()
+            ):
+                await interaction.followup.send(
+                    "This server already has an approved midpoint request waiting for a player to join. Please let it finish first.",
+                    ephemeral=True,
+                )
+                return
             request["status"] = "processing" if approved else "denied"
             request.pop("backend_error", None)
             request.pop("backend_error_at", None)
@@ -1426,7 +1538,7 @@ class EventMapRequests(commands.Cog):
                 return
 
             async with self._request_lock:
-                request["status"] = "approved"
+                request["status"] = "waiting_for_players" if result.get("deferred") else "approved"
                 request["resolved_by"] = interaction.user.id
                 request["resolved_at"] = datetime.now(timezone.utc).isoformat()
                 if request_type == "admin_cam":
@@ -1451,10 +1563,14 @@ class EventMapRequests(commands.Cog):
             LOGGER.exception("Could not update resolved event request %s", message_key)
 
         await self._refresh_panel_embed()
+        if request.get("status") == "waiting_for_players":
+            await self._notify_map_requester(request, str(request["backend_message"]))
         if not approved:
             action = "denied"
         elif str(request.get("request_type") or "map") == "admin_cam":
             action = "approved and temporary admin cam access was granted"
+        elif request.get("status") == "waiting_for_players":
+            action = "approved; the map is queued and the midpoint will be applied automatically once a player joins"
         elif request.get("midpoint"):
             action = "approved and the selected midpoint was applied"
         else:
