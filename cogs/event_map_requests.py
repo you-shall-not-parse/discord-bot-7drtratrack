@@ -36,6 +36,8 @@ MAP_CACHE_MAX_AGE = timedelta(hours=4)
 SELECT_PAGE_SIZE = 25
 PANEL_HISTORY_LIMIT = 2
 MAP_FLIP_DELAY_SECONDS = 90
+MAP_LOAD_CHECK_INTERVAL_SECONDS = 30
+MAP_LOAD_RECHECKS = 6
 PLAYER_CHECK_INTERVAL_SECONDS = 30
 
 PANEL_STATE_PATH = Path(data_path("event_map_request_panel.json"))
@@ -673,6 +675,7 @@ class EventMapRequests(commands.Cog):
                 "server, or temporary admin cam access on **Public** or **HLLV**.\n\n"
                 "For a map request, choose the map, game mode, and time-of-day variant. "
                 "Public requests can also choose the midpoint (Sector 3); the other sectors are random. "
+                "A specified midpoint requires at least one player on the server before submitting. "
                 "For admin cam, choose the server and how long you need access.\n\n"
                 "HLLV admin cam uses your HLLV EOS ID, resolved the same way as `/t17admincam`; "
                 "the first lookup requires you to be connected with a matching Discord name.\n\n"
@@ -815,10 +818,15 @@ class EventMapRequests(commands.Cog):
             )
             embed.add_field(name="Map", value=str(request["friendly_name"]), inline=True)
             embed.add_field(name="Variant", value=_variant_label(request), inline=True)
+            embed.add_field(name="Running map (last checked)", value=str(request.get("running_map") or "Unknown"), inline=True)
+            player_count = request.get("player_count")
+            embed.add_field(name="Players online (last checked)", value=str(player_count) if player_count is not None else "Unknown", inline=True)
+            if request.get("server_checked_at"):
+                embed.add_field(name="Server checked", value=f"<t:{int(request['server_checked_at'])}:R>", inline=True)
             if request.get("midpoint"):
                 embed.add_field(name="Midpoint (Sector 3)", value=str(request["midpoint"]), inline=True)
                 embed.add_field(
-                    name="Layout", value="Other sectors: RANDOM. On an empty server, the map is queued and the midpoint waits for a player to join. Any required map flip is followed by a 90-second wait before applying the layout.",
+                    name="Layout", value="Other sectors: RANDOM. At least one player is required to submit a specified midpoint. If the requested map is already running, the midpoint is applied immediately (one flip). Otherwise the map changes first, then the midpoint is applied after at least 90 seconds and confirmation that the map has loaded (two flips).",
                     inline=False,
                 )
             embed.add_field(name="RCON name", value=f"`{request['rcon_name']}`", inline=False)
@@ -975,10 +983,11 @@ class EventMapRequests(commands.Cog):
                 raise HLLBackendError("Midpoint requests are only available for Public HLL")
             if midpoint not in await self._midpoint_options(request):
                 raise HLLBackendError("The selected midpoint is not available for this map variant")
-            if not await self._server_has_players(backend):
+            if not await self._server_has_players(backend, request):
                 return await self._defer_midpoint(request, backend, target)
             # This live read returns the exact variant, unlike friendly game-state names.
             current = await backend.get_sector_options()
+            request["running_map"] = current["mapRconName"]
             if current["mapRconName"] != target or request.get("map_queued_empty"):
                 await backend.change_map(target)
                 request.pop("map_queued_empty", None)
@@ -996,11 +1005,22 @@ class EventMapRequests(commands.Cog):
                     current = await backend.get_sector_options()
             # Players can leave while the map is loading. Never send a layout
             # mutation to an empty server, even after a successful map flip.
-            if not await self._server_has_players(backend):
+            if not await self._server_has_players(backend, request):
                 return await self._defer_midpoint(request, backend, target)
+            # The backend can still report the previous map after 90 seconds.
+            # Keep checking automatically without issuing another map flip.
+            for _ in range(MAP_LOAD_RECHECKS):
+                if current["mapRconName"] == target:
+                    break
+                await asyncio.sleep(MAP_LOAD_CHECK_INTERVAL_SECONDS)
+                if not await self._server_has_players(backend, request):
+                    return await self._defer_midpoint(request, backend, target)
+                current = await backend.get_sector_options()
+            request["running_map"] = current["mapRconName"]
             if current["mapRconName"] != target:
                 raise HLLBackendError(
-                    "The requested map is not running yet. The layout was not applied; retry approval when it has loaded."
+                    "The requested map is not running yet after automatic load checks. "
+                    "The layout was not applied; retry approval when it has loaded."
                 )
             # The all-map catalogue is a union across variants. Validate against
             # the live variant before issuing the layout mutation.
@@ -1011,15 +1031,48 @@ class EventMapRequests(commands.Cog):
             return result
 
     @staticmethod
-    async def _server_has_players(backend) -> bool:
-        state = await backend.get_mapvote_game_state()
+    def _player_count(state) -> int:
         try:
             counts = [int(state[team]["playerCount"]) for team in ("team1", "team2")]
         except (KeyError, TypeError, ValueError):
             raise HLLBackendError("Could not determine whether the server has players")
         if any(count < 0 for count in counts):
             raise HLLBackendError("Invalid server player count")
-        return sum(counts) > 0
+        return sum(counts)
+
+    @classmethod
+    async def _server_has_players(cls, backend, request=None) -> bool:
+        count = cls._player_count(await backend.get_mapvote_game_state())
+        if request is not None:
+            request["player_count"] = count
+            request["server_checked_at"] = int(time.time())
+        return count > 0
+
+    async def _server_snapshot(self, server_name: str) -> dict[str, Any]:
+        backend = self._backend(server_name)
+        snapshot: dict[str, Any] = {"running_map": "Unknown", "player_count": None, "server_checked_at": int(time.time())}
+        try:
+            state = await backend.get_mapvote_game_state()
+            snapshot["player_count"] = self._player_count(state)
+            payload = state.get("data") or {}
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except (TypeError, ValueError):
+                    payload = {}
+            if isinstance(payload, dict):
+                for key in ("mapRconName", "currentMap", "current_map", "map", "mapName", "map_name", "server.map.name"):
+                    if isinstance(payload.get(key), str) and payload[key].strip():
+                        snapshot["running_map"] = payload[key].strip()
+                        break
+        except HLLBackendError:
+            LOGGER.warning("Could not read request server population for %s", server_name, exc_info=True)
+        if server_name == PUBLIC_BACKEND_NAME:
+            try:
+                snapshot["running_map"] = (await backend.get_sector_options())["mapRconName"]
+            except HLLBackendError:
+                LOGGER.warning("Could not read request server map for %s", server_name, exc_info=True)
+        return snapshot
 
     async def _defer_midpoint(self, request, backend, target) -> dict[str, Any]:
         if not request.get("map_queued_empty"):
@@ -1207,6 +1260,16 @@ class EventMapRequests(commands.Cog):
             if not valid:
                 await interaction.followup.send("Choose a valid midpoint for the selected map.", ephemeral=True)
                 return
+        snapshot = await self._server_snapshot(server_name)
+        if midpoint and (snapshot["player_count"] is None or snapshot["player_count"] < 1):
+            message = (
+                "A specified midpoint requires at least one player on the server. "
+                "Join the server and wait until the bot registers a player, then submit your request again."
+                if snapshot["player_count"] == 0 else
+                "The bot could not verify the server player count. Please retry once it registers at least one player."
+            )
+            await interaction.followup.send(message, ephemeral=True)
+            return
         approval_channel = await self._get_channel(APPROVAL_CHANNEL_ID)
         if approval_channel is None:
             await interaction.followup.send(
@@ -1232,6 +1295,7 @@ class EventMapRequests(commands.Cog):
 
             request: dict[str, Any] = {
                 **map_data,
+                **snapshot,
                 "request_type": "map",
                 "requester_id": interaction.user.id,
                 "request_channel_id": interaction.channel_id,

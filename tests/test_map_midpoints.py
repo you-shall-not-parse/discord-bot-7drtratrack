@@ -191,6 +191,31 @@ class MidpointApprovalTests(unittest.IsolatedAsyncioTestCase):
                 await self.cog._apply_map_request(self.request)
         self.backend.set_sector_layout.assert_not_awaited()
 
+    async def test_slow_map_load_rechecks_automatically_without_another_flip(self):
+        self.backend.get_sector_options.side_effect = [live("foy_warfare"), live("foy_warfare"), live()]
+        with patch("cogs.event_map_requests.time.time", return_value=100), patch(
+            "cogs.event_map_requests.asyncio.sleep", new_callable=AsyncMock
+        ) as sleep:
+            await self.cog._apply_map_request(self.request)
+        self.backend.change_map.assert_awaited_once_with("carentan_warfare")
+        self.assertEqual(sleep.await_args_list, [call(90), call(30)])
+        self.backend.set_sector_layout.assert_awaited_once()
+        self.assertEqual(self.request["running_map"], "carentan_warfare")
+        self.assertEqual(self.request["player_count"], 1)
+
+    async def test_player_leaves_during_load_rechecks_never_applies_midpoint(self):
+        self.backend.get_sector_options.return_value = live("foy_warfare")
+        self.backend.get_mapvote_game_state.side_effect = [
+            {"team1": {"playerCount": 1}, "team2": {"playerCount": 0}},
+            {"team1": {"playerCount": 1}, "team2": {"playerCount": 0}},
+            {"team1": {"playerCount": 0}, "team2": {"playerCount": 0}},
+        ]
+        with patch("cogs.event_map_requests.asyncio.sleep", new_callable=AsyncMock):
+            result = await self.cog._apply_map_request(self.request)
+        self.assertTrue(result["deferred"])
+        self.backend.set_sector_layout.assert_not_awaited()
+        self.assertEqual(self.request["player_count"], 0)
+
     async def test_failed_first_flip_never_sleeps_or_applies_layout(self):
         self.backend.get_sector_options.return_value = live("foy_warfare")
         self.backend.change_map.side_effect = HLLBackendError("unavailable")
@@ -278,7 +303,40 @@ class MidpointApprovalTests(unittest.IsolatedAsyncioTestCase):
         await self.cog.create_request(interaction, data)
         self.assertEqual(self.cog._requests["20"]["midpoint"], "TOWN CENTER")
         embed = channel.send.call_args.kwargs["embed"]
-        self.assertIn("TOWN CENTER", {field.name: field.value for field in embed.fields}.values())
+        fields = {field.name: field.value for field in embed.fields}
+        self.assertIn("TOWN CENTER", fields.values())
+        self.assertEqual(fields["Running map (last checked)"], "carentan_warfare")
+        self.assertEqual(fields["Players online (last checked)"], "1")
+        self.assertIn("Server checked", fields)
+
+    async def test_empty_or_unknown_server_blocks_specified_midpoint_submission(self):
+        self.cog._get_channel = AsyncMock()
+        interaction = SimpleNamespace(followup=SimpleNamespace(send=AsyncMock()))
+        for state in ({"team1": {"playerCount": 0}, "team2": {"playerCount": 0}}, {}):
+            with self.subTest(state=state):
+                self.backend.get_mapvote_game_state.return_value = state
+                await self.cog.create_request(interaction, {**self.request, "server_label": "Public"})
+                self.cog._get_channel.assert_not_awaited()
+                self.backend.change_map.assert_not_awaited()
+                self.backend.set_sector_layout.assert_not_awaited()
+                self.assertIn("at least one player", interaction.followup.send.call_args.args[0])
+
+    async def test_normal_map_request_on_empty_server_reaches_staff_with_zero_players(self):
+        self.backend.get_mapvote_game_state.return_value = {
+            "team1": {"playerCount": 0}, "team2": {"playerCount": 0},
+        }
+        self.cog._requests = {}
+        self.cog._request_lock = asyncio.Lock()
+        self.cog._approval_view = None
+        channel = SimpleNamespace(id=10, send=AsyncMock(return_value=SimpleNamespace(id=20)))
+        self.cog._get_channel = AsyncMock(return_value=channel)
+        interaction = SimpleNamespace(user=SimpleNamespace(id=123), channel_id=99, followup=SimpleNamespace(send=AsyncMock()))
+        await self.cog.create_request(interaction, {
+            **self.request, "midpoint": "", "server_label": "Public", "friendly_name": "Carentan",
+        })
+        fields = {field.name: field.value for field in channel.send.call_args.kwargs["embed"].fields}
+        self.assertEqual(fields["Players online (last checked)"], "0")
+        self.assertEqual(self.cog._requests["20"]["status"], "pending")
 
     async def test_forged_submission_never_reaches_staff(self):
         self.cog._get_channel = AsyncMock()
