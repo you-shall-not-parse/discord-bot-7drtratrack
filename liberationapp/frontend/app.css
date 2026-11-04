@@ -10,6 +10,24 @@
   --red: #b95b47;
 }
 
+.scorecard-matches { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 24px; }
+.scorecard-matches fieldset { min-width: 0; margin: 0; padding: 20px; border: 1px solid var(--line); }
+.scorecard-matches legend { padding: 0 8px; color: var(--olive); font: 600 24px Barlow Condensed, sans-serif; text-transform: uppercase; }
+.scorecard-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 18px; }
+.scorecard-fields small { display: block; margin-top: 6px; line-height: 1.5; color: var(--muted); }
+.scorecard-phase { margin: 20px 0; padding: 18px; border: 1px solid var(--line); line-height: 1.7; }
+.scorecard-phase summary { cursor: pointer; color: var(--olive); font-weight: 600; }
+.building-report-form .scorecard-check { display: flex; align-items: start; gap: 10px; margin: 10px 0; text-transform: none; letter-spacing: normal; line-height: 1.6; }
+.building-report-form .scorecard-check input { width: 18px; height: 18px; margin: 3px 0 0; flex: 0 0 18px; accent-color: var(--olive); }
+.scorecard-total { padding: 16px 0; color: var(--olive); font-weight: 600; line-height: 1.6; }
+.scorecard-breakdown { margin: 0; font-size: 12px; }
+.scorecard-breakdown div { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); }
+.scorecard-breakdown dd { margin: 0; font-variant-numeric: tabular-nums; }
+.scorecard-result { margin-top: 22px; padding: 18px; background: #d96e4212; border-left: 3px solid var(--orange); line-height: 1.6; }
+.scorecard-result.qualified { border-color: var(--green); background: #8fa85e15; }
+.scorecard-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+@media (max-width: 420px) { .scorecard-fields { grid-template-columns: 1fr; } .scorecard-matches fieldset { padding: 12px; } }
+
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html { background: var(--paper); color-scheme: dark; }

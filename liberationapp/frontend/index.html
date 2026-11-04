@@ -9,8 +9,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/assets/app.css?v=21">
-  <script defer src="/assets/app.js?v=18"></script>
+  <link rel="stylesheet" href="/assets/app.css?v=22">
+  <script defer src="/assets/app.js?v=19"></script>
 </head>
 <body>
   <div class="grain" aria-hidden="true"></div>
@@ -55,6 +55,7 @@
         <button class="tab" data-view="all-time-leaderboard">All-time leaderboard</button>
         <button class="tab" data-view="directory">HLLV names</button>
         <button class="tab" data-view="building-inspectors">Registered Building Inspectors</button>
+        <button class="tab" data-view="scorecards">Scorecards</button>
         <button class="tab" data-view="knowledge-base">Knowledge base</button>
       </nav>
     </div>
@@ -164,6 +165,26 @@
       <p id="building-report-status" class="muted-copy" role="status" aria-live="polite">Reports are sent to both Registered Building Inspector Discord channels.</p>
       <div class="subsection-heading spaced"><h3>My reports</h3><span>Latest 50</span></div>
       <div id="building-report-history"></div>
+    </section>
+
+    <section id="scorecards" class="dashboard-view" hidden>
+      <div class="section-heading"><div><p class="eyebrow">RECON QUALIFICATION</p><h2>Scorecards</h2></div><p>Enter match stats to calculate your Spotter score and check qualification requirements.</p></div>
+      <p class="muted-copy">Spotter rules are available below. The second role's scorecard has not been supplied yet.</p>
+      <form id="scorecard-form" class="building-report-form">
+        <div class="form-columns"><div><label for="scorecard-player">Player</label><input id="scorecard-player" maxlength="80" placeholder="Player name"></div><div><label for="scorecard-mode">Qualification route</label><select id="scorecard-mode"><option value="single">One submission: 80 points</option><option value="double">Two submissions: 60 points each</option></select></div></div>
+        <details class="scorecard-phase" open><summary>Phase 1 — trainer assessment</summary>
+          <p>A Recon Trainer must assess competency and sign off Phase 1. Check these together with your trainer.</p>
+          <div id="scorecard-checklist"></div>
+          <label for="scorecard-trainer">Recon Trainer</label><input id="scorecard-trainer" maxlength="80" placeholder="Trainer name">
+          <label class="scorecard-check"><input id="scorecard-signoff" type="checkbox">Trainer has signed off Phase 1 as competent</label>
+        </details>
+        <div id="scorecard-matches" class="scorecard-matches"></div>
+        <div id="scorecard-result" class="scorecard-result" role="status" aria-live="polite" aria-atomic="true"></div>
+        <details class="scorecard-phase"><summary>Scoring rules and assumptions</summary><p>Kills: 1 point each, maximum 30. Officer kills: 1 each, maximum 10. Commander kills: 2 each, up to 3 kills (6 points). Average life: 1 point per complete 30 seconds above 3 minutes, maximum 10. Best kill streak: 2 points per complete 5 kills. OPs destroyed: 2 each. Structures destroyed: 2 each. Garrisons destroyed: 3 each. Structures built: 2 each. K/D bonus: 1 per complete 0.1 above 1.3, maximum 10, only with at least 15 kills.</p><p>Every submitted match must have K/D ≥ 1.2. Zero deaths with positive kills meets the K/D requirement; 0 kills and 0 deaths does not. Enter structures destroyed separately from OPs and garrisons to avoid double counting. The card does not specify a streak cap; this calculator uses the best streak. Confirm these interpretations with your trainer.</p><p>Results are a calculation aid. Send your match screenshots to the allocated reviewer for verification. Entries stay in this page until reset or reloaded; nothing is submitted.</p></details>
+        <div class="scorecard-actions"><button type="button" id="scorecard-copy">Copy summary</button><button type="reset">Reset scorecard</button></div>
+        <p id="scorecard-copy-status" class="muted-copy" role="status"></p>
+        <label for="scorecard-summary">Review summary</label><textarea id="scorecard-summary" rows="8" readonly></textarea>
+      </form>
     </section>
 
     <section id="knowledge-base" class="dashboard-view" hidden>

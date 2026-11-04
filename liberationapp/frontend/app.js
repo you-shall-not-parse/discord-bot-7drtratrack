@@ -1,4 +1,4 @@
-const VIEWS = new Set(["overview", "personnel", "server-status", "upcoming", "war-diary", "highlights", "statistics", "all-time-leaderboard", "directory", "building-inspectors", "knowledge-base"]);
+const VIEWS = new Set(["overview", "personnel", "server-status", "upcoming", "war-diary", "highlights", "statistics", "all-time-leaderboard", "directory", "building-inspectors", "scorecards", "knowledge-base"]);
 const requestedView = location.hash.replace(/^#/, "");
 const state = { data: null, view: VIEWS.has(requestedView) ? requestedView : "overview", eventLayout: "list" };
 const warLeaderboardSort = { key: "kills", direction: "desc" };
@@ -685,3 +685,98 @@ $("#retry").addEventListener("click", loadDashboard);
 loadSupportingFeatures();
 loadDashboard();
 setInterval(loadDashboard, 60_000);
+
+// Kept separate from live dashboard rendering so refreshes preserve entered stats.
+function calculateSpotter(stats) {
+  const count = key => Math.max(0, Math.floor(Number(stats[key]) || 0));
+  const kills = count("kills"), deaths = count("deaths");
+  const kd = deaths ? kills / deaths : kills ? Infinity : 0;
+  const points = {
+    "Kills": Math.min(kills, 30),
+    "Officer kills": Math.min(count("officers"), 10),
+    "Commander kills": Math.min(count("commanders"), 3) * 2,
+    "Average life": Math.min(10, Math.max(0, Math.floor((count("minutes") * 60 + count("seconds") - 180) / 30))),
+    "Best kill streak": Math.floor(count("streak") / 5) * 2,
+    "OPs destroyed": count("ops") * 2,
+    "Structures destroyed": count("destroyed") * 2,
+    "Garrisons destroyed": count("garrisons") * 3,
+    "Structures built": count("built") * 2,
+    "K/D bonus": kills >= 15 ? Math.min(10, Math.max(0, Math.floor((kd - 1.3) * 10 + 1e-9))) : 0
+  };
+  return { points, total: Object.values(points).reduce((sum, n) => sum + n, 0), kd, kdMet: kd >= 1.2 };
+}
+
+function initialiseScorecards() {
+  const form = $("#scorecard-form");
+  if (!form) return;
+  const criteria = [
+    "Have the flare unlocked and use it.",
+    "Get behind the enemy as soon as possible.",
+    "Mark the map for your sniper and team.",
+    "Communicate regularly and concisely with command.",
+    "Actively guide your sniper on your plan.",
+    "Maintain OP placement and monitor it regularly.",
+    "Demonstrate garrison placement."
+  ];
+  $("#scorecard-checklist").innerHTML = criteria.map((text, i) => `<label class="scorecard-check"><input type="checkbox" id="scorecard-criterion-${i}">${text}</label>`).join("");
+  const fields = [
+    ["kills", "Kills", "1 each · max 30 points"], ["deaths", "Deaths", "Used to calculate K/D"],
+    ["officers", "Officer kills", "1 each · max 10 points"], ["commanders", "Commander kills", "2 each · max 3 kills"],
+    ["minutes", "Average life — minutes", "Bonus starts above 3 minutes"], ["seconds", "Average life — seconds", "0–59 seconds"],
+    ["streak", "Best kill streak", "2 points per complete 5 kills"], ["ops", "OPs destroyed", "2 points each"],
+    ["destroyed", "Other structures destroyed", "2 each · exclude OPs / garrisons"], ["garrisons", "Garrisons destroyed", "3 points each"],
+    ["built", "Structures built", "2 points each"]
+  ];
+  $("#scorecard-matches").innerHTML = [1, 2].map(n => `<fieldset id="scorecard-match-${n}"><legend>Submission ${n}</legend><label for="sc-${n}-match">Match / map / date</label><input id="sc-${n}-match" maxlength="120" placeholder="Match reference"><div class="scorecard-fields">${fields.map(([key, label, hint]) => `<div><label for="sc-${n}-${key}">${label}</label><input id="sc-${n}-${key}" data-stat="${key}" type="number" min="0" ${key === "seconds" ? 'max="59"' : 'max="1000000"'} step="1" inputmode="numeric" required value="0"><small>${hint}</small></div>`).join("")}</div><div id="sc-${n}-total" class="scorecard-total"></div><dl id="sc-${n}-breakdown" class="scorecard-breakdown"></dl></fieldset>`).join("");
+
+  function update() {
+    const double = $("#scorecard-mode").value === "double";
+    const second = $("#scorecard-match-2");
+    second.hidden = !double;
+    second.disabled = !double;
+    const target = double ? 60 : 80;
+    const phase1 = criteria.every((_, i) => $(`#scorecard-criterion-${i}`).checked)
+      && $("#scorecard-signoff").checked && $("#scorecard-trainer").value.trim().length > 0;
+    const valid = form.checkValidity();
+    const results = [];
+    for (let n = 1; n <= (double ? 2 : 1); n++) {
+      const stats = Object.fromEntries([...$(`#scorecard-match-${n}`).querySelectorAll("[data-stat]")].map(input => [input.dataset.stat, input.value]));
+      const result = calculateSpotter(stats);
+      results.push(result);
+      const kd = Number.isFinite(result.kd) ? result.kd.toFixed(2) : "∞ (no deaths)";
+      $(`#sc-${n}-total`).textContent = `${result.total} points / ${target} required · K/D ${kd} · ${result.kdMet ? "K/D met" : "K/D below 1.2"}`;
+      $(`#sc-${n}-breakdown`).innerHTML = Object.entries(result.points).map(([label, value]) => `<div><dt>${label}</dt><dd>${value}</dd></div>`).join("");
+    }
+    const scoresMet = valid && results.every(result => result.total >= target && result.kdMet);
+    const message = !valid ? "Check your inputs — use whole, non-negative numbers and 0–59 for seconds."
+      : scoresMet && phase1 ? "Requirements met — ready for reviewer verification."
+      : scoresMet ? "Phase 2 requirements met — Phase 1 trainer sign-off still needed."
+      : "Requirements not yet met — check each score and the 1.2 minimum K/D.";
+    $("#scorecard-result").textContent = message;
+    $("#scorecard-result").classList.toggle("qualified", scoresMet && phase1);
+    $("#scorecard-summary").value = [
+      `SPOTTER SCORECARD — ${$("#scorecard-player").value.trim() || "Unnamed player"}`,
+      `Route: ${double ? "2 × 60" : "1 × 80"} points; K/D ≥ 1.2 per match`,
+      `Phase 1: ${phase1 ? "signed off" : "incomplete"}; Trainer: ${$("#scorecard-trainer").value.trim() || "not recorded"}`,
+      ...results.flatMap((r, i) => [`Submission ${i + 1}: ${$(`#sc-${i + 1}-match`).value.trim() || "no match reference"} — ${r.total} points; K/D ${Number.isFinite(r.kd) ? r.kd.toFixed(2) : "∞ (no deaths)"}`, ...Object.entries(r.points).map(([key, value]) => `  ${key}: ${value}`)]),
+      message, "Calculation aid — screenshots and trainer/reviewer verification required."
+    ].join("\n");
+    $("#scorecard-copy-status").textContent = "";
+  }
+  form.addEventListener("submit", event => event.preventDefault());
+  form.addEventListener("input", update);
+  form.addEventListener("change", update);
+  form.addEventListener("reset", () => setTimeout(update, 0));
+  $("#scorecard-copy").addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText($("#scorecard-summary").value);
+      $("#scorecard-copy-status").textContent = "Summary copied. Send it with your screenshots to your reviewer.";
+    } catch {
+      $("#scorecard-summary").focus();
+      $("#scorecard-summary").select();
+      $("#scorecard-copy-status").textContent = "Select and copy the summary below.";
+    }
+  });
+  update();
+}
+initialiseScorecards();
