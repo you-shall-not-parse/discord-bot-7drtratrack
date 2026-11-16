@@ -70,11 +70,11 @@ class ReactionRolePushTests(unittest.IsolatedAsyncioTestCase):
         bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
         async with bot:
             # Registration only: avoid connecting to Discord or running background jobs.
-            command = ReactionRoles.push_reaction_roles.copy()
+            command = self.cog.push_reaction_roles
             bot.tree.add_command(command)
             registered = bot.tree.get_command("push_reaction_roles", guild=discord.Object(id=MAIN_GUILD_ID))
             self.assertIs(registered, command)
-            options = {option["name"]: option for option in registered.to_dict(bot.tree)["options"]}
+            options = {option["name"]: option for option in registered.to_dict()["options"]}
             self.assertEqual(set(options), {"category", "channel", "text", "mention_everyone"})
             self.assertFalse(options["text"]["required"])
             self.assertFalse(options["mention_everyone"]["required"])

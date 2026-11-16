@@ -468,7 +468,7 @@ class ReactionRoles(commands.Cog):
         embed.add_field(name="Posted by", value=f"<@{interaction.user.id}>", inline=False)
         embed.add_field(
             name="Choose below",
-            value=f"This uses the same selections as <#{ROLE_SELECTOR_CHANNEL_ID}>. Expires <t:{expires_at}:R>.",
+            value=f"This message expires in 7 days but you can use <#{ROLE_SELECTOR_CHANNEL_ID}>.",
             inline=False,
         )
         view = ReactionRolePushView(self, category, expires_at)
