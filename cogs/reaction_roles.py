@@ -413,6 +413,7 @@ class ReactionRoles(commands.Cog):
         return embed
 
     @app_commands.command(name="push_reaction_roles", description="Post one role-directory section for one week")
+    @app_commands.guilds(discord.Object(id=MAIN_GUILD_ID))
     @app_commands.guild_only()
     @app_commands.describe(
         category="Which child panel to post",

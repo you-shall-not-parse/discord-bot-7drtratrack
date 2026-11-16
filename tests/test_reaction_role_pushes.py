@@ -64,6 +64,21 @@ class ReactionRolePushTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row, (456, 789, MAIN_GUILD_ID, "play_style", int((now + timedelta(weeks=1)).timestamp())))
         self.assertEqual(self.cog.state, {})
 
+    async def test_command_registers_in_main_server_with_all_options(self) -> None:
+        from discord.ext import commands
+
+        bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+        async with bot:
+            # Registration only: avoid connecting to Discord or running background jobs.
+            command = ReactionRoles.push_reaction_roles.copy()
+            bot.tree.add_command(command)
+            registered = bot.tree.get_command("push_reaction_roles", guild=discord.Object(id=MAIN_GUILD_ID))
+            self.assertIs(registered, command)
+            options = {option["name"]: option for option in registered.to_dict(bot.tree)["options"]}
+            self.assertEqual(set(options), {"category", "channel", "text", "mention_everyone"})
+            self.assertFalse(options["text"]["required"])
+            self.assertFalse(options["mention_everyone"]["required"])
+
     async def test_snco_can_post_with_optional_text_and_initiator_tag(self) -> None:
         self.member.roles = [SimpleNamespace(name="7DR-SNCO")]
         await self.push(text="Please pick your style! @everyone")
