@@ -31,8 +31,6 @@ ROLE_DM_MESSAGES: dict[str, str] = {
 	"👋 Check out [#community-info-and-faq](https://discord.com/channels/1097913605082579024/1441744889145720942) and join us in [#community-chat](https://discord.com/channels/1097913605082579024/1441511200474271875) for HLL chatter, in [#the-arcade](https://discord.com/channels/1097913605082579024/1398672228803018763) for other games or in [#side-quests](https://discordapp.com/channels/1097913605082579024/1399082728313458778) for hobbies.\n\n"
 	"You can see all of our upcoming events in [#upcoming-events-calendar](https://discord.com/channels/1097913605082579024/1332736267485708419) to plan and organise events with us! \n\n"
 	"**What clan are you in?** Please type your clan's full name here. "
-	"Next, I'll ask for your clan acronym and the name you go by. "
-	"I'll share your answers with our NCO team and set your server nickname to [ACRONYM]Name, for example [OFIN]Gerry."
 }
 
 # If the member's matched onboarding role is in this set, the bot will also
