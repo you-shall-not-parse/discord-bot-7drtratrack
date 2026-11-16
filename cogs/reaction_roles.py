@@ -414,21 +414,27 @@ class ReactionRoles(commands.Cog):
 
     @app_commands.command(name="push_reaction_roles", description="Post one role-directory section for one week")
     @app_commands.guild_only()
-    @app_commands.describe(category="Which child panel to post", channel="Where to post the reminder")
+    @app_commands.describe(
+        category="Which child panel to post",
+        channel="Where to post the reminder",
+        text="Optional message to include in the embed (up to 2000 characters)",
+        mention_everyone="Ping @everyone above the embed (requires Mention Everyone permission)",
+    )
     @app_commands.choices(category=[
         app_commands.Choice(name=label, value=key) for key, label in PUSH_CATEGORIES.items()
     ])
     async def push_reaction_roles(
         self, interaction: discord.Interaction, category: str, channel: discord.TextChannel,
+        text: str | None = None, mention_everyone: bool = False,
     ) -> None:
         if (
             interaction.guild is None
             or interaction.guild.id != MAIN_GUILD_ID
             or not isinstance(interaction.user, discord.Member)
-            or not any(role.name == "Administration" for role in interaction.user.roles)
+            or not any(role.name in {"Administration", "7DR-SNCO"} for role in interaction.user.roles)
         ):
             await interaction.response.send_message(
-                "You need the Administration role in the 7DR server to use this command.", ephemeral=True,
+                "You need the Administration or 7DR-SNCO role in the 7DR server to use this command.", ephemeral=True,
             )
             return
         if category not in PUSH_CATEGORIES or channel.guild.id != interaction.guild.id:
@@ -438,12 +444,27 @@ class ReactionRoles(commands.Cog):
         if not permissions.view_channel or not permissions.send_messages:
             await interaction.response.send_message("Choose a channel where you can view and send messages.", ephemeral=True)
             return
+        text = text.strip() if text else None
+        if text and len(text) > 2000:
+            await interaction.response.send_message("Keep the optional embed text to 2000 characters or fewer.", ephemeral=True)
+            return
+        if mention_everyone:
+            bot_member = interaction.guild.me
+            if not permissions.mention_everyone or bot_member is None or not channel.permissions_for(bot_member).mention_everyone:
+                await interaction.response.send_message(
+                    "You and the bot both need Mention Everyone permission in the destination channel to enable this ping.",
+                    ephemeral=True,
+                )
+                return
         await interaction.response.defer(ephemeral=True, thinking=True)
         expires_at = int((discord.utils.utcnow() + timedelta(weeks=1)).timestamp())
         section = next(field for field in self.build_embed().fields if field.name == PUSH_CATEGORIES[category])
         embed = discord.Embed(
-            title=section.name, description=section.value, color=discord.Color.dark_green(),
+            title=section.name,
+            description=f"{text}\n\n{section.value}" if text else section.value,
+            color=discord.Color.dark_green(),
         )
+        embed.add_field(name="Posted by", value=f"<@{interaction.user.id}>", inline=False)
         embed.add_field(
             name="Choose below",
             value=f"This uses the same selections as <#{ROLE_SELECTOR_CHANNEL_ID}>. Expires <t:{expires_at}:R>.",
@@ -451,7 +472,11 @@ class ReactionRoles(commands.Cog):
         )
         view = ReactionRolePushView(self, category, expires_at)
         try:
-            message = await channel.send(embed=embed, view=view, allowed_mentions=discord.AllowedMentions.none())
+            message = await channel.send(
+                content="@everyone" if mention_everyone else None,
+                embed=embed, view=view,
+                allowed_mentions=discord.AllowedMentions(everyone=mention_everyone, users=False, roles=False, replied_user=False),
+            )
         except discord.HTTPException:
             view.stop()
             logger.exception("Could not post reaction-role reminder to %s.", channel.id)

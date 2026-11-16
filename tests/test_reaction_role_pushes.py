@@ -25,7 +25,7 @@ class ReactionRolePushTests(unittest.IsolatedAsyncioTestCase):
         self.member = MagicMock(spec=discord.Member)
         self.member.id = 123
         self.member.roles = [SimpleNamespace(name="Administration")]
-        self.guild = SimpleNamespace(id=MAIN_GUILD_ID)
+        self.guild = SimpleNamespace(id=MAIN_GUILD_ID, me=SimpleNamespace(id=999))
         self.interaction = SimpleNamespace(
             guild=self.guild, user=self.member,
             response=SimpleNamespace(send_message=AsyncMock(), defer=AsyncMock()),
@@ -35,7 +35,7 @@ class ReactionRolePushTests(unittest.IsolatedAsyncioTestCase):
         self.channel = MagicMock(spec=discord.TextChannel)
         self.channel.id = 789
         self.channel.guild = self.guild
-        self.channel.permissions_for.return_value = SimpleNamespace(view_channel=True, send_messages=True)
+        self.channel.permissions_for.return_value = SimpleNamespace(view_channel=True, send_messages=True, mention_everyone=True)
         self.channel.send = AsyncMock(return_value=self.message)
         self.channel.fetch_message = AsyncMock(return_value=self.message)
         self.bot.get_channel.return_value = self.channel
@@ -46,8 +46,8 @@ class ReactionRolePushTests(unittest.IsolatedAsyncioTestCase):
         self.state_patch.stop()
         self.temp.cleanup()
 
-    async def push(self, category="play_style") -> None:
-        await ReactionRoles.push_reaction_roles.callback(self.cog, self.interaction, category, self.channel)
+    async def push(self, category="play_style", **kwargs) -> None:
+        await ReactionRoles.push_reaction_roles.callback(self.cog, self.interaction, category, self.channel, **kwargs)
 
     async def test_administration_can_post_one_section_for_exactly_one_week(self) -> None:
         now = discord.utils.utcnow()
@@ -63,6 +63,36 @@ class ReactionRolePushTests(unittest.IsolatedAsyncioTestCase):
         row = self.cog._birthday_db.execute("SELECT * FROM reaction_role_pushes").fetchone()
         self.assertEqual(row, (456, 789, MAIN_GUILD_ID, "play_style", int((now + timedelta(weeks=1)).timestamp())))
         self.assertEqual(self.cog.state, {})
+
+    async def test_snco_can_post_with_optional_text_and_initiator_tag(self) -> None:
+        self.member.roles = [SimpleNamespace(name="7DR-SNCO")]
+        await self.push(text="Please pick your style! @everyone")
+        args = self.channel.send.await_args.kwargs
+        self.assertTrue(args["embed"].description.startswith("Please pick your style! @everyone\n\n"))
+        fields = {field.name: field.value for field in args["embed"].fields}
+        self.assertEqual(fields["Posted by"], "<@123>")
+        self.assertIsNone(args["content"])
+        self.assertEqual(args["allowed_mentions"].to_dict()["parse"], [])
+
+    async def test_everyone_ping_is_explicit_and_disables_other_mentions(self) -> None:
+        await self.push(mention_everyone=True)
+        args = self.channel.send.await_args.kwargs
+        self.assertEqual(args["content"], "@everyone")
+        self.assertEqual(args["allowed_mentions"].to_dict()["parse"], ["everyone"])
+
+    async def test_everyone_ping_requires_invoker_and_bot_permission(self) -> None:
+        allowed = SimpleNamespace(view_channel=True, send_messages=True, mention_everyone=True)
+        denied = SimpleNamespace(view_channel=True, send_messages=True, mention_everyone=False)
+        for user_permissions, bot_permissions in [(denied, allowed), (allowed, denied)]:
+            self.channel.permissions_for.side_effect = [user_permissions, bot_permissions]
+            await self.push(mention_everyone=True)
+            self.channel.send.assert_not_awaited()
+            self.assertIn("Mention Everyone", self.interaction.response.send_message.await_args.args[0])
+
+    async def test_optional_text_is_bounded_to_embed_limits(self) -> None:
+        await self.push(text="x" * 2001)
+        self.channel.send.assert_not_awaited()
+        self.assertIn("2000", self.interaction.response.send_message.await_args.args[0])
 
     async def test_without_administration_role_post_is_denied(self) -> None:
         self.member.roles = [SimpleNamespace(name="Officer")]

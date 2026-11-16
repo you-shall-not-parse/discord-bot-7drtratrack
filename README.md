@@ -143,13 +143,17 @@ the answers to NCO, and sets the member's server nickname to `[ACRONYM]Name`.
 The bot needs Manage Nicknames and a role above the member to change their nickname;
 if that fails, it still reports their answers and the failure to NCO.
 
-Members with the **Administration** role can use
+Members with the **Administration** or **7DR-SNCO** role can use
 `/push_reaction_roles category:Play Style channel:#channel` to post a single
 directory section in a channel they can access and send to. HLL rank, play style,
 community team, and birthday sections are available. These reminders use the same
 role and birthday handlers as the master directory. Each expires after seven days,
 including across bot restarts, and its controls are removed within the next minute
 while the bot is online. Expiration preserves members' selected roles.
+The optional `text` argument adds up to 2000 characters to the embed, and every
+post identifies its initiator. Set `mention_everyone:true` to send an `@everyone`
+ping above the embed; both the initiator and bot need Mention Everyone permission
+in that channel. Pings default to off.
 
 ## Loaded Cogs
 
