@@ -1,7 +1,9 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 from cogs.trainee_alert import (
+    DIPLOMAT_ALERT,
     INFANTRY_ALERT,
     SQUAD_LEADER_ALERT,
     TANK_CREW_ALERT,
@@ -81,6 +83,40 @@ class TraineeAlertTests(unittest.TestCase):
     def test_test_slash_command_name(self) -> None:
         command = TraineeAlert.test_trainee_alert
         self.assertEqual(command.name, "test_trainee_alert")
+
+    def test_diplomat_alert_uses_role_id_and_clan_wording(self) -> None:
+        member = SimpleNamespace(roles=[SimpleNamespace(id=1098206797900284035, name="Renamed")])
+        self.assertTrue(_has_trainee_role(member, DIPLOMAT_ALERT))
+        self.assertEqual(DIPLOMAT_ALERT.alert_channel_id, 1097920441022152774)
+        content = _alert_content(123, None, DIPLOMAT_ALERT)
+        self.assertIn("<@123> has joined with the **Diplomat** role", content)
+        self.assertIn("clan name and acronym", content)
+        self.assertNotIn("training", content)
+
+
+class DiplomatAlertLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_role_added_after_join_alerts_only_once(self) -> None:
+        cog = TraineeAlert(MagicMock())
+        cog._send_alert = AsyncMock(return_value=object())
+        before = SimpleNamespace(id=123, roles=[])
+        after = SimpleNamespace(id=123, roles=[SimpleNamespace(id=1098206797900284035)])
+        try:
+            await cog.on_member_join(before)
+            await cog.on_member_update(before, after)
+            await cog.on_member_update(before, after)
+            cog._send_alert.assert_awaited_once_with(after, DIPLOMAT_ALERT)
+        finally:
+            cog.cog_unload()
+
+    async def test_member_joining_with_role_alerts(self) -> None:
+        cog = TraineeAlert(MagicMock())
+        cog._send_alert = AsyncMock(return_value=object())
+        member = SimpleNamespace(id=123, roles=[SimpleNamespace(id=1098206797900284035)])
+        try:
+            await cog.on_member_join(member)
+            cog._send_alert.assert_awaited_once_with(member, DIPLOMAT_ALERT)
+        finally:
+            cog.cog_unload()
 
 
 if __name__ == "__main__":

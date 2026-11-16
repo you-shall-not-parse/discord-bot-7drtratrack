@@ -7,6 +7,7 @@ import discord
 from discord.ext import commands
 
 from data_paths import data_path
+from cogs.trainee_alert import DIPLOMAT_ALERT
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,8 @@ ROLE_DM_MESSAGES: dict[str, str] = {
 	"Diplomat": "**Welcome! Since you chose Diplomat...** \n\n"
 	"👋 Check out [#community-info-and-faq](https://discord.com/channels/1097913605082579024/1441744889145720942) and join us in [#community-chat](https://discord.com/channels/1097913605082579024/1441511200474271875) for HLL chatter, in [#the-arcade](https://discord.com/channels/1097913605082579024/1398672228803018763) for other games or in [#side-quests](https://discordapp.com/channels/1097913605082579024/1399082728313458778) for hobbies.\n\n"
 	"You can see all of our upcoming events in [#upcoming-events-calendar](https://discord.com/channels/1097913605082579024/1332736267485708419) to plan and organise events with us! \n\n"
+	"**What clan are you in?** Please type your clan's full name here. "
+	"Next, I'll ask for your clan acronym and share both answers with our NCO team."
 }
 
 # If the member's matched onboarding role is in this set, the bot will also
@@ -68,6 +71,13 @@ class DiscordGreeting(commands.Cog):
 		self._intro_video_sent: set[int] = set()
 		self._welcome_tasks: dict[int, asyncio.Task] = {}
 		self._dm_locks: dict[int, asyncio.Lock] = {}
+		self._diplomat_sessions: dict[int, tuple[discord.Member, Optional[str]]] = {}
+
+	def cog_unload(self) -> None:
+		for task in self._welcome_tasks.values():
+			task.cancel()
+		self._welcome_tasks.clear()
+		self._diplomat_sessions.clear()
 
 	def _get_dm_lock(self, user_id: int) -> asyncio.Lock:
 		lock = self._dm_locks.get(user_id)
@@ -82,11 +92,15 @@ class DiscordGreeting(commands.Cog):
 			task.cancel()
 
 	def _pick_role_and_message(self, member: discord.Member) -> Optional[tuple[str, str]]:
+		if any(getattr(role, "id", None) == DIPLOMAT_ALERT.trainee_role_id for role in member.roles):
+			return "Diplomat", ROLE_DM_MESSAGES["Diplomat"]
 		if not ROLE_DM_MESSAGES:
 			return None
 
 		member_role_names = {r.name for r in member.roles}
 		for role_name, message in ROLE_DM_MESSAGES.items():
+			if role_name == "Diplomat":
+				continue  # Identify diplomats by their configured role ID.
 			if role_name in member_role_names:
 				return role_name, message
 		return None
@@ -172,6 +186,8 @@ class DiscordGreeting(commands.Cog):
 			try:
 				await member.send(message)
 				self._already_dmed.add(member.id)
+				if matched_role_name == "Diplomat":
+					self._diplomat_sessions[member.id] = (member, None)
 				return True
 			except discord.Forbidden:
 				logger.info("Cannot DM member %s (%s): DMs closed.", member, member.id)
@@ -223,6 +239,7 @@ class DiscordGreeting(commands.Cog):
 		# Allow leave/rejoin testing (or genuine rejoins) to receive DMs again.
 		self._already_dmed.discard(member.id)
 		self._intro_video_sent.discard(member.id)
+		self._diplomat_sessions.pop(member.id, None)
 		self._cancel_welcome_task(member.id)
 		# Note: we intentionally don't try to cancel any prior tasks here; those
 		# would be from a previous join and will naturally no-op or time out.
@@ -235,7 +252,52 @@ class DiscordGreeting(commands.Cog):
 		# If they leave and rejoin later, they should be eligible to receive the DM again.
 		self._already_dmed.discard(member.id)
 		self._intro_video_sent.discard(member.id)
+		self._diplomat_sessions.pop(member.id, None)
 		self._cancel_welcome_task(member.id)
+
+	@commands.Cog.listener()
+	async def on_message(self, message: discord.Message) -> None:
+		if message.author.bot or not isinstance(message.channel, discord.DMChannel):
+			return
+		if message.author.id not in self._diplomat_sessions:
+			return
+		async with self._get_dm_lock(message.author.id):
+			session = self._diplomat_sessions.get(message.author.id)
+			if session is None:
+				return
+			member, clan_name = session
+			answer = message.content.strip()
+			limit = 500 if clan_name is None else 100
+			try:
+				if not answer or len(answer) > limit:
+					await message.channel.send(f"Please type your {'clan name' if clan_name is None else 'clan acronym'} (1–{limit} characters).")
+					return
+				if clan_name is None:
+					await message.channel.send("**What is your clan acronym/tag?** Please type it here.")
+					self._diplomat_sessions[member.id] = (member, answer)
+					return
+
+				channel = self.bot.get_channel(DIPLOMAT_ALERT.alert_channel_id)
+				if channel is None:
+					channel = await self.bot.fetch_channel(DIPLOMAT_ALERT.alert_channel_id)
+				if not isinstance(channel, discord.TextChannel) or channel.guild.id != member.guild.id:
+					logger.error("Invalid NCO channel for diplomat %s in guild %s.", member.id, member.guild.id)
+					await message.channel.send("I couldn't send your details to the NCO team. Please contact a server admin.")
+					return
+				await channel.send(
+					f"**Diplomat clan details** — <@{member.id}>\n"
+					f"**Clan:** {discord.utils.escape_markdown(clan_name)}\n"
+					f"**Acronym/tag:** {discord.utils.escape_markdown(answer)}",
+					allowed_mentions=discord.AllowedMentions.none(),
+				)
+				self._diplomat_sessions.pop(member.id, None)
+				await message.channel.send("Thank you! Your clan name and acronym have been sent to our NCO team.")
+			except discord.HTTPException:
+				logger.exception("Could not process diplomat clan reply for %s.", member.id)
+				try:
+					await message.channel.send("I couldn't process your reply. Please try again or contact a server admin.")
+				except discord.HTTPException:
+					pass
 
 	@commands.Cog.listener()
 	async def on_member_update(self, before: discord.Member, after: discord.Member):
@@ -248,7 +310,11 @@ class DiscordGreeting(commands.Cog):
 			before_names = {r.name for r in before.roles}
 			after_names = {r.name for r in after.roles}
 			newly_added = after_names - before_names
-			if any(role_name in newly_added for role_name in ROLE_DM_MESSAGES.keys()):
+			diplomat_added = (
+				any(getattr(role, "id", None) == DIPLOMAT_ALERT.trainee_role_id for role in after.roles)
+				and not any(getattr(role, "id", None) == DIPLOMAT_ALERT.trainee_role_id for role in before.roles)
+			)
+			if diplomat_added or any(role_name in newly_added for role_name in ROLE_DM_MESSAGES.keys() if role_name != "Diplomat"):
 				picked = self._pick_role_and_message(after)
 				if picked:
 					matched_role_name, matched_message = picked

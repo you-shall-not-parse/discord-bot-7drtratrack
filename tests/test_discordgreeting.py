@@ -5,7 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
-from cogs.discordgreeting import DiscordGreeting
+from cogs.discordgreeting import DiscordGreeting, ROLE_DM_MESSAGES
+from cogs.trainee_alert import DIPLOMAT_ALERT
 
 
 class DiscordGreetingVideoTests(unittest.IsolatedAsyncioTestCase):
@@ -58,6 +59,77 @@ class DiscordGreetingVideoTests(unittest.IsolatedAsyncioTestCase):
 
 		self.assertTrue(sent)
 		self.assertEqual(self.member.send.await_count, 2)
+
+
+class DiplomatGreetingTests(unittest.IsolatedAsyncioTestCase):
+	def setUp(self) -> None:
+		self.bot = MagicMock()
+		self.cog = DiscordGreeting(self.bot)
+		self.member = SimpleNamespace(
+			id=123, send=AsyncMock(), guild=SimpleNamespace(id=456),
+			roles=[SimpleNamespace(id=DIPLOMAT_ALERT.trainee_role_id, name="Renamed diplomat")],
+		)
+		self.dm = MagicMock(spec=discord.DMChannel)
+		self.dm.send = AsyncMock()
+		self.nco = MagicMock(spec=discord.TextChannel)
+		self.nco.guild = self.member.guild
+		self.nco.send = AsyncMock()
+		self.bot.get_channel.return_value = self.nco
+
+	def reply(self, content: str, *, user_id: int = 123):
+		return SimpleNamespace(
+			author=SimpleNamespace(id=user_id, bot=False), channel=self.dm, content=content,
+		)
+
+	async def test_delayed_role_starts_dm_and_posts_both_typed_answers_once(self) -> None:
+		before = SimpleNamespace(id=123, roles=[])
+		await self.cog.on_member_update(before, self.member)
+		await self.cog.on_member_update(before, self.member)
+		self.member.send.assert_awaited_once_with(ROLE_DM_MESSAGES["Diplomat"])
+		self.assertIn("What clan are you in?", self.member.send.await_args.args[0])
+		await self.cog.on_message(self.reply("Other user's clan", user_id=999))
+		await self.cog.on_message(self.reply(""))
+		self.nco.send.assert_not_awaited()
+		await self.cog.on_message(self.reply("Example Clan"))
+		self.assertIn("acronym", self.dm.send.await_args.args[0])
+		await self.cog.on_message(self.reply("EC"))
+		await self.cog.on_message(self.reply("extra reply"))
+		self.bot.get_channel.assert_called_once_with(1097920441022152774)
+		self.nco.send.assert_awaited_once()
+		content = self.nco.send.await_args.args[0]
+		self.assertIn("<@123>", content)
+		self.assertIn("Example Clan", content)
+		self.assertIn("EC", content)
+		self.assertEqual(self.nco.send.await_args.kwargs["allowed_mentions"].to_dict(), discord.AllowedMentions.none().to_dict())
+		self.assertNotIn(123, self.cog._diplomat_sessions)
+
+	async def test_already_present_role_starts_flow(self) -> None:
+		await self.cog._welcome_after_onboarding(self.member)
+		self.assertIn(123, self.cog._diplomat_sessions)
+		self.bot.get_cog.assert_not_called()
+
+	async def test_closed_dms_do_not_create_session(self) -> None:
+		self.member.send.side_effect = discord.Forbidden(SimpleNamespace(status=403, reason="Forbidden"), "DMs closed")
+		await self.cog._welcome_after_onboarding(self.member)
+		self.assertNotIn(123, self.cog._diplomat_sessions)
+
+	async def test_failed_nco_post_keeps_answers_for_retry(self) -> None:
+		await self.cog._welcome_after_onboarding(self.member)
+		await self.cog.on_message(self.reply("Example Clan"))
+		self.nco.send.side_effect = discord.Forbidden(SimpleNamespace(status=403, reason="Forbidden"), "No access")
+		await self.cog.on_message(self.reply("EC"))
+		self.assertEqual(self.cog._diplomat_sessions[123][1], "Example Clan")
+		self.assertIn("try again", self.dm.send.await_args.args[0])
+		self.nco.send.side_effect = None
+		await self.cog.on_message(self.reply("EC"))
+		self.assertNotIn(123, self.cog._diplomat_sessions)
+
+	async def test_leaving_clears_pending_answers(self) -> None:
+		await self.cog._welcome_after_onboarding(self.member)
+		await self.cog.on_member_remove(self.member)
+		await self.cog.on_message(self.reply("Example Clan"))
+		self.nco.send.assert_not_awaited()
+		self.assertNotIn(123, self.cog._diplomat_sessions)
 
 
 if __name__ == "__main__":

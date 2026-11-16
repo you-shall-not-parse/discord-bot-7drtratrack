@@ -24,6 +24,7 @@ class TraineeAlertConfig:
     trainer_role_id: int | None = None
     trainer_role_name: str | None = None
     mention_trainer_role: bool = True
+    contact_prompt: str | None = None
 
 
 INFANTRY_ALERT = TraineeAlertConfig(
@@ -54,7 +55,17 @@ TANK_CREW_ALERT = TraineeAlertConfig(
     trainer_role_id=1337743860532645930,
 )
 
-ALERTS = (INFANTRY_ALERT, SQUAD_LEADER_ALERT, TANK_CREW_ALERT)
+DIPLOMAT_ALERT = TraineeAlertConfig(
+    key="diplomat",
+    label="Diplomat",
+    training_name="",
+    alert_channel_id=1097920441022152774,
+    trainee_role_id=1098206797900284035,
+    mention_trainer_role=False,
+    contact_prompt="They have been asked by DM for their clan name and acronym; their replies will be posted here.",
+)
+
+ALERTS = (INFANTRY_ALERT, SQUAD_LEADER_ALERT, TANK_CREW_ALERT, DIPLOMAT_ALERT)
 ALERTS_BY_KEY = {config.key: config for config in ALERTS}
 
 
@@ -94,7 +105,7 @@ def _alert_content(
     prefix = "🧪 **TEST ALERT**\n" if is_test else ""
     return (
         f"{prefix}🎓 <@{trainee_id}> has joined with the **{config.label}** role.\n"
-        f"{trainer_prompt} to arrange their {config.training_name} training."
+        f"{config.contact_prompt or f'{trainer_prompt} to arrange their {config.training_name} training.'}"
     )
 
 
@@ -217,6 +228,7 @@ class TraineeAlert(commands.Cog):
             app_commands.Choice(name="Infantry", value="infantry"),
             app_commands.Choice(name="Squad Leader", value="squad_leader"),
             app_commands.Choice(name="Tank Crew", value="tank_crew"),
+            app_commands.Choice(name="Diplomat", value="diplomat"),
         ]
     )
     @app_commands.guild_only()
@@ -230,8 +242,13 @@ class TraineeAlert(commands.Cog):
             return
         if not _can_test_alert(interaction.user, config):
             trainer = f"<@&{config.trainer_role_id}>" if config.trainer_role_id else f"**{config.trainer_role_name}**"
+            requirement = (
+                f"Manage Server permission or the {trainer} role"
+                if config.trainer_role_id or config.trainer_role_name
+                else "Manage Server permission"
+            )
             await interaction.response.send_message(
-                f"You need Manage Server permission or the {trainer} role to run this test.",
+                f"You need {requirement} to run this test.",
                 ephemeral=True,
             )
             return
