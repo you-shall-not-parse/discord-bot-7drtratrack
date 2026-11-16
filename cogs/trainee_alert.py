@@ -62,7 +62,7 @@ DIPLOMAT_ALERT = TraineeAlertConfig(
     alert_channel_id=1097920441022152774,
     trainee_role_id=1098206797900284035,
     mention_trainer_role=False,
-    contact_prompt="They have been asked by DM for their clan name and acronym; their replies will be posted here.",
+    contact_prompt="Their DM greeting requests their clan name and acronym, plus their preferred name; their replies will be posted here.",
 )
 
 ALERTS = (INFANTRY_ALERT, SQUAD_LEADER_ALERT, TANK_CREW_ALERT, DIPLOMAT_ALERT)

@@ -6,11 +6,12 @@ import logging
 import random
 import re
 import sqlite3
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 
 from config import MAIN_GUILD_ID
@@ -48,8 +49,8 @@ RANK_ROLES: dict[str, tuple[str, int, str]] = {
 
 PLAY_STYLE_ROLES: dict[str, tuple[str, int, str]] = {
     "defender": ("Prefer to Defend (Defender)", 1446567884221579345, "🛡️"),
-    "attacker": ("Prefer to Attack (Attacker)", 1446567995198410793, "⚔️"),
-    "flexi": ("Prefer to be Fluid and Meatgrind (Flexi)", 1446583412084310027, "🏃‍♂️"),
+    "attacker": ("Flanking Attack", 1446567995198410793, "⚔️"),
+    "flexi": ("Frontdoor", 1446583412084310027, "🏃‍♂️"),
 }
 
 COMMUNITY_TEAM_ROLES: dict[str, tuple[str, int, str]] = {
@@ -58,6 +59,14 @@ COMMUNITY_TEAM_ROLES: dict[str, tuple[str, int, str]] = {
         1103588562714251264,
         "🏗️",
     ),
+}
+
+# Each key identifies one section (child panel) of the master directory.
+PUSH_CATEGORIES = {
+    "hll_rank": "HLL1 (WW2) Rank",
+    "play_style": "Play Style",
+    "community_team": "Community Teams",
+    "birthday": "Birthday Manager",
 }
 
 
@@ -267,6 +276,30 @@ class ReactionRoleView(discord.ui.View):
         self.add_item(BirthdayActionSelect(cog))
 
 
+class ReactionRolePushView(discord.ui.View):
+    """One directory section, with an absolute expiry that survives restarts."""
+
+    def __init__(self, cog: "ReactionRoles", category: str, expires_at: int) -> None:
+        super().__init__(timeout=None)
+        self.expires_at = expires_at
+        # Reuse the master controls and handlers, so both panels edit the same roles.
+        master = ReactionRoleView(cog)
+        index = list(PUSH_CATEGORIES).index(category)
+        control = master.children[index]
+        master.remove_item(control)
+        control.custom_id = f"reaction_roles:push:{category}"
+        self.add_item(control)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if discord.utils.utcnow().timestamp() >= self.expires_at:
+            await interaction.response.send_message(
+                f"This reminder has expired. Please use <#{ROLE_SELECTOR_CHANNEL_ID}>.",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+
 class ReactionRoles(commands.Cog):
     """Persistent self-service roles and birthday manager."""
 
@@ -292,8 +325,28 @@ class ReactionRoles(commands.Cog):
                 "ALTER TABLE birthdays ADD COLUMN display_age INTEGER DEFAULT 0"
             )
             self._birthday_db.commit()
+        self._birthday_db.execute(
+            "CREATE TABLE IF NOT EXISTS reaction_role_pushes ("
+            "message_id INTEGER PRIMARY KEY, channel_id INTEGER NOT NULL, "
+            "guild_id INTEGER NOT NULL, category TEXT NOT NULL, expires_at INTEGER NOT NULL)"
+        )
+        self._birthday_db.commit()
+        self._push_views: dict[int, ReactionRolePushView] = {}
+        for message_id, category, expires_at in self._birthday_db.execute(
+            "SELECT message_id, category, expires_at FROM reaction_role_pushes"
+        ).fetchall():
+            if category not in PUSH_CATEGORIES:
+                continue
+            view = ReactionRolePushView(self, category, expires_at)
+            self._push_views[message_id] = view
+            self.bot.add_view(view, message_id=message_id)
 
     def cog_unload(self) -> None:
+        if self.expire_role_pushes.is_running():
+            self.expire_role_pushes.cancel()
+        for view in self._push_views.values():
+            view.stop()
+        self._view.stop()
         if self.check_birthdays.is_running():
             self.check_birthdays.cancel()
         if self.post_monthly_birthday_summary.is_running():
@@ -327,10 +380,10 @@ class ReactionRoles(commands.Cog):
         embed.add_field(
             name="Play Style",
             value=(
-                "For infantry, choose whether you prefer to defend, attack, or stay fluid in the "
-                "meatgrind. This preference does not prevent you from playing any other role.\n\n"
+                "For infantry, choose Defender, Flanking Attack, or Frontdoor. "
+                "This preference does not prevent you from playing any other role.\n\n"
                 + "\n".join(
-                    f"{emoji} <@&{role_id}>"
+                    f"{emoji} **{label}** — <@&{role_id}>"
                     for label, role_id, emoji in PLAY_STYLE_ROLES.values()
                 )
             ),
@@ -358,6 +411,99 @@ class ReactionRoles(commands.Cog):
         )
         embed.set_footer(text="You may change your role selections or birthday at any time.")
         return embed
+
+    @app_commands.command(name="push_reaction_roles", description="Post one role-directory section for one week")
+    @app_commands.guild_only()
+    @app_commands.describe(category="Which child panel to post", channel="Where to post the reminder")
+    @app_commands.choices(category=[
+        app_commands.Choice(name=label, value=key) for key, label in PUSH_CATEGORIES.items()
+    ])
+    async def push_reaction_roles(
+        self, interaction: discord.Interaction, category: str, channel: discord.TextChannel,
+    ) -> None:
+        if (
+            interaction.guild is None
+            or interaction.guild.id != MAIN_GUILD_ID
+            or not isinstance(interaction.user, discord.Member)
+            or not any(role.name == "Administration" for role in interaction.user.roles)
+        ):
+            await interaction.response.send_message(
+                "You need the Administration role in the 7DR server to use this command.", ephemeral=True,
+            )
+            return
+        if category not in PUSH_CATEGORIES or channel.guild.id != interaction.guild.id:
+            await interaction.response.send_message("Choose a directory section and a channel in this server.", ephemeral=True)
+            return
+        permissions = channel.permissions_for(interaction.user)
+        if not permissions.view_channel or not permissions.send_messages:
+            await interaction.response.send_message("Choose a channel where you can view and send messages.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        expires_at = int((discord.utils.utcnow() + timedelta(weeks=1)).timestamp())
+        section = next(field for field in self.build_embed().fields if field.name == PUSH_CATEGORIES[category])
+        embed = discord.Embed(
+            title=section.name, description=section.value, color=discord.Color.dark_green(),
+        )
+        embed.add_field(
+            name="Choose below",
+            value=f"This uses the same selections as <#{ROLE_SELECTOR_CHANNEL_ID}>. Expires <t:{expires_at}:R>.",
+            inline=False,
+        )
+        view = ReactionRolePushView(self, category, expires_at)
+        try:
+            message = await channel.send(embed=embed, view=view, allowed_mentions=discord.AllowedMentions.none())
+        except discord.HTTPException:
+            view.stop()
+            logger.exception("Could not post reaction-role reminder to %s.", channel.id)
+            await interaction.followup.send("I couldn't post there. Check my channel access, Send Messages and Embed Links permissions.", ephemeral=True)
+            return
+        try:
+            self._birthday_db.execute(
+                "INSERT INTO reaction_role_pushes (message_id, channel_id, guild_id, category, expires_at) VALUES (?, ?, ?, ?, ?)",
+                (message.id, channel.id, interaction.guild.id, category, expires_at),
+            )
+            self._birthday_db.commit()
+        except sqlite3.Error:
+            self._birthday_db.rollback()
+            logger.exception("Could not save reaction-role reminder %s.", message.id)
+            # Without durable state, this reminder cannot survive a restart safely.
+            view.stop()
+            try:
+                await message.delete()
+            except discord.HTTPException:
+                logger.exception("Could not remove unsaved reaction-role reminder %s.", message.id)
+            await interaction.followup.send("The reminder could not be saved. Please try again.", ephemeral=True)
+            return
+        self._push_views[message.id] = view
+        self.bot.add_view(view, message_id=message.id)
+        await interaction.followup.send(f"Reminder posted: {message.jump_url}\nExpires <t:{expires_at}:F>.", ephemeral=True)
+
+    @tasks.loop(minutes=1)
+    async def expire_role_pushes(self) -> None:
+        expired = self._birthday_db.execute(
+            "SELECT message_id, channel_id FROM reaction_role_pushes WHERE expires_at <= ?",
+            (int(discord.utils.utcnow().timestamp()),),
+        ).fetchall()
+        for message_id, channel_id in expired:
+            try:
+                channel = self.bot.get_channel(channel_id)
+                if channel is None:
+                    channel = await self.bot.fetch_channel(channel_id)
+                message = await channel.fetch_message(message_id)
+                await message.edit(
+                    content=f"This reminder has expired. You can still manage your roles and birthday in <#{ROLE_SELECTOR_CHANNEL_ID}>.",
+                    embed=None, view=None, allowed_mentions=discord.AllowedMentions.none(),
+                )
+            except discord.NotFound:
+                pass  # Deleted messages/channels no longer need an expiry record.
+            except discord.HTTPException:
+                logger.warning("Could not retire reaction-role reminder %s; will retry.", message_id, exc_info=True)
+                continue
+            self._birthday_db.execute("DELETE FROM reaction_role_pushes WHERE message_id = ?", (message_id,))
+            self._birthday_db.commit()
+            view = self._push_views.pop(message_id, None)
+            if view is not None:
+                view.stop()
 
     async def _target_channel(self) -> discord.TextChannel | None:
         channel = self.bot.get_channel(ROLE_SELECTOR_CHANNEL_ID)
@@ -725,6 +871,8 @@ class ReactionRoles(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self) -> None:
         await self.sync_message()
+        if not self.expire_role_pushes.is_running():
+            self.expire_role_pushes.start()
         if not self.check_birthdays.is_running():
             self.check_birthdays.start()
         if not self.post_monthly_birthday_summary.is_running():

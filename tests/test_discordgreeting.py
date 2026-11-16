@@ -66,7 +66,7 @@ class DiplomatGreetingTests(unittest.IsolatedAsyncioTestCase):
 		self.bot = MagicMock()
 		self.cog = DiscordGreeting(self.bot)
 		self.member = SimpleNamespace(
-			id=123, send=AsyncMock(), guild=SimpleNamespace(id=456),
+			id=123, send=AsyncMock(), edit=AsyncMock(), guild=SimpleNamespace(id=456),
 			roles=[SimpleNamespace(id=DIPLOMAT_ALERT.trainee_role_id, name="Renamed diplomat")],
 		)
 		self.dm = MagicMock(spec=discord.DMChannel)
@@ -81,7 +81,7 @@ class DiplomatGreetingTests(unittest.IsolatedAsyncioTestCase):
 			author=SimpleNamespace(id=user_id, bot=False), channel=self.dm, content=content,
 		)
 
-	async def test_delayed_role_starts_dm_and_posts_both_typed_answers_once(self) -> None:
+	async def test_delayed_role_collects_answers_and_sets_nickname_once(self) -> None:
 		before = SimpleNamespace(id=123, roles=[])
 		await self.cog.on_member_update(before, self.member)
 		await self.cog.on_member_update(before, self.member)
@@ -93,13 +93,19 @@ class DiplomatGreetingTests(unittest.IsolatedAsyncioTestCase):
 		await self.cog.on_message(self.reply("Example Clan"))
 		self.assertIn("acronym", self.dm.send.await_args.args[0])
 		await self.cog.on_message(self.reply("EC"))
+		self.assertIn("What name do you go by?", self.dm.send.await_args.args[0])
+		self.nco.send.assert_not_awaited()
+		await self.cog.on_message(self.reply("Gerry"))
 		await self.cog.on_message(self.reply("extra reply"))
+		self.member.edit.assert_awaited_once_with(nick="[EC]Gerry", reason="Diplomat onboarding: clan acronym and preferred name")
 		self.bot.get_channel.assert_called_once_with(1097920441022152774)
 		self.nco.send.assert_awaited_once()
 		content = self.nco.send.await_args.args[0]
+		self.assertEqual(content.splitlines()[0], "<@123> has joined with the **Diplmat** role.")
 		self.assertIn("<@123>", content)
 		self.assertIn("Example Clan", content)
 		self.assertIn("EC", content)
+		self.assertIn("**Name:** Gerry", content)
 		self.assertEqual(self.nco.send.await_args.kwargs["allowed_mentions"].to_dict(), discord.AllowedMentions.none().to_dict())
 		self.assertNotIn(123, self.cog._diplomat_sessions)
 
@@ -116,13 +122,36 @@ class DiplomatGreetingTests(unittest.IsolatedAsyncioTestCase):
 	async def test_failed_nco_post_keeps_answers_for_retry(self) -> None:
 		await self.cog._welcome_after_onboarding(self.member)
 		await self.cog.on_message(self.reply("Example Clan"))
-		self.nco.send.side_effect = discord.Forbidden(SimpleNamespace(status=403, reason="Forbidden"), "No access")
 		await self.cog.on_message(self.reply("EC"))
-		self.assertEqual(self.cog._diplomat_sessions[123][1], "Example Clan")
+		self.nco.send.side_effect = discord.Forbidden(SimpleNamespace(status=403, reason="Forbidden"), "No access")
+		await self.cog.on_message(self.reply("Gerry"))
+		self.assertEqual(self.cog._diplomat_sessions[123].clan_name, "Example Clan")
+		self.assertEqual(self.cog._diplomat_sessions[123].acronym, "EC")
 		self.assertIn("try again", self.dm.send.await_args.args[0])
 		self.nco.send.side_effect = None
-		await self.cog.on_message(self.reply("EC"))
+		await self.cog.on_message(self.reply("Gerry"))
 		self.assertNotIn(123, self.cog._diplomat_sessions)
+
+	async def test_nickname_failure_still_reports_answers_to_nco(self) -> None:
+		await self.cog._welcome_after_onboarding(self.member)
+		await self.cog.on_message(self.reply("Example Clan"))
+		await self.cog.on_message(self.reply("[OFIN]"))
+		self.member.edit.side_effect = discord.Forbidden(SimpleNamespace(status=403, reason="Forbidden"), "Hierarchy")
+		await self.cog.on_message(self.reply("Gerry"))
+		self.nco.send.assert_awaited_once()
+		self.assertIn("couldn't update your nickname", self.nco.send.await_args.args[0])
+		self.assertIn("couldn't update your nickname", self.dm.send.await_args.args[0])
+		self.assertNotIn(123, self.cog._diplomat_sessions)
+
+	async def test_long_nickname_is_rejected_without_truncating(self) -> None:
+		await self.cog._welcome_after_onboarding(self.member)
+		await self.cog.on_message(self.reply("Example Clan"))
+		await self.cog.on_message(self.reply("OFIN"))
+		await self.cog.on_message(self.reply("G" * 27))
+		self.member.edit.assert_not_awaited()
+		self.assertIn("1–26", self.dm.send.await_args.args[0])
+		await self.cog.on_message(self.reply("G" * 26))
+		self.assertEqual(len(self.member.edit.await_args.kwargs["nick"]), 32)
 
 	async def test_leaving_clears_pending_answers(self) -> None:
 		await self.cog._welcome_after_onboarding(self.member)

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -30,7 +31,8 @@ ROLE_DM_MESSAGES: dict[str, str] = {
 	"👋 Check out [#community-info-and-faq](https://discord.com/channels/1097913605082579024/1441744889145720942) and join us in [#community-chat](https://discord.com/channels/1097913605082579024/1441511200474271875) for HLL chatter, in [#the-arcade](https://discord.com/channels/1097913605082579024/1398672228803018763) for other games or in [#side-quests](https://discordapp.com/channels/1097913605082579024/1399082728313458778) for hobbies.\n\n"
 	"You can see all of our upcoming events in [#upcoming-events-calendar](https://discord.com/channels/1097913605082579024/1332736267485708419) to plan and organise events with us! \n\n"
 	"**What clan are you in?** Please type your clan's full name here. "
-	"Next, I'll ask for your clan acronym and share both answers with our NCO team."
+	"Next, I'll ask for your clan acronym and the name you go by. "
+	"I'll share your answers with our NCO team and set your server nickname to [ACRONYM]Name, for example [OFIN]Gerry."
 }
 
 # If the member's matched onboarding role is in this set, the bot will also
@@ -64,6 +66,13 @@ MAX_WAIT_FOR_ONBOARDING_ROLE_SECONDS = 10 * 60
 ROLE_POLL_INTERVAL_SECONDS = 5
 
 
+@dataclass
+class DiplomatSession:
+	member: discord.Member
+	clan_name: Optional[str] = None
+	acronym: Optional[str] = None
+
+
 class DiscordGreeting(commands.Cog):
 	def __init__(self, bot: commands.Bot):
 		self.bot = bot
@@ -71,7 +80,7 @@ class DiscordGreeting(commands.Cog):
 		self._intro_video_sent: set[int] = set()
 		self._welcome_tasks: dict[int, asyncio.Task] = {}
 		self._dm_locks: dict[int, asyncio.Lock] = {}
-		self._diplomat_sessions: dict[int, tuple[discord.Member, Optional[str]]] = {}
+		self._diplomat_sessions: dict[int, DiplomatSession] = {}
 
 	def cog_unload(self) -> None:
 		for task in self._welcome_tasks.values():
@@ -187,7 +196,7 @@ class DiscordGreeting(commands.Cog):
 				await member.send(message)
 				self._already_dmed.add(member.id)
 				if matched_role_name == "Diplomat":
-					self._diplomat_sessions[member.id] = (member, None)
+					self._diplomat_sessions[member.id] = DiplomatSession(member)
 				return True
 			except discord.Forbidden:
 				logger.info("Cannot DM member %s (%s): DMs closed.", member, member.id)
@@ -265,16 +274,32 @@ class DiscordGreeting(commands.Cog):
 			session = self._diplomat_sessions.get(message.author.id)
 			if session is None:
 				return
-			member, clan_name = session
+			member = session.member
 			answer = message.content.strip()
-			limit = 500 if clan_name is None else 100
+			if session.clan_name is None:
+				field, limit = "clan name", 500
+			elif session.acronym is None:
+				field, limit = "clan acronym (without brackets or spaces)", 29
+				answer = answer.strip("[]{} ")
+			else:
+				field, limit = "name", 30 - len(session.acronym)
 			try:
-				if not answer or len(answer) > limit:
-					await message.channel.send(f"Please type your {'clan name' if clan_name is None else 'clan acronym'} (1–{limit} characters).")
+				invalid_acronym = session.clan_name is not None and session.acronym is None and any(
+					char.isspace() or char in "[]{}" for char in answer
+				)
+				if not answer or len(answer) > limit or any(ord(char) < 32 for char in answer) or invalid_acronym:
+					await message.channel.send(f"Please type your {field} on one line (1–{limit} characters).")
 					return
-				if clan_name is None:
-					await message.channel.send("**What is your clan acronym/tag?** Please type it here.")
-					self._diplomat_sessions[member.id] = (member, answer)
+				if session.clan_name is None:
+					await message.channel.send("**What is your clan acronym/tag?** Please type it here without brackets (up to 29 characters).")
+					session.clan_name = answer
+					return
+				if session.acronym is None:
+					await message.channel.send(
+						f"**What name do you go by?** For example, Gerry. Use up to {30 - len(answer)} characters "
+						"so your [ACRONYM]Name nickname fits Discord's 32-character limit."
+					)
+					session.acronym = answer
 					return
 
 				channel = self.bot.get_channel(DIPLOMAT_ALERT.alert_channel_id)
@@ -284,14 +309,27 @@ class DiscordGreeting(commands.Cog):
 					logger.error("Invalid NCO channel for diplomat %s in guild %s.", member.id, member.guild.id)
 					await message.channel.send("I couldn't send your details to the NCO team. Please contact a server admin.")
 					return
+				nickname = f"[{session.acronym}]{answer}"
+				try:
+					await member.edit(nick=nickname, reason="Diplomat onboarding: clan acronym and preferred name")
+					nickname_status = f"Nickname set to {discord.utils.escape_markdown(nickname)}."
+				except discord.HTTPException:
+					logger.warning("Could not set diplomat nickname for %s.", member.id, exc_info=True)
+					nickname_status = "I couldn't update your nickname. Please ask staff to set it (Manage Nicknames and role hierarchy may need checking)."
 				await channel.send(
-					f"**Diplomat clan details** — <@{member.id}>\n"
-					f"**Clan:** {discord.utils.escape_markdown(clan_name)}\n"
-					f"**Acronym/tag:** {discord.utils.escape_markdown(answer)}",
+					f"<@{member.id}> has joined with the **Diplmat** role.\n"
+					f"**Clan:** {discord.utils.escape_markdown(session.clan_name)}\n"
+					f"**Acronym/tag:** {discord.utils.escape_markdown(session.acronym)}\n"
+					f"**Name:** {discord.utils.escape_markdown(answer)}\n"
+					f"**Requested nickname:** {discord.utils.escape_markdown(nickname)}\n"
+					f"{nickname_status}",
 					allowed_mentions=discord.AllowedMentions.none(),
 				)
 				self._diplomat_sessions.pop(member.id, None)
-				await message.channel.send("Thank you! Your clan name and acronym have been sent to our NCO team.")
+				await message.channel.send(
+					f"Thank you! Your clan details and name have been sent to our NCO team. {nickname_status}",
+					allowed_mentions=discord.AllowedMentions.none(),
+				)
 			except discord.HTTPException:
 				logger.exception("Could not process diplomat clan reply for %s.", member.id)
 				try:

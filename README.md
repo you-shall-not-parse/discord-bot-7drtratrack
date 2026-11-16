@@ -138,6 +138,19 @@ features from starting. Slash commands are synchronized once during startup.
 - War Diary kills leaderboard on the website and `/wardiary_leaderboard`, with staff corrections through `/wardiary_edit`
 - LOA, birthdays, certificates, and other clan support workflows
 
+Diplomat onboarding asks for clan name, acronym, and preferred name by DM, posts
+the answers to NCO, and sets the member's server nickname to `[ACRONYM]Name`.
+The bot needs Manage Nicknames and a role above the member to change their nickname;
+if that fails, it still reports their answers and the failure to NCO.
+
+Members with the **Administration** role can use
+`/push_reaction_roles category:Play Style channel:#channel` to post a single
+directory section in a channel they can access and send to. HLL rank, play style,
+community team, and birthday sections are available. These reminders use the same
+role and birthday handlers as the master directory. Each expires after seven days,
+including across bot restarts, and its controls are removed within the next minute
+while the bot is online. Expiration preserves members' selected roles.
+
 ## Loaded Cogs
 
 `main.py` currently loads the following:
